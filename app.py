@@ -13,6 +13,8 @@ st.caption(f"資料來源：Yahoo Finance（台灣證交所）｜更新時間：
 # 產業群組對照表
 # ==============================
 INDUSTRY_GROUP = {
+    "被動ETF": [],
+    "主動ETF": [],
     "半導體": ["半導體業"],
     "電腦與週邊": ["電腦及週邊設備業", "電子通路業", "資訊服務業"],
     "光電與通信": ["光電業", "通信網路業"],
@@ -27,18 +29,33 @@ INDUSTRY_GROUP = {
     "其他": ["觀光餐旅", "貿易百貨", "數位雲端", "運動休閒", "居家生活", "綜合", "其他"]
 }
 
-def get_industry_group(industry):
+GROUP_ICONS = {
+    "被動ETF": "📊",
+    "主動ETF": "✨",
+    "半導體": "🔵",
+    "電腦與週邊": "🖥️",
+    "光電與通信": "📡",
+    "電子零組件": "⚙️",
+    "金融保險": "🏦",
+    "生技醫療": "🧬",
+    "傳統產業": "🏭",
+    "能源與環保": "☀️",
+    "航運與建設": "🚢",
+    "其他": "📌"
+}
+
+def get_industry_group(industry, stock_type):
+    if stock_type in ["被動ETF", "主動ETF"]:
+        return stock_type
     for group, industries in INDUSTRY_GROUP.items():
+        if group in ["被動ETF", "主動ETF"]:
+            continue
         for ind in industries:
             if ind in str(industry):
                 return group
     return "其他"
 
-# ==============================
-# 工具函數
-# ==============================
-
-def classify_code(code, industry=""):
+def classify_code(code):
     has_alpha = any(c.isalpha() for c in code)
     if has_alpha:
         return "主動ETF"
@@ -195,10 +212,6 @@ def run_backtest(prices_dict, threshold=-10):
         "total_triggers": len(triggers)
     }
 
-# ==============================
-# 股票清單（含產業別）
-# ==============================
-
 @st.cache_data(ttl=86400)
 def get_all_tw_stocks():
     stocks = []
@@ -207,18 +220,15 @@ def get_all_tw_stocks():
         res = requests.get(url, timeout=10)
         data = res.json()
         for d in data:
-            code = d.get("公司代號", "")
-            name = d.get("公司簡稱", "")
-            industry = d.get("產業別", "")
+            code = d.get("公司代號", "").strip()
+            name = d.get("公司簡稱", "").strip()
+            industry = d.get("產業別", "").strip()
             t = classify_code(code)
-            group = get_industry_group(industry) if t == "個股" else t
+            group = get_industry_group(industry, t)
             stocks.append({
-                "code": code,
-                "name": name,
-                "market": "上市",
-                "type": t,
-                "industry": industry,
-                "group": group
+                "code": code, "name": name,
+                "market": "上市", "type": t,
+                "industry": industry, "group": group
             })
     except:
         pass
@@ -227,59 +237,62 @@ def get_all_tw_stocks():
         res = requests.get(url, timeout=10)
         data = res.json()
         for d in data:
-            code = d["SecuritiesCompanyCode"]
-            name = d["CompanyName"]
+            code = d["SecuritiesCompanyCode"].strip()
+            name = d["CompanyName"].strip()
             t = classify_code(code)
+            group = get_industry_group("", t)
             stocks.append({
-                "code": code,
-                "name": name,
-                "market": "上櫃",
-                "type": t,
-                "industry": "",
-                "group": t if t in ["主動ETF", "被動ETF"] else "其他"
+                "code": code, "name": name,
+                "market": "上櫃", "type": t,
+                "industry": "", "group": group
             })
     except:
         pass
     return stocks
 
 # ==============================
+# 群組選擇器元件
+# ==============================
+def group_selector(key_prefix, allow_multi=True):
+    groups = list(INDUSTRY_GROUP.keys())
+    cols = st.columns(6)
+    selected = []
+    for i, g in enumerate(groups):
+        icon = GROUP_ICONS.get(g, "")
+        with cols[i % 6]:
+            if st.checkbox(f"{icon} {g}", key=f"{key_prefix}_{g}"):
+                selected.append(g)
+    return selected
+
+# ==============================
 # 頁籤
 # ==============================
-
 tab1, tab2, tab3 = st.tabs(["🔍 每日警示掃描", "📊 批次回測", "🔬 個股回測"])
 
 # ==============================
-# TAB 1: 每日警示
+# TAB 1
 # ==============================
 with tab1:
-    threshold1 = st.slider("設定警示門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t1")
-
-    all_stocks_loaded = get_all_tw_stocks()
-
-    etf_options = ["被動ETF", "主動ETF"]
-    industry_options = list(INDUSTRY_GROUP.keys())
-    filter_options = etf_options + industry_options
-
-    filter_type1 = st.selectbox("篩選範圍", ["全部"] + filter_options, key="f1")
+    threshold1 = st.slider("警示門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t1")
+    st.markdown("**篩選範圍（可多選，不選代表全部）**")
+    selected1 = group_selector("tab1")
 
     if st.button("🔍 開始掃描", type="primary", key="scan"):
-        if filter_type1 == "全部":
-            scan_list = all_stocks_loaded
-        elif filter_type1 in ["被動ETF", "主動ETF"]:
-            scan_list = [s for s in all_stocks_loaded if s["type"] == filter_type1]
+        all_stocks = get_all_tw_stocks()
+        if selected1:
+            scan_list = [s for s in all_stocks if s["group"] in selected1]
         else:
-            scan_list = [s for s in all_stocks_loaded if s["group"] == filter_type1]
+            scan_list = all_stocks
 
         total = len(scan_list)
-        st.info(f"共 {total} 檔標的，開始掃描...")
+        st.info(f"共 {total} 檔，開始掃描...")
         results = []
         progress = st.progress(0)
         status = st.empty()
 
         for i, stock in enumerate(scan_list):
             code = stock["code"]
-            name = stock["name"]
-            status.text(f"掃描中：{code} {name}（{i+1}/{total}）")
+            status.text(f"掃描中：{code} {stock['name']}（{i+1}/{total}）")
             prices = get_yahoo_history(code, days=60)
             ret = calc_rolling_return_latest(prices)
             if ret is not None and ret <= threshold1:
@@ -287,7 +300,7 @@ with tab1:
                     "產業群組": stock["group"],
                     "產業別": stock["industry"],
                     "代碼": code,
-                    "名稱": name,
+                    "名稱": stock["name"],
                     "滾動10日報酬率": f"{ret:.2f}%",
                     "數值": ret
                 })
@@ -299,31 +312,27 @@ with tab1:
 
         if results:
             df = pd.DataFrame(results).sort_values("數值").drop(columns=["數值"])
-            st.error(f"⚠️ 共發現 {len(results)} 檔觸發警示（門檻：{threshold1}%）")
+            st.error(f"⚠️ 共 {len(results)} 檔觸發（門檻：{threshold1}%）")
             st.dataframe(df, use_container_width=True, hide_index=True)
-            csv = df.to_csv(index=False).encode("utf-8-sig")
-            st.download_button("📥 下載CSV", csv, "alert.csv", "text/csv")
+            st.download_button("📥 下載CSV", df.to_csv(index=False).encode("utf-8-sig"), "alert.csv", "text/csv")
         else:
             st.success(f"✅ 目前沒有標的觸發 {threshold1}% 警示")
 
 # ==============================
-# TAB 2: 批次回測
+# TAB 2
 # ==============================
 with tab2:
     st.subheader("批次回測（五年）")
     threshold2 = st.slider("觸發門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t2")
-
-    all_stocks_bt = get_all_tw_stocks()
-    etf_options2 = ["被動ETF", "主動ETF"]
-    industry_options2 = list(INDUSTRY_GROUP.keys())
-    batch_options = etf_options2 + industry_options2
-    batch_type = st.selectbox("回測標的範圍", batch_options, key="bt")
+    st.markdown("**選擇回測範圍（可多選，不選代表全部ETF）**")
+    selected2 = group_selector("tab2")
 
     if st.button("🚀 開始回測", type="primary", key="backtest"):
-        if batch_type in ["被動ETF", "主動ETF"]:
-            bt_list = [s for s in all_stocks_bt if s["type"] == batch_type]
+        all_stocks_bt = get_all_tw_stocks()
+        if selected2:
+            bt_list = [s for s in all_stocks_bt if s["group"] in selected2]
         else:
-            bt_list = [s for s in all_stocks_bt if s["group"] == batch_type]
+            bt_list = [s for s in all_stocks_bt if s["type"] in ["被動ETF", "主動ETF"]]
 
         total = len(bt_list)
         st.info(f"共 {total} 檔，開始回測（約需數分鐘）...")
@@ -334,8 +343,7 @@ with tab2:
 
         for i, stock in enumerate(bt_list):
             code = stock["code"]
-            name = stock["name"]
-            status.text(f"回測中：{code} {name}（{i+1}/{total}）")
+            status.text(f"回測中：{code} {stock['name']}（{i+1}/{total}）")
             prices = get_yahoo_history_5y(code)
             result = run_backtest(prices, threshold=threshold2)
 
@@ -344,11 +352,10 @@ with tab2:
                     all_rows.append({
                         "產業群組": stock["group"],
                         "代碼": code,
-                        "名稱": name,
-                        "最長連續觸發天數": result["max_consecutive"] if row["年度"] == "合計/平均" else "",
+                        "名稱": stock["name"],
+                        "最長連續觸發": result["max_consecutive"] if row["年度"] == "合計/平均" else "",
                         **row
                     })
-
             progress.progress((i+1)/total)
             time.sleep(0.2)
 
@@ -358,28 +365,24 @@ with tab2:
         if all_rows:
             df_bt = pd.DataFrame(all_rows)
 
-            def color_return(val):
-                if val is None or val == "":
-                    return ""
+            def color_ret(val):
+                if val is None or val == "": return ""
                 try:
                     v = float(val)
                     return "color: green; font-weight: bold" if v > 0 else "color: red; font-weight: bold"
-                except:
-                    return ""
+                except: return ""
 
             st.success("✅ 回測完成！")
             st.dataframe(
-                df_bt.style.applymap(color_return, subset=["進場後10天平均報酬%", "進場後50天平均報酬%", "進場後100天平均報酬%"]),
-                use_container_width=True,
-                hide_index=True
+                df_bt.style.applymap(color_ret, subset=["進場後10天平均報酬%", "進場後50天平均報酬%", "進場後100天平均報酬%"]),
+                use_container_width=True, hide_index=True
             )
-            csv2 = df_bt.to_csv(index=False).encode("utf-8-sig")
-            st.download_button("📥 下載回測結果CSV", csv2, "backtest.csv", "text/csv")
+            st.download_button("📥 下載CSV", df_bt.to_csv(index=False).encode("utf-8-sig"), "backtest.csv", "text/csv")
         else:
             st.warning("沒有找到任何觸發紀錄")
 
 # ==============================
-# TAB 3: 個股回測
+# TAB 3
 # ==============================
 with tab3:
     st.subheader("個股／ETF 回測＋線圖")
@@ -402,22 +405,19 @@ with tab3:
             if not result:
                 st.warning(f"五年內沒有觸發 {threshold3}% 的紀錄")
             else:
-                st.write(f"### 📊 統計結果（最長連續觸發：{result['max_consecutive']} 天）")
+                st.write(f"### 📊 統計（最長連續觸發：{result['max_consecutive']} 天）")
                 df_single = pd.DataFrame(result["yearly_rows"])
 
-                def color_return_single(val):
-                    if val is None:
-                        return ""
+                def color_ret_s(val):
+                    if val is None: return ""
                     try:
                         v = float(val)
                         return "color: green; font-weight: bold" if v > 0 else "color: red; font-weight: bold"
-                    except:
-                        return ""
+                    except: return ""
 
                 st.dataframe(
-                    df_single.style.applymap(color_return_single, subset=["進場後10天平均報酬%", "進場後50天平均報酬%", "進場後100天平均報酬%"]),
-                    use_container_width=True,
-                    hide_index=True
+                    df_single.style.applymap(color_ret_s, subset=["進場後10天平均報酬%", "進場後50天平均報酬%", "進場後100天平均報酬%"]),
+                    use_container_width=True, hide_index=True
                 )
 
                 st.write("### 📈 股價走勢＋觸發標記")
@@ -430,8 +430,7 @@ with tab3:
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(
                     x=dates, y=price_values,
-                    mode="lines",
-                    name="收盤價",
+                    mode="lines", name="收盤價",
                     line=dict(color="#2196F3", width=1.5)
                 ))
                 fig.add_trace(go.Scatter(
@@ -441,9 +440,7 @@ with tab3:
                     marker=dict(color="red", size=8, symbol="circle")
                 ))
                 fig.update_layout(
-                    height=500,
-                    xaxis_title="日期",
-                    yaxis_title="收盤價",
+                    height=500, xaxis_title="日期", yaxis_title="收盤價",
                     hovermode="x unified",
                     legend=dict(orientation="h", yanchor="bottom", y=1.02)
                 )
