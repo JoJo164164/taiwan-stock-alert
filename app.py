@@ -1,0 +1,153 @@
+pythonimport streamlit as st
+import pandas as pd
+import requests
+from datetime import datetime, timedelta
+import time
+
+st.set_page_config(page_title="台股滾動10日跌幅警示", layout="wide")
+st.title("📉 台股滾動10日跌幅警示系統")
+st.caption(f"資料來源：台灣證交所 / 櫃買中心｜更新時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
+
+# ---- 取得上市股票清單 ----
+@st.cache_data(ttl=86400)
+def get_twse_stocks():
+    url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+    try:
+        res = requests.get(url, timeout=10)
+        data = res.json()
+        return [{"code": d["Code"], "name": d["Name"]} for d in data if d["Code"].isdigit()]
+    except:
+        return []
+
+# ---- 取得上櫃股票清單 ----
+@st.cache_data(ttl=86400)
+def get_otc_stocks():
+    url = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
+    try:
+        res = requests.get(url, timeout=10)
+        data = res.json()
+        return [{"code": d["SecuritiesCompanyCode"], "name": d["CompanyName"]} for d in data]
+    except:
+        return []
+
+# ---- 取得單一股票歷史收盤價（證交所）----
+def get_twse_history(code, months=1):
+    prices = {}
+    today = datetime.today()
+    for i in range(2):
+        d = today - timedelta(days=30*i)
+        ym = d.strftime("%Y%m01")
+        url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={ym}&stockNo={code}"
+        try:
+            res = requests.get(url, timeout=10)
+            data = res.json()
+            if data.get("stat") == "OK":
+                for row in data["data"]:
+                    date_str = row[0].replace("/", "-")
+                    parts = date_str.split("-")
+                    date = f"{int(parts[0])+1911}-{parts[1]}-{parts[2]}"
+                    close = float(row[6].replace(",", ""))
+                    prices[date] = close
+        except:
+            pass
+        time.sleep(0.3)
+    return prices
+
+# ---- 取得單一股票歷史收盤價（櫃買）----
+def get_otc_history(code):
+    prices = {}
+    today = datetime.today()
+    for i in range(2):
+        d = today - timedelta(days=30*i)
+        ym = f"{d.year-1911}/{d.month:02d}"
+        url = f"https://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?l=zh-tw&d={ym}&stkno={code}&s=0,asc"
+        try:
+            res = requests.get(url, timeout=10)
+            data = res.json()
+            if data.get("iTotalRecords", 0) > 0:
+                for row in data["aaData"]:
+                    date_str = row[0]
+                    parts = date_str.split("/")
+                    date = f"{int(parts[0])+1911}-{parts[1]}-{parts[2]}"
+                    try:
+                        close = float(row[2].replace(",", ""))
+                        prices[date] = close
+                    except:
+                        pass
+        except:
+            pass
+        time.sleep(0.3)
+    return prices
+
+# ---- 計算滾動10日報酬率 ----
+def calc_rolling_return(prices_dict):
+    if len(prices_dict) < 11:
+        return None
+    dates = sorted(prices_dict.keys())
+    latest_date = dates[-1]
+    base_date = dates[-11]
+    latest_price = prices_dict[latest_date]
+    base_price = prices_dict[base_date]
+    if base_price == 0:
+        return None
+    return (latest_price - base_price) / base_price * 100
+
+# ---- 主介面 ----
+threshold = st.slider("設定警示門檻（跌幅%）", min_value=-30, max_value=-5, value=-10, step=1)
+filter_type = st.radio("篩選範圍", ["全部", "僅ETF", "僅個股"], horizontal=True)
+
+if st.button("🔍 開始掃描", type="primary"):
+    
+    results = []
+    
+    with st.spinner("正在抓取上市股票資料..."):
+        twse_stocks = get_twse_stocks()
+    
+    with st.spinner("正在抓取上櫃股票資料..."):
+        otc_stocks = get_otc_stocks()
+
+    all_stocks = twse_stocks + otc_stocks
+
+    # ETF篩選（台股ETF代碼通常為6碼或含字母）
+    if filter_type == "僅ETF":
+        all_stocks = [s for s in all_stocks if len(s["code"]) >= 6 or not s["code"].isdigit()]
+    elif filter_type == "僅個股":
+        all_stocks = [s for s in all_stocks if len(s["code"]) == 4 and s["code"].isdigit()]
+
+    total = len(all_stocks)
+    progress = st.progress(0, text="掃描中...")
+    
+    for i, stock in enumerate(all_stocks[:50]):  # 先限制50檔測試
+        code = stock["code"]
+        name = stock["name"]
+        
+        # 判斷上市或上櫃
+        if any(s["code"] == code for s in twse_stocks):
+            prices = get_twse_history(code)
+        else:
+            prices = get_otc_history(code)
+        
+        ret = calc_rolling_return(prices)
+        
+        if ret is not None and ret <= threshold:
+            results.append({
+                "代碼": code,
+                "名稱": name,
+                "滾動10日報酬率": f"{ret:.2f}%",
+                "數值": ret
+            })
+        
+        progress.progress((i+1)/min(total, 50), text=f"掃描中... {i+1}/{min(total, 50)}")
+        time.sleep(0.2)
+
+    progress.empty()
+
+    if results:
+        df = pd.DataFrame(results).sort_values("數值").drop(columns=["數值"])
+        st.error(f"⚠️ 共發現 {len(results)} 檔觸發警示（門檻：{threshold}%）")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        csv = df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("📥 下載警示清單CSV", csv, "alert.csv", "text/csv")
+    else:
+        st.success(f"✅ 目前沒有標的觸發 {threshold}% 警示")
