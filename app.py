@@ -340,12 +340,12 @@ def build_summary_tables(prices_dict):
                     cum_row[str(h) + "天累積報酬%"] = "待觀察"
                 else:
                     wins = sum(1 for r in rets if r > 0)
-                    win_row[str(h) + "天勝率"] = str(round(wins/len(rets)*100, 1)) + "%"
-                    avg_row[str(h) + "天平均報酬%"] = round(sum(rets)/len(rets), 2)
+                    win_row[str(h) + "天勝率"] = "{:.2f}%".format(wins/len(rets)*100)
+                    avg_row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets)/len(rets))
                     cum = 1.0
                     for r in rets:
                         cum *= (1 + r/100)
-                    cum_row[str(h) + "天累積報酬%"] = round((cum - 1) * 100, 2)
+                    cum_row[str(h) + "天累積報酬%"] = "{:.2f}%".format((cum-1)*100)
         win_rows.append(win_row)
         avg_rows.append(avg_row)
         cum_rows.append(cum_row)
@@ -429,7 +429,7 @@ def color_ret(val):
     if val is None or val == "" or val == "---" or val == "待觀察":
         return ""
     try:
-        v = float(val)
+        v = float(str(val).replace("%", ""))
         return "color: green; font-weight: bold" if v > 0 else "color: red; font-weight: bold"
     except:
         return ""
