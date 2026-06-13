@@ -230,7 +230,94 @@ def run_full_backtest(prices_dict, threshold):
         "yearly": yearly,
         "total": len(triggers)
     }
-
+def build_entry_timing_table(prices_dict, threshold):
+    rolling = calc_all_rolling_returns(prices_dict)
+    if not rolling:
+        return None
+    dates = sorted(prices_dict.keys())
+    date_to_idx = {d: i for i, d in enumerate(dates)}
+    triggers = [r for r in rolling if r["return"] <= threshold]
+    if not triggers:
+        return None
+    trigger_date_set = set(t["date"] for t in triggers)
+    consec_day = {}
+    cc = 0
+    for r in rolling:
+        if r["date"] in trigger_date_set:
+            cc += 1
+            consec_day[r["date"]] = cc
+        else:
+            cc = 0
+    groups = {
+        "連續第1天進場": [],
+        "連續第2天進場": [],
+        "連續第3天以後進場": [],
+        "連續結束翌日進場": [],
+    }
+    rolling_list = list(rolling)
+    for i, r in enumerate(rolling_list):
+        d = r["date"]
+        if d not in trigger_date_set:
+            if i > 0 and rolling_list[i-1]["date"] in trigger_date_set:
+                idx = date_to_idx.get(d)
+                if idx is None:
+                    continue
+                entry_price = r["curr_price"]
+                rets = {}
+                for h in HORIZONS:
+                    future_idx = idx + h
+                    if future_idx < len(dates):
+                        future_price = prices_dict[dates[future_idx]]
+                        rets[h] = round((future_price - entry_price) / entry_price * 100, 2)
+                    else:
+                        rets[h] = None
+                groups["連續結束翌日進場"].append({"rets": rets, "date": d})
+        else:
+            day_num = consec_day.get(d, 1)
+            idx = date_to_idx.get(d)
+            if idx is None:
+                continue
+            entry_price = r["curr_price"]
+            rets = {}
+            for h in HORIZONS:
+                future_idx = idx + h
+                if future_idx < len(dates):
+                    future_price = prices_dict[dates[future_idx]]
+                    rets[h] = round((future_price - entry_price) / entry_price * 100, 2)
+                else:
+                    rets[h] = None
+            item = {"rets": rets, "date": d}
+            if day_num == 1:
+                groups["連續第1天進場"].append(item)
+            elif day_num == 2:
+                groups["連續第2天進場"].append(item)
+            else:
+                groups["連續第3天以後進場"].append(item)
+    rows = []
+    for group_name, items in groups.items():
+        row = {"進場時機": group_name, "樣本數": len(items)}
+        if not items:
+            for h in HORIZONS:
+                row[str(h) + "天勝率"] = "---"
+                row[str(h) + "天平均報酬%"] = "---"
+                row[str(h) + "天累積報酬%"] = "---"
+        else:
+            for h in HORIZONS:
+                rets = [x["rets"][h] for x in items if x["rets"].get(h) is not None]
+                if not rets:
+                    row[str(h) + "天勝率"] = "待觀察"
+                    row[str(h) + "天平均報酬%"] = "待觀察"
+                    row[str(h) + "天累積報酬%"] = "待觀察"
+                else:
+                    wins = sum(1 for r in rets if r > 0)
+                    row[str(h) + "天勝率"] = "{:.2f}%".format(wins/len(rets)*100)
+                    row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets)/len(rets))
+                    cum = 1.0
+                    for r in rets:
+                        cum *= (1 + r/100)
+                    row[str(h) + "天累積報酬%"] = "{:.2f}%".format((cum-1)*100)
+        rows.append(row)
+    return pd.DataFrame(rows)
 def build_summary_tables(prices_dict):
     win_rows, avg_rows, cum_rows = [], [], []
     for thr in THRESHOLDS:
