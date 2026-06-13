@@ -39,7 +39,7 @@ HORIZONS = [10, 20, 50, 100, 200]
 
 st.set_page_config(page_title="台股滾動10日跌幅系統", layout="wide")
 st.title("📉 台股滾動10日跌幅系統")
-st.caption("資料來源：Yahoo Finance（台灣證交所）| 更新時間：" + datetime.now().strftime("%Y-%m-%d %H:%M"))
+st.caption("資料來源：Yahoo Finance 還原後股價 | 回測年限：最長15年 | 更新時間：" + datetime.now().strftime("%Y-%m-%d %H:%M"))
 
 def get_industry_group(industry, stock_type):
     if stock_type in ["被動ETF", "主動ETF"]:
@@ -77,7 +77,11 @@ def get_yahoo_history(code, days=60):
         data = res.json()
         result = data["chart"]["result"][0]
         timestamps = result["timestamp"]
-        closes = result["indicators"]["quote"][0]["close"]
+        adjclose = result["indicators"].get("adjclose")
+        if adjclose and len(adjclose) > 0 and adjclose[0].get("adjclose"):
+            closes = adjclose[0]["adjclose"]
+        else:
+            closes = result["indicators"]["quote"][0]["close"]
         prices = {}
         for ts, cl in zip(timestamps, closes):
             if cl is not None:
@@ -87,7 +91,7 @@ def get_yahoo_history(code, days=60):
     except:
         return {}
 
-def get_yahoo_history_5y(code):
+def get_yahoo_history_15y(code):
     end = datetime.today()
     start = end - timedelta(days=365*5+30)
     url = (
@@ -101,7 +105,11 @@ def get_yahoo_history_5y(code):
         data = res.json()
         result = data["chart"]["result"][0]
         timestamps = result["timestamp"]
-        closes = result["indicators"]["quote"][0]["close"]
+        adjclose = result["indicators"].get("adjclose")
+        if adjclose and len(adjclose) > 0 and adjclose[0].get("adjclose"):
+            closes = adjclose[0]["adjclose"]
+        else:
+            closes = result["indicators"]["quote"][0]["close"]
         prices = {}
         for ts, cl in zip(timestamps, closes):
             if cl is not None:
@@ -355,11 +363,18 @@ tab0, tab1, tab2, tab3 = st.tabs(["📖 使用說明", "🔍 每日警示掃描"
 with tab0:
     st.markdown("## 系統使用說明")
     st.markdown("這個系統幫助你用「滾動10日跌幅」策略，系統性地篩選台股投資機會。")
+    st.info(
+        "資料說明：\n"
+        "- 股價使用 Yahoo Finance 還原後收盤價（Adjusted Close）\n"
+        "- 已自動處理股票分拆、除息、配股的價格調整\n"
+        "- 回測年限最長15年（依各標的上市日期而定）\n"
+        "- 除息日不會產生假觸發，回測結果更準確"
+    )
     st.divider()
 
     st.markdown("### 什麼是滾動10日跌幅？")
     st.markdown("每個交易日，計算當天收盤價相較於 **10個交易日前** 收盤價的跌幅。當跌幅達到你設定的門檻，系統發出警示，代表這檔股票可能出現短期超跌機會。")
-    st.code("滾動10日報酬率 = (今天收盤 - 10天前收盤) / 10天前收盤 x 100%")
+    st.code("滾動10日報酬率 = (今天還原收盤 - 10天前還原收盤) / 10天前還原收盤 x 100%")
     st.divider()
 
     st.markdown("### 建議使用流程")
@@ -480,7 +495,7 @@ with tab2:
         for i, stock in enumerate(bt_list):
             code = stock["code"]
             status.text("回測中：" + code + " " + stock["name"] + "（" + str(i+1) + "/" + str(total) + "）")
-            prices = get_yahoo_history_5y(code)
+            prices = get_yahoo_history_15y(code)
             result = run_full_backtest(prices, threshold2)
 
             if result:
@@ -535,7 +550,7 @@ with tab3:
 
     if st.button("🔬 開始分析", type="primary", key="single_bt"):
         with st.spinner("抓取 " + single_code + " 五年資料中..."):
-            prices = get_yahoo_history_5y(single_code)
+            prices = get_yahoo_history_15y(single_code)
 
         if not prices:
             st.error("抓取失敗，請確認代碼是否正確")
