@@ -9,9 +9,6 @@ st.set_page_config(page_title="台股滾動10日跌幅系統", layout="wide")
 st.title("📉 台股滾動10日跌幅系統")
 st.caption(f"資料來源：Yahoo Finance（台灣證交所）｜更新時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-# ==============================
-# 產業群組對照表
-# ==============================
 INDUSTRY_GROUP = {
     "被動ETF": [],
     "主動ETF": [],
@@ -21,27 +18,41 @@ INDUSTRY_GROUP = {
     "電子零組件": ["電子零組件業", "其他電子業"],
     "金融保險": ["金融保險業"],
     "生技醫療": ["生技醫療業"],
-    "傳統產業": ["水泥工業", "食品工業", "塑膠工業", "紡織纖維", "電機機械",
-                 "電器電纜", "化學工業", "玻璃陶瓷", "造紙工業", "鋼鐵工業",
-                 "橡膠工業", "汽車工業"],
-    "能源與環保": ["油電燃氣業", "綠能環保"],
-    "航運與建設": ["航運業", "建材營造"],
-    "其他": ["觀光餐旅", "貿易百貨", "數位雲端", "運動休閒", "居家生活", "綜合", "其他"]
+    "水泥": ["水泥工業"],
+    "食品": ["食品工業"],
+    "塑膠": ["塑膠工業"],
+    "紡織": ["紡織纖維"],
+    "電機機械": ["電機機械"],
+    "電器電纜": ["電器電纜"],
+    "化學": ["化學工業"],
+    "玻璃陶瓷": ["玻璃陶瓷"],
+    "造紙": ["造紙工業"],
+    "鋼鐵": ["鋼鐵工業"],
+    "橡膠": ["橡膠工業"],
+    "汽車": ["汽車工業"],
+    "能源": ["油電燃氣業"],
+    "綠能環保": ["綠能環保"],
+    "航運": ["航運業"],
+    "建材營造": ["建材營造"],
+    "觀光餐旅": ["觀光餐旅"],
+    "貿易百貨": ["貿易百貨"],
+    "數位雲端": ["數位雲端"],
+    "運動休閒": ["運動休閒"],
+    "居家生活": ["居家生活"],
+    "綜合": ["綜合"],
 }
 
 GROUP_ICONS = {
-    "被動ETF": "📊",
-    "主動ETF": "✨",
-    "半導體": "🔵",
-    "電腦與週邊": "🖥️",
-    "光電與通信": "📡",
-    "電子零組件": "⚙️",
-    "金融保險": "🏦",
-    "生技醫療": "🧬",
-    "傳統產業": "🏭",
-    "能源與環保": "☀️",
-    "航運與建設": "🚢",
-    "其他": "📌"
+    "被動ETF": "📊", "主動ETF": "✨",
+    "半導體": "🔵", "電腦與週邊": "🖥️", "光電與通信": "📡",
+    "電子零組件": "⚙️", "金融保險": "🏦", "生技醫療": "🧬",
+    "水泥": "🏗️", "食品": "🍱", "塑膠": "🧪", "紡織": "🧵",
+    "電機機械": "⚡", "電器電纜": "🔌", "化學": "🔬",
+    "玻璃陶瓷": "🏺", "造紙": "📄", "鋼鐵": "🔩",
+    "橡膠": "🔄", "汽車": "🚗", "能源": "⛽", "綠能環保": "☀️",
+    "航運": "🚢", "建材營造": "🏠", "觀光餐旅": "🏨",
+    "貿易百貨": "🛒", "數位雲端": "☁️", "運動休閒": "⛳",
+    "居家生活": "🏡", "綜合": "📌",
 }
 
 def get_industry_group(industry, stock_type):
@@ -53,7 +64,7 @@ def get_industry_group(industry, stock_type):
         for ind in industries:
             if ind in str(industry):
                 return group
-    return "其他"
+    return "綜合"
 
 def classify_code(code):
     has_alpha = any(c.isalpha() for c in code)
@@ -250,13 +261,17 @@ def get_all_tw_stocks():
         pass
     return stocks
 
-# ==============================
-# 群組選擇器元件
-# ==============================
-def group_selector(key_prefix, allow_multi=True):
+def color_ret(val):
+    if val is None or val == "": return ""
+    try:
+        v = float(val)
+        return "color: green; font-weight: bold" if v > 0 else "color: red; font-weight: bold"
+    except: return ""
+
+def group_selector(key_prefix):
     groups = list(INDUSTRY_GROUP.keys())
-    cols = st.columns(6)
     selected = []
+    cols = st.columns(6)
     for i, g in enumerate(groups):
         icon = GROUP_ICONS.get(g, "")
         with cols[i % 6]:
@@ -264,9 +279,6 @@ def group_selector(key_prefix, allow_multi=True):
                 selected.append(g)
     return selected
 
-# ==============================
-# 頁籤
-# ==============================
 tab1, tab2, tab3 = st.tabs(["🔍 每日警示掃描", "📊 批次回測", "🔬 個股回測"])
 
 # ==============================
@@ -279,10 +291,7 @@ with tab1:
 
     if st.button("🔍 開始掃描", type="primary", key="scan"):
         all_stocks = get_all_tw_stocks()
-        if selected1:
-            scan_list = [s for s in all_stocks if s["group"] in selected1]
-        else:
-            scan_list = all_stocks
+        scan_list = [s for s in all_stocks if s["group"] in selected1] if selected1 else all_stocks
 
         total = len(scan_list)
         st.info(f"共 {total} 檔，開始掃描...")
@@ -324,7 +333,7 @@ with tab1:
 with tab2:
     st.subheader("批次回測（五年）")
     threshold2 = st.slider("觸發門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t2")
-    st.markdown("**選擇回測範圍（可多選，不選代表全部ETF）**")
+    st.markdown("**選擇回測範圍（可多選，不選預設跑全部ETF）**")
     selected2 = group_selector("tab2")
 
     if st.button("🚀 開始回測", type="primary", key="backtest"):
@@ -364,17 +373,9 @@ with tab2:
 
         if all_rows:
             df_bt = pd.DataFrame(all_rows)
-
-            def color_ret(val):
-                if val is None or val == "": return ""
-                try:
-                    v = float(val)
-                    return "color: green; font-weight: bold" if v > 0 else "color: red; font-weight: bold"
-                except: return ""
-
             st.success("✅ 回測完成！")
             st.dataframe(
-                df_bt.style.applymap(color_ret, subset=["進場後10天平均報酬%", "進場後50天平均報酬%", "進場後100天平均報酬%"]),
+                df_bt.style.map(color_ret, subset=["進場後10天平均報酬%", "進場後50天平均報酬%", "進場後100天平均報酬%"]),
                 use_container_width=True, hide_index=True
             )
             st.download_button("📥 下載CSV", df_bt.to_csv(index=False).encode("utf-8-sig"), "backtest.csv", "text/csv")
@@ -407,16 +408,8 @@ with tab3:
             else:
                 st.write(f"### 📊 統計（最長連續觸發：{result['max_consecutive']} 天）")
                 df_single = pd.DataFrame(result["yearly_rows"])
-
-                def color_ret_s(val):
-                    if val is None: return ""
-                    try:
-                        v = float(val)
-                        return "color: green; font-weight: bold" if v > 0 else "color: red; font-weight: bold"
-                    except: return ""
-
                 st.dataframe(
-                    df_single.style.applymap(color_ret_s, subset=["進場後10天平均報酬%", "進場後50天平均報酬%", "進場後100天平均報酬%"]),
+                    df_single.style.map(color_ret, subset=["進場後10天平均報酬%", "進場後50天平均報酬%", "進場後100天平均報酬%"]),
                     use_container_width=True, hide_index=True
                 )
 
