@@ -93,7 +93,7 @@ def get_yahoo_history(code, days=60):
 
 def get_yahoo_history_15y(code):
     end = datetime.today()
-    start = end - timedelta(days=365*5+30)
+    start = end - timedelta(days=365*15+30)
     url = (
         "https://query1.finance.yahoo.com/v8/finance/chart/" + code + ".TW"
         + "?interval=1d&period1=" + str(int(start.timestamp()))
@@ -189,18 +189,6 @@ def run_full_backtest(prices_dict, threshold):
                 })
 
     yearly = {}
-    for h in HORIZONS:
-        for item in horizon_rets[h]:
-            year = item["year"]
-            if year not in yearly:
-                yearly[year] = {
-                    "trigger_dates": set(),
-                    "max_consec": 0,
-                    "rets": {hh: [] for hh in HORIZONS}
-                }
-            yearly[year]["trigger_dates"].add(item["date"])
-            yearly[year]["rets"][h].append(item["ret"])
-
     for t in triggers:
         year = t["date"][:4]
         if year not in yearly:
@@ -210,6 +198,12 @@ def run_full_backtest(prices_dict, threshold):
                 "rets": {hh: [] for hh in HORIZONS}
             }
         yearly[year]["trigger_dates"].add(t["date"])
+
+    for h in HORIZONS:
+        for item in horizon_rets[h]:
+            year = item["year"]
+            if year in yearly:
+                yearly[year]["rets"][h].append(item["ret"])
 
     for year in yearly:
         mc = 0
@@ -230,6 +224,7 @@ def run_full_backtest(prices_dict, threshold):
         "yearly": yearly,
         "total": len(triggers)
     }
+
 def build_entry_timing_table(prices_dict, threshold):
     rolling = calc_all_rolling_returns(prices_dict)
     if not rolling:
@@ -318,6 +313,7 @@ def build_entry_timing_table(prices_dict, threshold):
                     row[str(h) + "天累積報酬%"] = "{:.2f}%".format((cum-1)*100)
         rows.append(row)
     return pd.DataFrame(rows)
+
 def build_summary_tables(prices_dict):
     win_rows, avg_rows, cum_rows = [], [], []
     for thr in THRESHOLDS:
@@ -375,7 +371,6 @@ def build_yearly_table(prices_dict, threshold):
                     cum *= (1 + r/100)
                 row[str(h) + "天累積報酬%"] = "{:.2f}%".format((cum-1)*100)
         rows.append(row)
-
     total_row = {
         "年度": "合計/平均",
         "觸發次數": result["total"],
@@ -449,7 +444,6 @@ tab0, tab1, tab2, tab3 = st.tabs(["📖 使用說明", "🔍 每日警示掃描"
 
 with tab0:
     st.markdown("## 系統使用說明")
-    st.markdown("這個系統幫助你用「滾動10日跌幅」策略，系統性地篩選台股投資機會。")
     st.info(
         "資料說明：\n"
         "- 股價使用 Yahoo Finance 還原後收盤價（Adjusted Close）\n"
@@ -458,12 +452,10 @@ with tab0:
         "- 除息日不會產生假觸發，回測結果更準確"
     )
     st.divider()
-
     st.markdown("### 什麼是滾動10日跌幅？")
-    st.markdown("每個交易日，計算當天收盤價相較於 **10個交易日前** 收盤價的跌幅。當跌幅達到你設定的門檻，系統發出警示，代表這檔股票可能出現短期超跌機會。")
+    st.markdown("每個交易日，計算當天收盤價相較於 **10個交易日前** 收盤價的跌幅。當跌幅達到你設定的門檻，系統發出警示。")
     st.code("滾動10日報酬率 = (今天還原收盤 - 10天前還原收盤) / 10天前還原收盤 x 100%")
     st.divider()
-
     st.markdown("### 建議使用流程")
     st.markdown("""
 **步驟一：批次回測**
@@ -474,6 +466,7 @@ with tab0:
 - 針對感興趣的標的深入分析
 - 比較不同觸發門檻（-5% 到 -20%）下的勝率與報酬
 - 找出最適合該標的的進場門檻
+- 用表D比較連續觸發第幾天進場效果最好
 
 **步驟三：每日警示掃描**
 - 設定你選好的門檻與產業
@@ -481,17 +474,16 @@ with tab0:
 - 結合基本面判斷是否進場
     """)
     st.divider()
-
     st.markdown("### 三張核心表格說明")
     st.markdown("""
 | 表格 | 用途 |
 |------|------|
-| 勝率表 | 觸發後持有N天，收益為正的機率有多高 |
-| 平均報酬表 | 平均每次觸發進場，持有N天的平均獲利 |
-| 累積報酬表 | 假設每次觸發都跟進，總共累積的報酬 |
+| 表A 勝率表 | 觸發後持有N天，收益為正的機率 |
+| 表B 平均報酬表 | 平均每次觸發進場，持有N天的平均獲利 |
+| 表C 累積報酬表 | 假設每次觸發都跟進，總共累積的報酬 |
+| 表D 進場時機表 | 比較連續觸發第幾天進場效果最好 |
     """)
     st.divider()
-
     st.markdown("### 觀察天數說明")
     st.markdown("""
 | 天數 | 約等於 | 觀察意義 |
@@ -503,10 +495,9 @@ with tab0:
 | 200天 | 1年 | 年線修復 |
     """)
     st.divider()
-
     st.markdown("### 計算邏輯說明")
     st.markdown("""
-- **觸發定義**：當日收盤價相較10個交易日前收盤價，跌幅達門檻即觸發
+- **觸發定義**：當日還原收盤價相較10個交易日前還原收盤價，跌幅達門檻即觸發
 - **進場方式**：每個觸發日各自進場，連續觸發N天即有N筆紀錄
 - **年度歸屬**：以觸發當天日期為準，報酬計算可跨年度
 - **勝率**：觀察日當天報酬率大於0%的比例
@@ -515,14 +506,12 @@ with tab0:
 - **待觀察**：觸發後未滿觀察天數，資料不足，不計入統計
     """)
     st.divider()
-
     st.warning("本系統為輔助研究工具，不構成投資建議。歷史回測不代表未來績效，建議搭配基本面分析與產業趨勢判斷後再做決策。")
 
 with tab1:
     threshold1 = st.slider("警示門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t1")
     st.markdown("**篩選範圍（可多選，不選代表全部）**")
     selected1 = group_selector("tab1")
-
     if st.button("🔍 開始掃描", type="primary", key="scan"):
         all_stocks = get_all_tw_stocks()
         scan_list = [s for s in all_stocks if s["group"] in selected1] if selected1 else all_stocks
@@ -531,7 +520,6 @@ with tab1:
         results = []
         progress = st.progress(0)
         status = st.empty()
-
         for i, stock in enumerate(scan_list):
             code = stock["code"]
             status.text("掃描中：" + code + " " + stock["name"] + "（" + str(i+1) + "/" + str(total) + "）")
@@ -543,15 +531,13 @@ with tab1:
                     "產業別": stock["industry"],
                     "代碼": code,
                     "名稱": stock["name"],
-                    "滾動10日報酬率": str(round(ret, 2)) + "%",
+                    "滾動10日報酬率": "{:.2f}%".format(ret),
                     "數值": ret
                 })
             progress.progress((i+1)/total)
             time.sleep(0.15)
-
         progress.empty()
         status.empty()
-
         if results:
             df = pd.DataFrame(results).sort_values("數值").drop(columns=["數值"])
             st.error("共 " + str(len(results)) + " 檔觸發（門檻：" + str(threshold1) + "%）")
@@ -561,30 +547,26 @@ with tab1:
             st.success("目前沒有標的觸發 " + str(threshold1) + "% 警示")
 
 with tab2:
-    st.subheader("批次回測（五年）")
+    st.subheader("批次回測（最長15年）")
     threshold2 = st.slider("觸發門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t2")
     st.markdown("**選擇回測範圍（可多選，不選預設跑全部ETF）**")
     selected2 = group_selector("tab2")
-
     if st.button("🚀 開始回測", type="primary", key="backtest"):
         all_stocks_bt = get_all_tw_stocks()
         if selected2:
             bt_list = [s for s in all_stocks_bt if s["group"] in selected2]
         else:
             bt_list = [s for s in all_stocks_bt if s["type"] in ["被動ETF", "主動ETF"]]
-
         total = len(bt_list)
         st.info("共 " + str(total) + " 檔，開始回測（約需數分鐘）...")
         all_rows = []
         progress = st.progress(0)
         status = st.empty()
-
         for i, stock in enumerate(bt_list):
             code = stock["code"]
             status.text("回測中：" + code + " " + stock["name"] + "（" + str(i+1) + "/" + str(total) + "）")
             prices = get_yahoo_history_15y(code)
             result = run_full_backtest(prices, threshold2)
-
             if result:
                 for year in sorted(result["yearly"].keys()):
                     y = result["yearly"][year]
@@ -603,18 +585,15 @@ with tab2:
                             row[str(h) + "天累積報酬%"] = "待觀察"
                         else:
                             row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets)/len(rets))
-                        cum = 1.0
-                        for r in rets:
-                            cum *= (1 + r/100)
-                        row[str(h) + "天累積報酬%"] = "{:.2f}%".format((cum-1)*100)
+                            cum = 1.0
+                            for r in rets:
+                                cum *= (1 + r/100)
+                            row[str(h) + "天累積報酬%"] = "{:.2f}%".format((cum-1)*100)
                     all_rows.append(row)
-
             progress.progress((i+1)/total)
             time.sleep(0.2)
-
         progress.empty()
         status.empty()
-
         if all_rows:
             df_bt = pd.DataFrame(all_rows)
             ret_cols = [c for c in df_bt.columns if "報酬%" in c]
@@ -631,44 +610,35 @@ with tab3:
     st.subheader("個股／ETF 回測＋線圖")
     col1, col2 = st.columns([2, 1])
     with col1:
-        single_code = st.text_input("輸入股票／ETF代碼", value="2330", key="single")
+        single_code = st.text_input("輸入股票／ETF代碼", value="0050", key="single")
     with col2:
         ref_threshold = st.selectbox("線圖與年度明細顯示門檻", [str(t) + "%" for t in THRESHOLDS], index=2, key="ref_thr")
-
     if st.button("🔬 開始分析", type="primary", key="single_bt"):
-        with st.spinner("抓取 " + single_code + " 五年資料中..."):
+        with st.spinner("抓取 " + single_code + " 15年資料中..."):
             prices = get_yahoo_history_15y(single_code)
-
         if not prices:
             st.error("抓取失敗，請確認代碼是否正確")
         else:
             st.success("成功抓取 " + str(len(prices)) + " 個交易日（" + min(prices.keys()) + " ~ " + max(prices.keys()) + "）")
-
             with st.spinner("計算各門檻回測中..."):
                 df_win, df_avg, df_cum = build_summary_tables(prices)
-
             ret_cols_avg = [c for c in df_avg.columns if "報酬%" in c]
             ret_cols_cum = [c for c in df_cum.columns if "報酬%" in c]
-
             st.markdown("### 表A：各門檻 x 觀察天數 勝率")
             st.dataframe(df_win, use_container_width=True, hide_index=True)
-
             st.markdown("### 表B：各門檻 x 觀察天數 平均單次報酬%")
             st.dataframe(df_avg.style.map(color_ret, subset=ret_cols_avg), use_container_width=True, hide_index=True)
-
             st.markdown("### 表C：各門檻 x 觀察天數 累積報酬%")
             st.dataframe(df_cum.style.map(color_ret, subset=ret_cols_cum), use_container_width=True, hide_index=True)
-
-            st.info("""
-計算邏輯說明：
-- 每個觸發日各自進場，連續觸發N天即有N筆紀錄
-- 年度歸屬以觸發當天為準，報酬計算可跨年度
-- 勝率：觀察日當天報酬率大於0%的比例
-- 平均報酬%：所有觸發的單次報酬算術平均
-- 累積報酬%：所有觸發報酬連乘，模擬每次都跟進的實際績效
-- 待觀察：觸發後未滿觀察天數，不計入統計
-            """)
-
+            st.info(
+                "計算邏輯說明：\n"
+                "- 每個觸發日各自進場，連續觸發N天即有N筆紀錄\n"
+                "- 年度歸屬以觸發當天為準，報酬計算可跨年度\n"
+                "- 勝率：觀察日當天報酬率大於0%的比例\n"
+                "- 平均報酬%：所有觸發的單次報酬算術平均\n"
+                "- 累積報酬%：所有觸發報酬連乘，模擬每次都跟進的實際績效\n"
+                "- 待觀察：觸發後未滿觀察天數，不計入統計"
+            )
             thr_val = int(ref_threshold.replace("%", ""))
             df_yearly, result = build_yearly_table(prices, thr_val)
             if df_yearly is not None:
@@ -678,7 +648,7 @@ with tab3:
                     df_yearly.style.map(color_ret, subset=yearly_ret_cols),
                     use_container_width=True, hide_index=True
                 )
-st.markdown("### 表D：進場時機比較（門檻 " + ref_threshold + "）")
+            st.markdown("### 表D：進場時機比較（門檻 " + ref_threshold + "）")
             st.caption("比較連續觸發第幾天進場，對後續報酬的影響")
             df_timing = build_entry_timing_table(prices, thr_val)
             if df_timing is not None:
@@ -704,7 +674,6 @@ st.markdown("### 表D：進場時機比較（門檻 " + ref_threshold + "）")
                 trigger_dates = set(result["trigger_dates"])
                 trigger_x = [d for d in dates if d in trigger_dates]
                 trigger_y = [prices[d] for d in trigger_x]
-
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(
                     x=dates, y=price_values,
@@ -723,7 +692,6 @@ st.markdown("### 表D：進場時機比較（門檻 " + ref_threshold + "）")
                     legend=dict(orientation="h", yanchor="bottom", y=1.02)
                 )
                 st.plotly_chart(fig, use_container_width=True)
-
                 with st.expander("查看所有觸發日明細"):
                     triggered = result["triggers"]
                     df_trig = pd.DataFrame([{
@@ -731,6 +699,6 @@ st.markdown("### 表D：進場時機比較（門檻 " + ref_threshold + "）")
                         "基準日": t["base_date"],
                         "基準價": t["base_price"],
                         "觸發當日收盤": t["curr_price"],
-                        "滾動10日報酬率": str(t["return"]) + "%"
+                        "滾動10日報酬率": "{:.2f}%".format(t["return"])
                     } for t in triggered])
                     st.dataframe(df_trig, use_container_width=True, hide_index=True)
