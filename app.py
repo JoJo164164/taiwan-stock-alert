@@ -369,11 +369,11 @@ def build_yearly_table(prices_dict, threshold):
                 row[str(h) + "天平均報酬%"] = "待觀察"
                 row[str(h) + "天累積報酬%"] = "待觀察"
             else:
-                row[str(h) + "天平均報酬%"] = round(sum(rets)/len(rets), 2)
+                row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets)/len(rets))
                 cum = 1.0
                 for r in rets:
                     cum *= (1 + r/100)
-                row[str(h) + "天累積報酬%"] = round((cum-1)*100, 2)
+                row[str(h) + "天累積報酬%"] = "{:.2f}%".format((cum-1)*100)
         rows.append(row)
 
     total_row = {
@@ -387,11 +387,11 @@ def build_yearly_table(prices_dict, threshold):
             total_row[str(h) + "天平均報酬%"] = "待觀察"
             total_row[str(h) + "天累積報酬%"] = "待觀察"
         else:
-            total_row[str(h) + "天平均報酬%"] = round(sum(rets)/len(rets), 2)
+            total_row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets)/len(rets))
             cum = 1.0
             for r in rets:
                 cum *= (1 + r/100)
-            total_row[str(h) + "天累積報酬%"] = round((cum-1)*100, 2)
+            total_row[str(h) + "天累積報酬%"] = "{:.2f}%".format((cum-1)*100)
     rows.append(total_row)
     return pd.DataFrame(rows), result
 
@@ -602,11 +602,11 @@ with tab2:
                             row[str(h) + "天平均報酬%"] = "待觀察"
                             row[str(h) + "天累積報酬%"] = "待觀察"
                         else:
-                            row[str(h) + "天平均報酬%"] = round(sum(rets)/len(rets), 2)
-                            cum = 1.0
-                            for r in rets:
-                                cum *= (1 + r/100)
-                            row[str(h) + "天累積報酬%"] = round((cum-1)*100, 2)
+                            row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets)/len(rets))
+                        cum = 1.0
+                        for r in rets:
+                            cum *= (1 + r/100)
+                        row[str(h) + "天累積報酬%"] = "{:.2f}%".format((cum-1)*100)
                     all_rows.append(row)
 
             progress.progress((i+1)/total)
