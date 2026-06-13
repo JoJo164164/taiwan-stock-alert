@@ -678,7 +678,25 @@ with tab3:
                     df_yearly.style.map(color_ret, subset=yearly_ret_cols),
                     use_container_width=True, hide_index=True
                 )
-
+st.markdown("### 表D：進場時機比較（門檻 " + ref_threshold + "）")
+            st.caption("比較連續觸發第幾天進場，對後續報酬的影響")
+            df_timing = build_entry_timing_table(prices, thr_val)
+            if df_timing is not None:
+                timing_ret_cols = [c for c in df_timing.columns if "報酬%" in c]
+                st.dataframe(
+                    df_timing.style.map(color_ret, subset=timing_ret_cols),
+                    use_container_width=True, hide_index=True
+                )
+                st.info(
+                    "進場時機說明：\n"
+                    "- 連續第1天：跌幅首次觸發門檻當天進場\n"
+                    "- 連續第2天：已連續觸發2天，第2天進場\n"
+                    "- 連續第3天以後：連續觸發3天以上每天進場\n"
+                    "- 連續結束翌日：連續觸發結束後第一天進場（止跌確認）\n"
+                    "樣本數為該時機的進場筆數"
+                )
+            else:
+                st.warning("此門檻無觸發紀錄")
             if result:
                 st.markdown("### 股價走勢＋觸發標記（門檻 " + ref_threshold + "）")
                 dates = sorted(prices.keys())
