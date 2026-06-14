@@ -626,6 +626,7 @@ with tab2:
             code = stock["code"]
             status.text("回測中：" + code + " " + stock["name"] + "（" + str(i + 1) + "/" + str(total) + "）")
             prices = get_yahoo_history_15y(code)
+            status.text("回測中：" + code + " " + stock["name"] + "（" + str(i + 1) + "/" + str(total) + "）資料筆數=" + str(len(prices)))
             result = run_full_backtest(prices, threshold2)
             if result:
                 for year in sorted(result["yearly"].keys()):
