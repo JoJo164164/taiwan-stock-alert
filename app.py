@@ -41,6 +41,7 @@ st.set_page_config(page_title="台股滾動10日跌幅系統", layout="wide")
 st.title("📉 台股滾動10日跌幅系統")
 st.caption("資料來源：Yahoo Finance 還原後股價 | 回測年限：最長15年 | 更新時間：" + datetime.now().strftime("%Y-%m-%d %H:%M"))
 
+
 def get_industry_group(industry, stock_type):
     if stock_type in ["被動ETF", "主動ETF"]:
         return stock_type
@@ -52,6 +53,7 @@ def get_industry_group(industry, stock_type):
                 return group
     return "綜合"
 
+
 def classify_code(code):
     has_alpha = any(c.isalpha() for c in code)
     if has_alpha:
@@ -62,6 +64,7 @@ def classify_code(code):
         return "個股"
     else:
         return "其他"
+
 
 def get_yahoo_history(code, days=60):
     end = datetime.today()
@@ -91,9 +94,10 @@ def get_yahoo_history(code, days=60):
     except:
         return {}
 
+
 def get_yahoo_history_15y(code):
     end = datetime.today()
-    start = end - timedelta(days=365*15+30)
+    start = end - timedelta(days=365 * 15 + 30)
     url = (
         "https://query1.finance.yahoo.com/v8/finance/chart/" + code + ".TW"
         + "?interval=1d&period1=" + str(int(start.timestamp()))
@@ -119,6 +123,7 @@ def get_yahoo_history_15y(code):
     except:
         return {}
 
+
 def calc_rolling_return_latest(prices_dict):
     if len(prices_dict) < 11:
         return None
@@ -129,13 +134,14 @@ def calc_rolling_return_latest(prices_dict):
         return None
     return (latest_price - base_price) / base_price * 100
 
+
 def calc_all_rolling_returns(prices_dict):
     if len(prices_dict) < 11:
         return []
     dates = sorted(prices_dict.keys())
     results = []
     for i in range(10, len(dates)):
-        base_date = dates[i-10]
+        base_date = dates[i - 10]
         curr_date = dates[i]
         base_price = prices_dict[base_date]
         curr_price = prices_dict[curr_date]
@@ -149,6 +155,7 @@ def calc_all_rolling_returns(prices_dict):
                 "return": round(ret, 2)
             })
     return results
+
 
 def run_full_backtest(prices_dict, threshold):
     rolling = calc_all_rolling_returns(prices_dict)
@@ -171,6 +178,8 @@ def run_full_backtest(prices_dict, threshold):
             current_consecutive = 0
 
     horizon_rets = {h: [] for h in HORIZONS}
+    horizon_drawdowns = {h: [] for h in HORIZONS}
+
     for t in triggers:
         idx = date_to_idx.get(t["date"])
         if idx is None:
@@ -188,6 +197,20 @@ def run_full_backtest(prices_dict, threshold):
                     "date": t["date"]
                 })
 
+                min_ret = 0.0
+                for d in range(1, h + 1):
+                    fi = idx + d
+                    if fi < len(dates):
+                        p = prices_dict[dates[fi]]
+                        r = (p - entry_price) / entry_price * 100
+                        if r < min_ret:
+                            min_ret = r
+                horizon_drawdowns[h].append({
+                    "dd": round(min_ret, 2),
+                    "year": year,
+                    "date": t["date"]
+                })
+
     yearly = {}
     for t in triggers:
         year = t["date"][:4]
@@ -195,7 +218,8 @@ def run_full_backtest(prices_dict, threshold):
             yearly[year] = {
                 "trigger_dates": set(),
                 "max_consec": 0,
-                "rets": {hh: [] for hh in HORIZONS}
+                "rets": {hh: [] for hh in HORIZONS},
+                "dds": {hh: [] for hh in HORIZONS},
             }
         yearly[year]["trigger_dates"].add(t["date"])
 
@@ -204,6 +228,10 @@ def run_full_backtest(prices_dict, threshold):
             year = item["year"]
             if year in yearly:
                 yearly[year]["rets"][h].append(item["ret"])
+        for item in horizon_drawdowns[h]:
+            year = item["year"]
+            if year in yearly:
+                yearly[year]["dds"][h].append(item["dd"])
 
     for year in yearly:
         mc = 0
@@ -221,9 +249,11 @@ def run_full_backtest(prices_dict, threshold):
         "trigger_dates": list(trigger_dates),
         "max_consecutive": max_consecutive,
         "horizon_rets": horizon_rets,
+        "horizon_drawdowns": horizon_drawdowns,
         "yearly": yearly,
         "total": len(triggers)
     }
+
 
 def build_entry_timing_table(prices_dict, threshold):
     rolling = calc_all_rolling_returns(prices_dict)
@@ -253,7 +283,7 @@ def build_entry_timing_table(prices_dict, threshold):
     for i, r in enumerate(rolling_list):
         d = r["date"]
         if d not in trigger_date_set:
-            if i > 0 and rolling_list[i-1]["date"] in trigger_date_set:
+            if i > 0 and rolling_list[i - 1]["date"] in trigger_date_set:
                 idx = date_to_idx.get(d)
                 if idx is None:
                     continue
@@ -305,47 +335,49 @@ def build_entry_timing_table(prices_dict, threshold):
                     row[str(h) + "天累積報酬%"] = "待觀察"
                 else:
                     wins = sum(1 for r in rets if r > 0)
-                    row[str(h) + "天勝率"] = "{:.2f}%".format(wins/len(rets)*100)
-                    row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets)/len(rets))
-                    cum = 1.0
-                    for r in rets:
-                        cum *= (1 + r/100)
-                    row[str(h) + "天累積報酬%"] = "{:.2f}%".format((cum-1)*100)
+                    row[str(h) + "天勝率"] = "{:.2f}%".format(wins / len(rets) * 100)
+                    row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets) / len(rets))
+                    row[str(h) + "天累積報酬%"] = "{:.2f}%".format(sum(rets))
         rows.append(row)
     return pd.DataFrame(rows)
 
+
 def build_summary_tables(prices_dict):
-    win_rows, avg_rows, cum_rows = [], [], []
+    win_rows, avg_rows, cum_rows, dd_rows = [], [], [], []
     for thr in THRESHOLDS:
         result = run_full_backtest(prices_dict, thr)
         win_row = {"觸發門檻": str(thr) + "%", "樣本數": 0}
         avg_row = {"觸發門檻": str(thr) + "%"}
         cum_row = {"觸發門檻": str(thr) + "%"}
+        dd_row = {"觸發門檻": str(thr) + "%"}
         if result is None:
             for h in HORIZONS:
                 win_row[str(h) + "天勝率"] = "---"
                 avg_row[str(h) + "天平均報酬%"] = "---"
                 cum_row[str(h) + "天累積報酬%"] = "---"
+                dd_row[str(h) + "天平均最大回撤%"] = "---"
         else:
             win_row["樣本數"] = result["total"]
             for h in HORIZONS:
                 rets = [x["ret"] for x in result["horizon_rets"][h]]
+                dds = [x["dd"] for x in result["horizon_drawdowns"][h]]
                 if not rets:
                     win_row[str(h) + "天勝率"] = "待觀察"
                     avg_row[str(h) + "天平均報酬%"] = "待觀察"
                     cum_row[str(h) + "天累積報酬%"] = "待觀察"
+                    dd_row[str(h) + "天平均最大回撤%"] = "待觀察"
                 else:
                     wins = sum(1 for r in rets if r > 0)
-                    win_row[str(h) + "天勝率"] = "{:.2f}%".format(wins/len(rets)*100)
-                    avg_row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets)/len(rets))
-                    cum = 1.0
-                    for r in rets:
-                        cum *= (1 + r/100)
-                    cum_row[str(h) + "天累積報酬%"] = "{:.2f}%".format((cum-1)*100)
+                    win_row[str(h) + "天勝率"] = "{:.2f}%".format(wins / len(rets) * 100)
+                    avg_row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets) / len(rets))
+                    cum_row[str(h) + "天累積報酬%"] = "{:.2f}%".format(sum(rets))
+                    dd_row[str(h) + "天平均最大回撤%"] = "{:.2f}%".format(sum(dds) / len(dds))
         win_rows.append(win_row)
         avg_rows.append(avg_row)
         cum_rows.append(cum_row)
-    return pd.DataFrame(win_rows), pd.DataFrame(avg_rows), pd.DataFrame(cum_rows)
+        dd_rows.append(dd_row)
+    return pd.DataFrame(win_rows), pd.DataFrame(avg_rows), pd.DataFrame(cum_rows), pd.DataFrame(dd_rows)
+
 
 def build_yearly_table(prices_dict, threshold):
     result = run_full_backtest(prices_dict, threshold)
@@ -361,15 +393,15 @@ def build_yearly_table(prices_dict, threshold):
         }
         for h in HORIZONS:
             rets = y["rets"][h]
+            dds = y["dds"][h]
             if not rets:
                 row[str(h) + "天平均報酬%"] = "待觀察"
                 row[str(h) + "天累積報酬%"] = "待觀察"
+                row[str(h) + "天平均最大回撤%"] = "待觀察"
             else:
-                row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets)/len(rets))
-                cum = 1.0
-                for r in rets:
-                    cum *= (1 + r/100)
-                row[str(h) + "天累積報酬%"] = "{:.2f}%".format((cum-1)*100)
+                row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets) / len(rets))
+                row[str(h) + "天累積報酬%"] = "{:.2f}%".format(sum(rets))
+                row[str(h) + "天平均最大回撤%"] = "{:.2f}%".format(sum(dds) / len(dds))
         rows.append(row)
     total_row = {
         "年度": "合計/平均",
@@ -378,17 +410,18 @@ def build_yearly_table(prices_dict, threshold):
     }
     for h in HORIZONS:
         rets = [x["ret"] for x in result["horizon_rets"][h]]
+        dds = [x["dd"] for x in result["horizon_drawdowns"][h]]
         if not rets:
             total_row[str(h) + "天平均報酬%"] = "待觀察"
             total_row[str(h) + "天累積報酬%"] = "待觀察"
+            total_row[str(h) + "天平均最大回撤%"] = "待觀察"
         else:
-            total_row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets)/len(rets))
-            cum = 1.0
-            for r in rets:
-                cum *= (1 + r/100)
-            total_row[str(h) + "天累積報酬%"] = "{:.2f}%".format((cum-1)*100)
+            total_row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets) / len(rets))
+            total_row[str(h) + "天累積報酬%"] = "{:.2f}%".format(sum(rets))
+            total_row[str(h) + "天平均最大回撤%"] = "{:.2f}%".format(sum(dds) / len(dds))
     rows.append(total_row)
     return pd.DataFrame(rows), result
+
 
 @st.cache_data(ttl=86400)
 def get_all_tw_stocks():
@@ -420,6 +453,7 @@ def get_all_tw_stocks():
         pass
     return stocks
 
+
 def color_ret(val):
     if val is None or val == "" or val == "---" or val == "待觀察":
         return ""
@@ -428,6 +462,17 @@ def color_ret(val):
         return "color: green; font-weight: bold" if v > 0 else "color: red; font-weight: bold"
     except:
         return ""
+
+
+def color_dd(val):
+    if val is None or val == "" or val == "---" or val == "待觀察":
+        return ""
+    try:
+        v = float(str(val).replace("%", ""))
+        return "color: red; font-weight: bold" if v < 0 else ""
+    except:
+        return ""
+
 
 def group_selector(key_prefix):
     groups = list(INDUSTRY_GROUP.keys())
@@ -439,6 +484,7 @@ def group_selector(key_prefix):
             if st.checkbox(icon + " " + g, key=key_prefix + "_" + g):
                 selected.append(g)
     return selected
+
 
 tab0, tab1, tab2, tab3 = st.tabs(["📖 使用說明", "🔍 每日警示掃描", "📊 批次回測", "🔬 個股回測"])
 
@@ -467,6 +513,7 @@ with tab0:
 - 比較不同觸發門檻（-5% 到 -20%）下的勝率與報酬
 - 找出最適合該標的的進場門檻
 - 用表D比較連續觸發第幾天進場效果最好
+- 用表E了解持有期間最深會跌多少
 
 **步驟三：每日警示掃描**
 - 設定你選好的門檻與產業
@@ -474,14 +521,26 @@ with tab0:
 - 結合基本面判斷是否進場
     """)
     st.divider()
-    st.markdown("### 三張核心表格說明")
+    st.markdown("### 核心表格說明")
     st.markdown("""
 | 表格 | 用途 |
 |------|------|
 | 表A 勝率表 | 觸發後持有N天，收益為正的機率 |
-| 表B 平均報酬表 | 平均每次觸發進場，持有N天的平均獲利 |
-| 表C 累積報酬表 | 假設每次觸發都跟進，總共累積的報酬 |
+| 表B 平均報酬表 | 平均每次觸發進場，持有N天的平均單筆獲利% |
+| 表C 累積報酬表 | 所有觸發的單筆報酬加總（不除筆數），代表全部跟進的總損益佔單筆本金的倍數 |
 | 表D 進場時機表 | 比較連續觸發第幾天進場效果最好 |
+| 表E 平均最大回撤表 | 持有期間內最深跌幅的平均值，代表這個策略最痛的時候會痛多少 |
+    """)
+    st.divider()
+    st.markdown("### 表B 與表C 的差異")
+    st.markdown("""
+假設某門檻一年觸發30次，每次都投入10000元：
+
+- **表B（平均報酬%）** = 30筆報酬率加總 / 30 = 平均每筆賺/虧幾%
+- **表C（累積報酬%）** = 30筆報酬率直接加總，不除以30
+
+表C的數字會比表B大很多（次數越多差距越大），它代表的是「如果每次觸發都跟進，總損益相當於單筆本金的幾倍」，
+而表B代表的是「平均每一筆操作的績效」。兩者用途不同：表B看單筆操作品質，表C看整體曝險後的總成果。
     """)
     st.divider()
     st.markdown("### 觀察天數說明")
@@ -501,8 +560,9 @@ with tab0:
 - **進場方式**：每個觸發日各自進場，連續觸發N天即有N筆紀錄
 - **年度歸屬**：以觸發當天日期為準，報酬計算可跨年度
 - **勝率**：觀察日當天報酬率大於0%的比例
-- **平均報酬%**：所有觸發的單次報酬算術平均
-- **累積報酬%**：所有觸發報酬連乘，模擬每次都跟進的實際績效
+- **平均報酬%**：所有觸發的單次報酬算術平均（表B）
+- **累積報酬%**：所有觸發報酬直接加總，不除筆數（表C）
+- **平均最大回撤%**：每筆觸發在持有期間內，相對進場價的最深跌幅，取平均（表E）
 - **待觀察**：觸發後未滿觀察天數，資料不足，不計入統計
     """)
     st.divider()
@@ -522,7 +582,7 @@ with tab1:
         status = st.empty()
         for i, stock in enumerate(scan_list):
             code = stock["code"]
-            status.text("掃描中：" + code + " " + stock["name"] + "（" + str(i+1) + "/" + str(total) + "）")
+            status.text("掃描中：" + code + " " + stock["name"] + "（" + str(i + 1) + "/" + str(total) + "）")
             prices = get_yahoo_history(code, days=60)
             ret = calc_rolling_return_latest(prices)
             if ret is not None and ret <= threshold1:
@@ -534,7 +594,7 @@ with tab1:
                     "滾動10日報酬率": "{:.2f}%".format(ret),
                     "數值": ret
                 })
-            progress.progress((i+1)/total)
+            progress.progress((i + 1) / total)
             time.sleep(0.15)
         progress.empty()
         status.empty()
@@ -564,7 +624,7 @@ with tab2:
         status = st.empty()
         for i, stock in enumerate(bt_list):
             code = stock["code"]
-            status.text("回測中：" + code + " " + stock["name"] + "（" + str(i+1) + "/" + str(total) + "）")
+            status.text("回測中：" + code + " " + stock["name"] + "（" + str(i + 1) + "/" + str(total) + "）")
             prices = get_yahoo_history_15y(code)
             result = run_full_backtest(prices, threshold2)
             if result:
@@ -580,28 +640,28 @@ with tab2:
                     }
                     for h in HORIZONS:
                         rets = y["rets"][h]
+                        dds = y["dds"][h]
                         if not rets:
                             row[str(h) + "天平均報酬%"] = "待觀察"
                             row[str(h) + "天累積報酬%"] = "待觀察"
+                            row[str(h) + "天平均最大回撤%"] = "待觀察"
                         else:
-                            row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets)/len(rets))
-                            cum = 1.0
-                            for r in rets:
-                                cum *= (1 + r/100)
-                            row[str(h) + "天累積報酬%"] = "{:.2f}%".format((cum-1)*100)
+                            row[str(h) + "天平均報酬%"] = "{:.2f}%".format(sum(rets) / len(rets))
+                            row[str(h) + "天累積報酬%"] = "{:.2f}%".format(sum(rets))
+                            row[str(h) + "天平均最大回撤%"] = "{:.2f}%".format(sum(dds) / len(dds))
                     all_rows.append(row)
-            progress.progress((i+1)/total)
+            progress.progress((i + 1) / total)
             time.sleep(0.2)
         progress.empty()
         status.empty()
         if all_rows:
             df_bt = pd.DataFrame(all_rows)
             ret_cols = [c for c in df_bt.columns if "報酬%" in c]
+            dd_cols = [c for c in df_bt.columns if "回撤%" in c]
             st.success("回測完成！")
-            st.dataframe(
-                df_bt.style.map(color_ret, subset=ret_cols),
-                use_container_width=True, hide_index=True
-            )
+            styled = df_bt.style.map(color_ret, subset=ret_cols)
+            styled = styled.map(color_dd, subset=dd_cols)
+            st.dataframe(styled, use_container_width=True, hide_index=True)
             st.download_button("📥 下載CSV", df_bt.to_csv(index=False).encode("utf-8-sig"), "backtest.csv", "text/csv")
         else:
             st.warning("沒有找到任何觸發紀錄")
@@ -621,33 +681,46 @@ with tab3:
         else:
             st.success("成功抓取 " + str(len(prices)) + " 個交易日（" + min(prices.keys()) + " ~ " + max(prices.keys()) + "）")
             with st.spinner("計算各門檻回測中..."):
-                df_win, df_avg, df_cum = build_summary_tables(prices)
+                df_win, df_avg, df_cum, df_dd = build_summary_tables(prices)
+
             ret_cols_avg = [c for c in df_avg.columns if "報酬%" in c]
             ret_cols_cum = [c for c in df_cum.columns if "報酬%" in c]
+            dd_cols = [c for c in df_dd.columns if "回撤%" in c]
+
             st.markdown("### 表A：各門檻 x 觀察天數 勝率")
             st.dataframe(df_win, use_container_width=True, hide_index=True)
+
             st.markdown("### 表B：各門檻 x 觀察天數 平均單次報酬%")
             st.dataframe(df_avg.style.map(color_ret, subset=ret_cols_avg), use_container_width=True, hide_index=True)
-            st.markdown("### 表C：各門檻 x 觀察天數 累積報酬%")
+
+            st.markdown("### 表C：各門檻 x 觀察天數 累積報酬%（所有觸發報酬加總，不除筆數）")
             st.dataframe(df_cum.style.map(color_ret, subset=ret_cols_cum), use_container_width=True, hide_index=True)
+
+            st.markdown("### 表E：各門檻 x 觀察天數 平均最大回撤%")
+            st.caption("每筆觸發在持有期間內，相對進場價的最深跌幅，取平均")
+            st.dataframe(df_dd.style.map(color_dd, subset=dd_cols), use_container_width=True, hide_index=True)
+
             st.info(
                 "計算邏輯說明：\n"
                 "- 每個觸發日各自進場，連續觸發N天即有N筆紀錄\n"
                 "- 年度歸屬以觸發當天為準，報酬計算可跨年度\n"
                 "- 勝率：觀察日當天報酬率大於0%的比例\n"
-                "- 平均報酬%：所有觸發的單次報酬算術平均\n"
-                "- 累積報酬%：所有觸發報酬連乘，模擬每次都跟進的實際績效\n"
+                "- 平均報酬%（表B）：所有觸發的單次報酬算術平均\n"
+                "- 累積報酬%（表C）：所有觸發報酬直接加總，不除筆數，代表總曝險後的總成果\n"
+                "- 平均最大回撤%（表E）：持有期間內最深跌幅的平均，代表最痛時刻的平均深度\n"
                 "- 待觀察：觸發後未滿觀察天數，不計入統計"
             )
+
             thr_val = int(ref_threshold.replace("%", ""))
             df_yearly, result = build_yearly_table(prices, thr_val)
             if df_yearly is not None:
                 st.markdown("### 年度明細（門檻 " + ref_threshold + "）")
                 yearly_ret_cols = [c for c in df_yearly.columns if "報酬%" in c]
-                st.dataframe(
-                    df_yearly.style.map(color_ret, subset=yearly_ret_cols),
-                    use_container_width=True, hide_index=True
-                )
+                yearly_dd_cols = [c for c in df_yearly.columns if "回撤%" in c]
+                styled_yearly = df_yearly.style.map(color_ret, subset=yearly_ret_cols)
+                styled_yearly = styled_yearly.map(color_dd, subset=yearly_dd_cols)
+                st.dataframe(styled_yearly, use_container_width=True, hide_index=True)
+
             st.markdown("### 表D：進場時機比較（門檻 " + ref_threshold + "）")
             st.caption("比較連續觸發第幾天進場，對後續報酬的影響")
             df_timing = build_entry_timing_table(prices, thr_val)
@@ -667,6 +740,7 @@ with tab3:
                 )
             else:
                 st.warning("此門檻無觸發紀錄")
+
             if result:
                 st.markdown("### 股價走勢＋觸發標記（門檻 " + ref_threshold + "）")
                 dates = sorted(prices.keys())
