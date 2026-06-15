@@ -611,8 +611,7 @@ with tab2:
     threshold2 = st.slider("觸發門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t2")
     st.markdown("**選擇回測範圍（可多選，不選預設跑全部ETF）**")
     selected2 = group_selector("tab2")
-    if st.button("🚀 開始回測", type="primary", key="backtest"):
-       all_stocks_bt = get_all_tw_stocks()
+    all_stocks_bt = get_all_tw_stocks()
         if selected2:
             bt_list = [s for s in all_stocks_bt if s["group"] in selected2]
         else:
