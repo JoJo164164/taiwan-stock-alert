@@ -612,6 +612,10 @@ with tab2:
     st.markdown("**選擇回測範圍（可多選，不選預設跑全部ETF）**")
     selected2 = group_selector("tab2")
     if st.button("🚀 開始回測", type="primary", key="backtest"):
+        debug_codes = ["0050", "0056", "00878"]
+        for dc in debug_codes:
+            dp = get_yahoo_history_15y(dc)
+            st.write(dc + " 抓到 " + str(len(dp)) + " 筆資料")
         all_stocks_bt = get_all_tw_stocks()
         if selected2:
             bt_list = [s for s in all_stocks_bt if s["group"] in selected2]
