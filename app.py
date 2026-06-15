@@ -424,17 +424,37 @@ def build_yearly_table(prices_dict, threshold):
 
 
 @st.cache_data(ttl=86400)
-def get_all_tw_stocks():
-    stocks = []
+def get_industry_lookup():
+    lookup = {}
     try:
         url = "https://openapi.twse.com.tw/v1/company/companyInfo"
         res = requests.get(url, timeout=10)
         data = res.json()
         for d in data:
             code = d.get("公司代號", "").strip()
-            name = d.get("公司簡稱", "").strip()
             industry = d.get("產業別", "").strip()
+            if code:
+                lookup[code] = industry
+    except:
+        pass
+    return lookup
+
+
+@st.cache_data(ttl=86400)
+def get_all_tw_stocks():
+    stocks = []
+    industry_lookup = get_industry_lookup()
+    try:
+        url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+        res = requests.get(url, timeout=10)
+        data = res.json()
+        for d in data:
+            code = d.get("Code", "").strip()
+            name = d.get("Name", "").strip()
+            if not code:
+                continue
             t = classify_code(code)
+            industry = industry_lookup.get(code, "")
             group = get_industry_group(industry, t)
             stocks.append({"code": code, "name": name, "market": "上市", "type": t, "industry": industry, "group": group})
     except:
@@ -444,11 +464,14 @@ def get_all_tw_stocks():
         res = requests.get(url, timeout=10)
         data = res.json()
         for d in data:
-            code = d["SecuritiesCompanyCode"].strip()
-            name = d["CompanyName"].strip()
+            code = d.get("SecuritiesCompanyCode", "").strip()
+            name = d.get("CompanyName", "").strip()
+            if not code:
+                continue
             t = classify_code(code)
-            group = get_industry_group("", t)
-            stocks.append({"code": code, "name": name, "market": "上櫃", "type": t, "industry": "", "group": group})
+            industry = industry_lookup.get(code, "")
+            group = get_industry_group(industry, t)
+            stocks.append({"code": code, "name": name, "market": "上櫃", "type": t, "industry": industry, "group": group})
     except:
         pass
     return stocks
