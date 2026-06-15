@@ -615,7 +615,11 @@ with tab2:
         debug_codes = ["0050", "0056", "00878"]
         for dc in debug_codes:
             dp = get_yahoo_history_15y(dc)
-            st.write(dc + " 抓到 " + str(len(dp)) + " 筆資料")
+            res = run_full_backtest(dp, threshold2)
+            if res is None:
+                st.write(dc + " 抓到 " + str(len(dp)) + " 筆資料，門檻 " + str(threshold2) + "%，觸發次數 = 0（None）")
+            else:
+                st.write(dc + " 抓到 " + str(len(dp)) + " 筆資料，門檻 " + str(threshold2) + "%，觸發次數 = " + str(res["total"]))
         all_stocks_bt = get_all_tw_stocks()
         if selected2:
             bt_list = [s for s in all_stocks_bt if s["group"] in selected2]
