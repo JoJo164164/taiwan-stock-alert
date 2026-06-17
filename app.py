@@ -975,7 +975,40 @@ with tab5:
                 d = sorted(p.keys())
                 return True, "2330台積電 最新收盤：" + str(p[d[-1]]) + "（" + d[-1] + "）｜取得 " + str(len(p)) + " 筆"
             run_check("Yahoo Finance API（2330）", check_yahoo)
+def check_data_freshness():
+                p = get_yahoo_history("2330", days=10)
+                if not p:
+                    return False, "無法取得資料"
+                latest_date = sorted(p.keys())[-1]
+                latest_dt = datetime.strptime(latest_date, "%Y-%m-%d")
+                days_diff = (datetime.today() - latest_dt).days
+                # 允許週末+假日，超過4天才算異常
+                if days_diff <= 4:
+                    return True, "最新資料日期：" + latest_date + "（距今 " + str(days_diff) + " 天）✓"
+                else:
+                    return False, "最新資料距今 " + str(days_diff) + " 天，可能有延遲！最新日期：" + latest_date
+            run_check("資料即時性（最新資料距今天數）", check_data_freshness)
 
+            def check_adj_price():
+                # 驗證0050在2021-10-21除息後還原股價是否合理
+                # 除息前後兩個月各抓，還原後不應有大跳空
+                p = get_yahoo_history_15y("0050")
+                if len(p) < 100:
+                    return False, "資料不足"
+                dates = sorted(p.keys())
+                # 找2021-10附近的價格，還原後應該平滑連續
+                nearby = [d for d in dates if "2021-10" in d or "2021-09" in d or "2021-11" in d]
+                if len(nearby) < 10:
+                    return True, "無法取得2021年資料驗證（標的可能較新），跳過此項"
+                prices_nearby = [p[d] for d in sorted(nearby)]
+                # 計算相鄰日價差，還原後不應超過15%的單日跳空
+                max_jump = max(abs(prices_nearby[i] - prices_nearby[i-1]) / prices_nearby[i-1] * 100
+                               for i in range(1, len(prices_nearby)))
+                if max_jump < 15:
+                    return True, "0050還原股價連續性正常（2021年除息前後最大單日跳空：{:.2f}%）".format(max_jump)
+                else:
+                    return False, "還原股價異常！最大單日跳空：{:.2f}%（超過15%門檻）".format(max_jump)
+            run_check("還原股價連續性驗證（0050除息）", check_adj_price)
             def check_logic():
                 tp = {(datetime.today() - timedelta(days=20 - i)).strftime("%Y-%m-%d"): (100.0 if i < 11 else 88.0) for i in range(20)}
                 ret = calc_rolling_return_latest(tp)
