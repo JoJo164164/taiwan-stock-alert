@@ -4,7 +4,6 @@ import requests
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import time
-import numpy as np
 
 INDUSTRY_GROUP = {
     "被動ETF": [], "主動ETF": [],
@@ -168,10 +167,8 @@ def calc_all_rolling_returns(prices_dict):
         if base_price > 0:
             ret = (curr_price - base_price) / base_price * 100
             results.append({
-                "date": dates[i],
-                "base_date": dates[i - 10],
-                "base_price": base_price,
-                "curr_price": curr_price,
+                "date": dates[i], "base_date": dates[i - 10],
+                "base_price": base_price, "curr_price": curr_price,
                 "return": round(ret, 2)
             })
     return results
@@ -188,8 +185,7 @@ def run_full_backtest(prices_dict, threshold):
         return None
 
     trigger_dates = set(t["date"] for t in triggers)
-    max_consecutive = 0
-    current_consecutive = 0
+    max_consecutive = current_consecutive = 0
     for r in rolling:
         if r["date"] in trigger_dates:
             current_consecutive += 1
@@ -220,18 +216,15 @@ def run_full_backtest(prices_dict, threshold):
                         r = (p - entry_price) / entry_price * 100
                         if r < min_ret:
                             min_ret = r
-                horizon_drawdowns[h].append({"dd": round(min_ret, 2), "year": year, "date": t["date"]})
+                horizon_drawdowns[h].append({"dd": round(min_ret, 2), "year": year})
 
     yearly = {}
     for t in triggers:
         year = t["date"][:4]
         if year not in yearly:
-            yearly[year] = {
-                "trigger_dates": set(),
-                "max_consec": 0,
-                "rets": {hh: [] for hh in HORIZONS},
-                "dds": {hh: [] for hh in HORIZONS},
-            }
+            yearly[year] = {"trigger_dates": set(), "max_consec": 0,
+                            "rets": {hh: [] for hh in HORIZONS},
+                            "dds": {hh: [] for hh in HORIZONS}}
         yearly[year]["trigger_dates"].add(t["date"])
 
     for h in HORIZONS:
@@ -254,19 +247,13 @@ def run_full_backtest(prices_dict, threshold):
                 cc = 0
         yearly[year]["max_consec"] = mc
 
-    return {
-        "triggers": triggers,
-        "trigger_dates": list(trigger_dates),
-        "max_consecutive": max_consecutive,
-        "horizon_rets": horizon_rets,
-        "horizon_drawdowns": horizon_drawdowns,
-        "yearly": yearly,
-        "total": len(triggers)
-    }
+    return {"triggers": triggers, "trigger_dates": list(trigger_dates),
+            "max_consecutive": max_consecutive, "horizon_rets": horizon_rets,
+            "horizon_drawdowns": horizon_drawdowns, "yearly": yearly, "total": len(triggers)}
 
 
 # ==============================
-# 顏色函數
+# 顏色與樣式函數
 # ==============================
 def color_ret(val):
     if val is None or str(val) in ["", "---", "待觀察"]:
@@ -300,9 +287,8 @@ def color_winrate(val):
         return ""
 
 
-def heatmap_ret_style(df, cols):
-    """熱力圖：正報酬用紅色深淺（越高越深），負報酬用綠色深淺"""
-    styled = df.style
+def heatmap_positive(df, cols):
+    """正報酬熱力圖：越高越深紅，負報酬越深綠，確保文字可讀"""
     all_vals = []
     for c in cols:
         for v in df[c]:
@@ -310,8 +296,6 @@ def heatmap_ret_style(df, cols):
                 all_vals.append(float(str(v).replace("%", "")))
             except:
                 pass
-    if not all_vals:
-        return styled
     max_pos = max((v for v in all_vals if v > 0), default=1)
     min_neg = min((v for v in all_vals if v < 0), default=-1)
 
@@ -322,24 +306,56 @@ def heatmap_ret_style(df, cols):
             v = float(str(val).replace("%", ""))
             if v > 0:
                 intensity = min(v / max_pos, 1.0)
-                r = int(255 - intensity * 80)
-                g = int(200 - intensity * 180)
-                b = int(200 - intensity * 180)
-                text_color = "white" if intensity > 0.5 else "#8B0000"
-                return "background-color: rgb({},{},{}); color: {}; font-weight: bold".format(r, g, b, text_color)
+                # 淺到深紅：從 #FFE0E0 到 #8B0000
+                r = int(255 - intensity * 115)
+                g = int(224 - intensity * 224)
+                b = int(224 - intensity * 224)
+                text = "white" if intensity > 0.55 else "#8B0000"
+                return "background-color: rgb({},{},{}); color: {}; font-weight: bold".format(r, g, b, text)
             elif v < 0:
                 intensity = min(abs(v) / abs(min_neg), 1.0)
-                r = int(200 - intensity * 160)
-                g = int(255 - intensity * 80)
-                b = int(200 - intensity * 160)
-                text_color = "white" if intensity > 0.5 else "#006400"
-                return "background-color: rgb({},{},{}); color: {}; font-weight: bold".format(r, g, b, text_color)
-            else:
-                return ""
+                # 淺到深綠：從 #E0FFE0 到 #006400
+                r = int(224 - intensity * 224)
+                g = int(255 - intensity * 111)
+                b = int(224 - intensity * 224)
+                text = "white" if intensity > 0.55 else "#006400"
+                return "background-color: rgb({},{},{}); color: {}; font-weight: bold".format(r, g, b, text)
+            return ""
         except:
             return ""
 
-    return styled.map(cell_style, subset=cols)
+    return df.style.map(cell_style, subset=cols)
+
+
+def heatmap_negative(df, cols):
+    """回撤熱力圖：越深（越負）越深橘/紅，代表風險越高"""
+    all_vals = []
+    for c in cols:
+        for v in df[c]:
+            try:
+                all_vals.append(float(str(v).replace("%", "")))
+            except:
+                pass
+    min_neg = min((v for v in all_vals if v < 0), default=-1)
+
+    def cell_style(val):
+        if val is None or str(val) in ["", "---", "待觀察"]:
+            return ""
+        try:
+            v = float(str(val).replace("%", ""))
+            if v < 0:
+                intensity = min(abs(v) / abs(min_neg), 1.0)
+                # 淺黃到深橘紅：代表回撤越深風險越高
+                r = int(255)
+                g = int(255 - intensity * 180)
+                b = int(200 - intensity * 200)
+                text = "white" if intensity > 0.65 else "#8B2500"
+                return "background-color: rgb({},{},{}); color: {}; font-weight: bold".format(r, g, b, text)
+            return ""
+        except:
+            return ""
+
+    return df.style.map(cell_style, subset=cols)
 
 
 def fmt(v):
@@ -348,100 +364,78 @@ def fmt(v):
     return "{:.2f}%".format(v)
 
 
-def show_html(df):
-    st.markdown(df.to_html(index=False), unsafe_allow_html=True)
+def show_html(styled_or_df):
+    if hasattr(styled_or_df, "to_html"):
+        st.markdown(styled_or_df.to_html(index=False), unsafe_allow_html=True)
+    else:
+        st.markdown(styled_or_df.to_html(index=False), unsafe_allow_html=True)
 
 
 # ==============================
-# 建立整合總覽表 (A+B+C+E合一)
+# 建立整合總覽表（A/B/E）
 # ==============================
-def build_summary_integrated(prices_dict):
-    rows = []
+def build_summary_tables(prices_dict):
+    """建立三張總覽表：勝率、平均報酬、最大回撤（格式：門檻 x 觀察天數）"""
+    win_rows, avg_rows, dd_rows = [], [], []
     for thr in THRESHOLDS:
         result = run_full_backtest(prices_dict, thr)
-        row = {"觸發門檻": str(thr) + "%", "樣本數": 0 if result is None else result["total"]}
+        win_row = {"觸發門檻": str(thr) + "%", "樣本數": 0 if result is None else result["total"]}
+        avg_row = {"觸發門檻": str(thr) + "%", "樣本數": 0 if result is None else result["total"]}
+        dd_row = {"觸發門檻": str(thr) + "%", "樣本數": 0 if result is None else result["total"]}
         for h in HORIZONS:
+            col_w = str(h) + "天勝率"
+            col_a = str(h) + "天平均報酬%"
+            col_d = str(h) + "天平均最大回撤%"
             if result is None:
-                row[str(h) + "天勝率"] = "---"
-                row[str(h) + "天平均%"] = "---"
-                row[str(h) + "天累積%"] = "---"
-                row[str(h) + "天回撤%"] = "---"
+                win_row[col_w] = "---"
+                avg_row[col_a] = "---"
+                dd_row[col_d] = "---"
             else:
                 rets = [x["ret"] for x in result["horizon_rets"][h]]
                 dds = [x["dd"] for x in result["horizon_drawdowns"][h]]
                 if not rets:
-                    row[str(h) + "天勝率"] = "待觀察"
-                    row[str(h) + "天平均%"] = "待觀察"
-                    row[str(h) + "天累積%"] = "待觀察"
-                    row[str(h) + "天回撤%"] = "待觀察"
+                    win_row[col_w] = "待觀察"
+                    avg_row[col_a] = "待觀察"
+                    dd_row[col_d] = "待觀察"
                 else:
                     wins = sum(1 for r in rets if r > 0)
-                    row[str(h) + "天勝率"] = "{:.2f}%".format(wins / len(rets) * 100)
-                    row[str(h) + "天平均%"] = "{:.2f}%".format(sum(rets) / len(rets))
-                    row[str(h) + "天累積%"] = "{:.2f}%".format(sum(rets))
-                    row[str(h) + "天回撤%"] = "{:.2f}%".format(sum(dds) / len(dds))
-        rows.append(row)
-    return pd.DataFrame(rows)
+                    win_row[col_w] = "{:.2f}%".format(wins / len(rets) * 100)
+                    avg_row[col_a] = "{:.2f}%".format(sum(rets) / len(rets))
+                    dd_row[col_d] = "{:.2f}%".format(sum(dds) / len(dds))
+        win_rows.append(win_row)
+        avg_rows.append(avg_row)
+        dd_rows.append(dd_row)
+    return pd.DataFrame(win_rows), pd.DataFrame(avg_rows), pd.DataFrame(dd_rows)
 
 
 # ==============================
-# 建立年度明細（分5張表）
+# 年度明細：一張表，只留平均報酬（簡潔可讀）
 # ==============================
-def build_yearly_tables(prices_dict, threshold):
+def build_yearly_table(prices_dict, threshold):
     result = run_full_backtest(prices_dict, threshold)
     if not result:
         return None, None
-
-    base_rows = []
+    rows = []
     for year in sorted(result["yearly"].keys()):
         y = result["yearly"][year]
-        base_rows.append({
-            "年度": year,
-            "觸發次數": len(y["trigger_dates"]),
-            "最長連續觸發": y["max_consec"],
-        })
-    # 合計列
-    base_rows.append({
-        "年度": "合計/平均",
-        "觸發次數": result["total"],
-        "最長連續觸發": result["max_consecutive"],
-    })
-
-    tables = {}
-    for h in HORIZONS:
-        rows = []
-        for year in sorted(result["yearly"].keys()):
-            y = result["yearly"][year]
+        row = {"年度": year, "觸發次數": len(y["trigger_dates"]), "最長連續觸發": y["max_consec"]}
+        for h in HORIZONS:
             rets = y["rets"][h]
-            dds = y["dds"][h]
-            rows.append({
-                "年度": year,
-                "觸發次數": len(y["trigger_dates"]),
-                "最長連續觸發": y["max_consec"],
-                str(h) + "天平均%": fmt(round(sum(rets) / len(rets), 2) if rets else None),
-                str(h) + "天累積%": fmt(round(sum(rets), 2) if rets else None),
-                str(h) + "天回撤%": fmt(round(sum(dds) / len(dds), 2) if dds else None),
-            })
-        # 合計
-        rets_all = [x["ret"] for x in result["horizon_rets"][h]]
-        dds_all = [x["dd"] for x in result["horizon_drawdowns"][h]]
-        rows.append({
-            "年度": "合計/平均",
-            "觸發次數": result["total"],
-            "最長連續觸發": result["max_consecutive"],
-            str(h) + "天平均%": fmt(round(sum(rets_all) / len(rets_all), 2) if rets_all else None),
-            str(h) + "天累積%": fmt(round(sum(rets_all), 2) if rets_all else None),
-            str(h) + "天回撤%": fmt(round(sum(dds_all) / len(dds_all), 2) if dds_all else None),
-        })
-        tables[h] = pd.DataFrame(rows)
-
-    return tables, result
+            row[str(h) + "天平均%"] = fmt(round(sum(rets) / len(rets), 2) if rets else None)
+        rows.append(row)
+    # 合計列
+    total_row = {"年度": "合計/平均", "觸發次數": result["total"], "最長連續觸發": result["max_consecutive"]}
+    for h in HORIZONS:
+        rets = [x["ret"] for x in result["horizon_rets"][h]]
+        total_row[str(h) + "天平均%"] = fmt(round(sum(rets) / len(rets), 2) if rets else None)
+    rows.append(total_row)
+    return pd.DataFrame(rows), result
 
 
 # ==============================
-# 建立進場時機表（分5張）
+# 進場時機：單一天數，四時機橫向比較
 # ==============================
-def build_entry_timing_tables(prices_dict, threshold):
+def build_entry_timing_table(prices_dict, threshold, horizon):
     rolling = calc_all_rolling_returns(prices_dict)
     if not rolling:
         return None
@@ -461,12 +455,7 @@ def build_entry_timing_tables(prices_dict, threshold):
         else:
             cc = 0
 
-    groups = {
-        "連續第1天進場": [],
-        "連續第2天進場": [],
-        "連續第3天以後進場": [],
-        "連續結束翌日進場": [],
-    }
+    groups = {"連續第1天進場": [], "連續第2天進場": [], "連續第3天以後進場": [], "連續結束翌日進場": []}
     rolling_list = list(rolling)
     for i, r in enumerate(rolling_list):
         d = r["date"]
@@ -476,47 +465,39 @@ def build_entry_timing_tables(prices_dict, threshold):
                 if idx is None:
                     continue
                 ep = r["curr_price"]
-                rets = {}
-                for h in HORIZONS:
-                    fi = idx + h
-                    rets[h] = round((prices_dict[dates[fi]] - ep) / ep * 100, 2) if fi < len(dates) else None
-                groups["連續結束翌日進場"].append({"rets": rets})
+                fi = idx + horizon
+                ret = round((prices_dict[dates[fi]] - ep) / ep * 100, 2) if fi < len(dates) else None
+                groups["連續結束翌日進場"].append(ret)
         else:
             day_num = consec_day.get(d, 1)
             idx = date_to_idx.get(d)
             if idx is None:
                 continue
             ep = r["curr_price"]
-            rets = {}
-            for h in HORIZONS:
-                fi = idx + h
-                rets[h] = round((prices_dict[dates[fi]] - ep) / ep * 100, 2) if fi < len(dates) else None
-            item = {"rets": rets}
+            fi = idx + horizon
+            ret = round((prices_dict[dates[fi]] - ep) / ep * 100, 2) if fi < len(dates) else None
             if day_num == 1:
-                groups["連續第1天進場"].append(item)
+                groups["連續第1天進場"].append(ret)
             elif day_num == 2:
-                groups["連續第2天進場"].append(item)
+                groups["連續第2天進場"].append(ret)
             else:
-                groups["連續第3天以後進場"].append(item)
+                groups["連續第3天以後進場"].append(ret)
 
-    tables = {}
-    for h in HORIZONS:
-        rows = []
-        for gname, items in groups.items():
-            row = {"進場時機": gname, "樣本數": len(items)}
-            rets = [x["rets"][h] for x in items if x["rets"].get(h) is not None]
-            if not rets:
-                row[str(h) + "天勝率"] = "---"
-                row[str(h) + "天平均%"] = "---"
-                row[str(h) + "天累積%"] = "---"
-            else:
-                wins = sum(1 for r in rets if r > 0)
-                row[str(h) + "天勝率"] = "{:.2f}%".format(wins / len(rets) * 100)
-                row[str(h) + "天平均%"] = "{:.2f}%".format(sum(rets) / len(rets))
-                row[str(h) + "天累積%"] = "{:.2f}%".format(sum(rets))
-            rows.append(row)
-        tables[h] = pd.DataFrame(rows)
-    return tables
+    rows = []
+    for gname, rets_raw in groups.items():
+        rets = [r for r in rets_raw if r is not None]
+        row = {"進場時機": gname, "樣本數": len(rets_raw)}
+        if not rets:
+            row["勝率"] = "---"
+            row["平均報酬%"] = "---"
+            row["累積報酬%"] = "---"
+        else:
+            wins = sum(1 for r in rets if r > 0)
+            row["勝率"] = "{:.2f}%".format(wins / len(rets) * 100)
+            row["平均報酬%"] = "{:.2f}%".format(sum(rets) / len(rets))
+            row["累積報酬%"] = "{:.2f}%".format(sum(rets))
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 @st.cache_data(ttl=86400)
@@ -589,7 +570,7 @@ tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 # ==============================
-# TAB 0
+# TAB 0: 使用說明
 # ==============================
 with tab0:
     st.markdown("## 系統使用說明")
@@ -605,7 +586,8 @@ with tab0:
 - 🔴 **紅色文字** = 正數（獲利）
 - 🟢 **綠色文字** = 負數（虧損）
 - 🟠 **橘色背景** = 勝率 ≥ 80%
-- **報酬熱力圖**：正報酬越深紅越高，負報酬越深綠越低
+- **報酬熱力圖**：越深紅 = 報酬越高，越深綠 = 報酬越低（虧損越深）
+- **回撤熱力圖**：越深橘紅 = 回撤越深 = 持有過程越痛苦
     """)
     st.divider()
     st.markdown("### 觀察天數說明")
@@ -618,38 +600,38 @@ with tab0:
 | 100天 | 5個月 | 半年趨勢 |
 | 200天 | 1年 | 年線修復 |
 
-> **建議中長線投資者**：主要參考100天及200天的勝率與報酬
+> **中長線投資者建議**：主要參考 100天 及 200天 的勝率與報酬
     """)
     st.divider()
     st.markdown("### 全市場勝率排行：參數說明")
     st.markdown("""
 - **觀察天數**：你進場後要持有多久再看結果。選100天代表「觸發後持有5個月的勝率」
-- **最低觸發次數**：過濾掉樣本太少的股票，避免只觸發1次就100%勝率的假象。建議設8~10次以上
-- 中長線投資者建議：觀察天數選**100天或200天**，最低觸發次數設**8次以上**
+- **最低觸發次數**：過濾掉樣本太少的股票，避免只觸發1次就100%勝率的假象
+- 中長線投資者建議：觀察天數選 **100天或200天**，最低觸發次數設 **8次以上**
     """)
     st.divider()
     st.markdown("### 核心表格說明")
     st.markdown("""
 | 表格 | 用途 |
 |------|------|
-| 勝率（表A） | 觸發後持有N天，收益為正的機率（≥80%橘色highlight） |
-| 平均報酬%（表B） | 平均每次觸發進場，持有N天的平均單筆獲利 |
-| 累積報酬%（表C） | 所有觸發報酬直接加總，不除筆數 |
-| 進場時機（表D） | 連續觸發第幾天進場效果最好 |
-| 平均最大回撤%（表E） | 持有期間內最深跌幅的平均值 |
+| 表A 勝率 | 觸發後持有N天，收益為正的機率（≥80%橘色highlight） |
+| 表B 平均報酬% | 平均每次觸發進場，持有N天的平均獲利（熱力圖：越深紅越好） |
+| 表E 平均最大回撤% | 持有期間內最深跌幅平均（熱力圖：越深橘紅風險越高） |
+| 年度明細 | 各年度觸發次數與平均報酬，一眼看出哪幾年表現最好 |
+| 進場時機（表D） | 連續觸發第幾天進場勝率最高（搭配觀察天數選單切換） |
     """)
     st.divider()
     st.markdown("### 建議使用流程")
     st.markdown("""
 1. **全市場勝率排行** → 找出各門檻下勝率最高的股票群
-2. **批次回測** → 針對特定產業深入分析
+2. **批次回測** → 針對特定產業深入分析年度表現
 3. **個股回測** → 找出最適合的進場門檻與時機
 4. **每日警示掃描** → 每天收盤後檢查當天觸發標的
     """)
     st.warning("本系統為輔助研究工具，不構成投資建議。歷史回測不代表未來績效。")
 
 # ==============================
-# TAB 1: 每日警示
+# TAB 1: 每日警示掃描
 # ==============================
 with tab1:
     threshold1 = st.slider("警示門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t1")
@@ -715,8 +697,7 @@ with tab2:
 
         total = len(bt_list)
         st.info("共 " + str(total) + " 檔，開始回測...")
-        # 分5張表收集
-        all_rows = {h: [] for h in HORIZONS}
+        all_rows = []
         progress = st.progress(0)
         status = st.empty()
 
@@ -729,22 +710,16 @@ with tab2:
             if result:
                 for year in sorted(result["yearly"].keys()):
                     y = result["yearly"][year]
-                    base = {
-                        "產業群組": stock["group"],
-                        "代碼": code,
-                        "名稱": stock["name"],
-                        "年度": year,
-                        "觸發次數": len(y["trigger_dates"]),
-                        "最長連續觸發": y["max_consec"],
+                    row = {
+                        "產業群組": stock["group"], "代碼": code, "名稱": stock["name"],
+                        "年度": year, "觸發次數": len(y["trigger_dates"]), "最長連續觸發": y["max_consec"],
                     }
                     for h in HORIZONS:
                         rets = y["rets"][h]
                         dds = y["dds"][h]
-                        row = dict(base)
                         row[str(h) + "天平均%"] = fmt(round(sum(rets) / len(rets), 2) if rets else None)
-                        row[str(h) + "天累積%"] = fmt(round(sum(rets), 2) if rets else None)
                         row[str(h) + "天回撤%"] = fmt(round(sum(dds) / len(dds), 2) if dds else None)
-                        all_rows[h].append(row)
+                    all_rows.append(row)
 
             progress.progress((i + 1) / total)
             time.sleep(0.2)
@@ -752,23 +727,21 @@ with tab2:
         progress.empty()
         status.empty()
 
-        has_data = any(len(all_rows[h]) > 0 for h in HORIZONS)
-        if has_data:
+        if all_rows:
+            df_bt = pd.DataFrame(all_rows)
+            avg_cols = [str(h) + "天平均%" for h in HORIZONS]
+            dd_cols = [str(h) + "天回撤%" for h in HORIZONS]
             st.success("✅ 回測完成！")
-            for h in HORIZONS:
-                if not all_rows[h]:
-                    continue
-                df_bt = pd.DataFrame(all_rows[h])
-                ret_cols = [str(h) + "天平均%", str(h) + "天累積%"]
-                dd_cols = [str(h) + "天回撤%"]
-                st.markdown("#### " + str(h) + " 天觀察")
-                styled = heatmap_ret_style(df_bt, ret_cols)
-                styled = styled.map(color_dd, subset=dd_cols)
-                show_html(styled)
-                st.divider()
-            st.download_button("📥 下載CSV（10天）",
-                pd.DataFrame(all_rows[10]).to_csv(index=False).encode("utf-8-sig"),
-                "backtest_10d.csv", "text/csv")
+            styled = heatmap_positive(df_bt, avg_cols)
+            styled = heatmap_negative(df_bt.style, dd_cols) if hasattr(df_bt, "style") else styled
+            # 分兩段顯示：報酬 + 回撤
+            st.markdown("**報酬表（熱力圖：越深紅報酬越高）**")
+            avg_display = df_bt[["產業群組", "代碼", "名稱", "年度", "觸發次數", "最長連續觸發"] + avg_cols]
+            show_html(heatmap_positive(avg_display, avg_cols))
+            st.markdown("**回撤表（熱力圖：越深橘紅回撤越深）**")
+            dd_display = df_bt[["產業群組", "代碼", "名稱", "年度", "觸發次數", "最長連續觸發"] + dd_cols]
+            show_html(heatmap_negative(dd_display, dd_cols))
+            st.download_button("📥 下載CSV", df_bt.to_csv(index=False).encode("utf-8-sig"), "backtest.csv", "text/csv")
         else:
             st.warning("沒有找到任何觸發紀錄")
 
@@ -781,7 +754,7 @@ with tab3:
     with col1:
         single_code = st.text_input("輸入股票／ETF代碼", value="0050", key="single")
     with col2:
-        ref_threshold = st.selectbox("線圖與年度明細顯示門檻", [str(t) + "%" for t in THRESHOLDS], index=2, key="ref_thr")
+        ref_threshold = st.selectbox("年度明細與進場時機顯示門檻", [str(t) + "%" for t in THRESHOLDS], index=2, key="ref_thr")
 
     if st.button("🔬 開始分析", type="primary", key="single_bt"):
         with st.spinner("抓取 " + single_code + " 15年資料中..."):
@@ -793,72 +766,76 @@ with tab3:
             st.success("成功抓取 " + str(len(prices)) + " 個交易日（" + min(prices.keys()) + " ~ " + max(prices.keys()) + "）")
 
             with st.spinner("計算各門檻回測中..."):
-                df_summary = build_summary_integrated(prices)
+                df_win, df_avg, df_dd = build_summary_tables(prices)
+
+            win_cols = [str(h) + "天勝率" for h in HORIZONS]
+            avg_cols = [str(h) + "天平均報酬%" for h in HORIZONS]
+            dd_cols = [str(h) + "天平均最大回撤%" for h in HORIZONS]
 
             # 表A：勝率
-            win_cols = [str(h) + "天勝率" for h in HORIZONS]
-            st.markdown("### 表A：勝率（各門檻 x 觀察天數）｜橘色 ≥ 80%")
-            win_display = df_summary[["觸發門檻", "樣本數"] + win_cols]
-            show_html(win_display.style.map(color_winrate, subset=win_cols))
+            st.markdown("### 表A：勝率（各門檻 × 觀察天數）｜橘色 ≥ 80%")
+            st.caption("勝率 = 觸發進場後，持有到觀察天數當天收益為正的比例")
+            show_html(df_win.style.map(color_winrate, subset=win_cols))
 
-            # 表B/C/E：分5張（每天數一張）
-            st.markdown("### 表B/C/E：報酬與回撤（每觀察天數一張）")
-            st.caption("平均%：平均單次報酬 ｜ 累積%：所有觸發加總 ｜ 回撤%：持有期間最深跌幅平均")
-            for h in HORIZONS:
-                avg_col = str(h) + "天平均%"
-                cum_col = str(h) + "天累積%"
-                dd_col = str(h) + "天回撤%"
-                sub = df_summary[["觸發門檻", "樣本數", avg_col, cum_col, dd_col]]
-                st.markdown("**" + str(h) + " 天**")
-                ret_cols_h = [avg_col, cum_col]
-                styled = heatmap_ret_style(sub, ret_cols_h)
-                styled = styled.map(color_dd, subset=[dd_col])
-                show_html(styled)
+            # 表B：平均報酬（熱力圖）
+            st.markdown("### 表B：平均單次報酬%（各門檻 × 觀察天數）")
+            st.caption("每次觸發進場後，持有到觀察天數的平均報酬。越深紅 = 報酬越高")
+            show_html(heatmap_positive(df_avg, avg_cols))
+
+            # 表E：平均最大回撤（熱力圖）
+            st.markdown("### 表E：平均最大回撤%（各門檻 × 觀察天數）")
+            st.caption("觸發進場後，持有期間曾經最深跌到多少。越深橘紅 = 持有過程越痛苦，需有心理準備")
+            show_html(heatmap_negative(df_dd, dd_cols))
 
             st.info(
                 "計算邏輯：\n"
                 "- 每個觸發日各自進場，連續觸發N天即有N筆紀錄\n"
-                "- 勝率：觀察日報酬 > 0% 的比例\n"
-                "- 平均%：所有觸發的單次報酬算術平均\n"
-                "- 累積%：所有觸發報酬直接加總，不除筆數\n"
-                "- 回撤%：持有期間內最深跌幅的平均\n"
+                "- 勝率：觀察天數當天報酬 > 0% 的比例\n"
+                "- 平均報酬%：所有觸發單次報酬的算術平均\n"
+                "- 最大回撤%：每筆觸發在持有期間曾出現的最深跌幅，取平均\n"
                 "- 待觀察：觸發後未滿觀察天數，不計入統計"
             )
 
             thr_val = int(ref_threshold.replace("%", ""))
 
-            # 年度明細（分5張）
-            yearly_tables, result = build_yearly_tables(prices, thr_val)
-            if yearly_tables:
+            # 年度明細：一張表，只顯示平均報酬，有熱力圖
+            df_yearly, result = build_yearly_table(prices, thr_val)
+            if df_yearly is not None:
+                yearly_avg_cols = [str(h) + "天平均%" for h in HORIZONS]
                 st.markdown("### 年度明細（門檻 " + ref_threshold + "）")
-                for h in HORIZONS:
-                    df_y = yearly_tables[h]
-                    ret_cols_y = [str(h) + "天平均%", str(h) + "天累積%"]
-                    dd_cols_y = [str(h) + "天回撤%"]
-                    st.markdown("**" + str(h) + " 天**")
-                    styled_y = heatmap_ret_style(df_y, ret_cols_y)
-                    styled_y = styled_y.map(color_dd, subset=dd_cols_y)
-                    show_html(styled_y)
+                st.caption(
+                    "各年度觸發次數與各持有天數的平均報酬。\n"
+                    "解讀重點：橫向看哪個持有天數報酬最穩；縱向看哪幾年跌破門檻後反彈最強。"
+                )
+                show_html(heatmap_positive(df_yearly, yearly_avg_cols))
 
-            # 表D：進場時機（分5張）
-            timing_tables = build_entry_timing_tables(prices, thr_val)
-            if timing_tables:
-                st.markdown("### 表D：進場時機比較（門檻 " + ref_threshold + "）")
-                st.caption("連續第幾天進場效果最好？")
-                for h in HORIZONS:
-                    df_t = timing_tables[h]
-                    ret_cols_t = [str(h) + "天平均%", str(h) + "天累積%"]
-                    win_col_t = [str(h) + "天勝率"]
-                    st.markdown("**" + str(h) + " 天**")
-                    styled_t = heatmap_ret_style(df_t, ret_cols_t)
-                    styled_t = styled_t.map(color_winrate, subset=win_col_t)
-                    show_html(styled_t)
-                st.info(
-                    "進場時機說明：\n"
-                    "- 連續第1天：跌幅首次觸發門檻當天進場\n"
-                    "- 連續第2天：已連續觸發2天第2天進場\n"
-                    "- 連續第3天以後：連續觸發3天以上每天進場\n"
-                    "- 連續結束翌日：連續觸發結束後第一天進場（止跌確認）"
+            # 進場時機：選單切換天數，單一張表四時機比較
+            st.markdown("### 進場時機比較（表D）｜門檻 " + ref_threshold + "）")
+            st.caption(
+                "連續觸發第幾天進場勝率最高？\n"
+                "解讀重點：比較四種進場時機的勝率與報酬，找出最佳切入點。\n"
+                "切換下方天數選單，觀察不同持有長度下各進場時機的差異。"
+            )
+            horizon_choice = st.selectbox(
+                "選擇觀察天數",
+                [str(h) + "天" for h in HORIZONS],
+                index=2,
+                key="timing_horizon"
+            )
+            h_timing = int(horizon_choice.replace("天", ""))
+            df_timing = build_entry_timing_table(prices, thr_val, h_timing)
+            if df_timing is not None:
+                ret_cols_t = ["平均報酬%", "累積報酬%"]
+                win_col_t = ["勝率"]
+                styled_t = heatmap_positive(df_timing, ret_cols_t)
+                styled_t = styled_t.map(color_winrate, subset=win_col_t)
+                show_html(styled_t)
+                st.caption(
+                    "四種進場時機說明：\n"
+                    "• 連續第1天：跌幅首次觸發門檻當天進場（最早，風險最高但數量最多）\n"
+                    "• 連續第2天：已連續觸發2天才進場（稍微確認下跌趨勢）\n"
+                    "• 連續第3天以後：連續觸發3天以上才進場（等待更深的超跌）\n"
+                    "• 連續結束翌日：連續觸發全部結束、止跌後第一天進場（最保守，確認止跌）"
                 )
             else:
                 st.warning("此門檻無觸發紀錄")
@@ -911,8 +888,8 @@ with tab4:
 
     if st.button("🏆 開始計算勝率排行", type="primary", key="winrank"):
         all_stocks_r = get_all_tw_stocks()
-        rank_list = [s for s in all_stocks_r if s["group"] in selected4] if selected4 else [s for s in all_stocks_r if s["type"] == "個股"]
-
+        rank_list = ([s for s in all_stocks_r if s["group"] in selected4]
+                     if selected4 else [s for s in all_stocks_r if s["type"] == "個股"])
         h_val = int(horizon4.replace("天", ""))
         total = len(rank_list)
         st.info("共 " + str(total) + " 檔，開始計算...")
@@ -961,8 +938,7 @@ with tab4:
             st.caption("產業分布：" + industry_str)
             df_rank["勝率%"] = df_rank["勝率%"].apply(lambda x: "{:.2f}%".format(x))
             df_rank["平均報酬%"] = df_rank["平均報酬%"].apply(lambda x: "{:.2f}%".format(x))
-            styled_rank = df_rank.style.map(color_winrate, subset=["勝率%"]).map(color_ret, subset=["平均報酬%"])
-            show_html(styled_rank)
+            show_html(df_rank.style.map(color_winrate, subset=["勝率%"]).map(color_ret, subset=["平均報酬%"]))
             st.divider()
 
 # ==============================
@@ -982,52 +958,45 @@ with tab5:
             except Exception as e:
                 checks.append({"項目": name, "狀態": "❌ 失敗", "說明": str(e)})
 
-        def check_twse():
-            res = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10)
-            data = res.json()
-            return len(data) > 100, "取得 " + str(len(data)) + " 筆上市證券"
-
-        def check_tpex():
-            res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=10)
-            data = res.json()
-            return len(data) > 50, "取得 " + str(len(data)) + " 筆上櫃證券"
-
-        def check_yahoo():
-            p = get_yahoo_history("2330", days=60)
-            if len(p) < 10:
-                return False, "資料筆數不足：" + str(len(p))
-            dates_c = sorted(p.keys())
-            return True, "2330台積電 最新收盤：" + str(p[dates_c[-1]]) + "（" + dates_c[-1] + "）｜取得 " + str(len(p)) + " 筆"
-
-        def check_logic():
-            tp = {}
-            for i in range(20):
-                d = (datetime.today() - timedelta(days=20 - i)).strftime("%Y-%m-%d")
-                tp[d] = 100.0 if i < 11 else 88.0
-            ret = calc_rolling_return_latest(tp)
-            ok = ret is not None and abs(ret - (-12.0)) < 0.01
-            return ok, "計算結果：{:.2f}%（預期 -12.00%）{}".format(ret or 0, "✓" if ok else "✗")
-
-        def check_15y():
-            p = get_yahoo_history_15y("0050")
-            if len(p) < 1000:
-                return False, "資料筆數不足：" + str(len(p))
-            dates_c = sorted(p.keys())
-            return True, "0050 取得 " + str(len(p)) + " 日（" + dates_c[0] + " ~ " + dates_c[-1] + "）還原後股價"
-
-        def check_trigger():
-            p = get_yahoo_history_15y("2330")
-            r = run_full_backtest(p, -7)
-            if r and r["total"] > 0:
-                return True, "2330 @-7%：觸發 " + str(r["total"]) + " 次，最長連續 " + str(r["max_consecutive"]) + " 天"
-            return False, "觸發次數為0"
-
         with st.spinner("執行中..."):
-            run_check("證交所TWSE API", check_twse)
-            run_check("櫃買中心TPEX API", check_tpex)
+            run_check("證交所TWSE API", lambda: (
+                len(requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10).json()) > 100,
+                "取得 " + str(len(requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10).json())) + " 筆上市證券"
+            ))
+            run_check("櫃買中心TPEX API", lambda: (
+                len(requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=10).json()) > 50,
+                "取得 " + str(len(requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=10).json())) + " 筆上櫃證券"
+            ))
+
+            def check_yahoo():
+                p = get_yahoo_history("2330", days=60)
+                if len(p) < 10:
+                    return False, "資料筆數不足：" + str(len(p))
+                d = sorted(p.keys())
+                return True, "2330台積電 最新收盤：" + str(p[d[-1]]) + "（" + d[-1] + "）｜取得 " + str(len(p)) + " 筆"
             run_check("Yahoo Finance API（2330）", check_yahoo)
+
+            def check_logic():
+                tp = {(datetime.today() - timedelta(days=20 - i)).strftime("%Y-%m-%d"): (100.0 if i < 11 else 88.0) for i in range(20)}
+                ret = calc_rolling_return_latest(tp)
+                ok = ret is not None and abs(ret - (-12.0)) < 0.01
+                return ok, "計算結果：{:.2f}%（預期 -12.00%）{}".format(ret or 0, "✓" if ok else "✗")
             run_check("滾動10日報酬計算邏輯", check_logic)
+
+            def check_15y():
+                p = get_yahoo_history_15y("0050")
+                if len(p) < 1000:
+                    return False, "資料筆數不足：" + str(len(p))
+                d = sorted(p.keys())
+                return True, "0050 取得 " + str(len(p)) + " 日（" + d[0] + " ~ " + d[-1] + "）還原後股價"
             run_check("還原後股價（0050 15年）", check_15y)
+
+            def check_trigger():
+                p = get_yahoo_history_15y("2330")
+                r = run_full_backtest(p, -7)
+                if r and r["total"] > 0:
+                    return True, "2330 @-7%：觸發 " + str(r["total"]) + " 次，最長連續 " + str(r["max_consecutive"]) + " 天"
+                return False, "觸發次數為0"
             run_check("觸發計算驗證（2330 @-7%）", check_trigger)
 
         show_html(pd.DataFrame(checks))
