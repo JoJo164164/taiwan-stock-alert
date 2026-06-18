@@ -651,13 +651,19 @@ def rule_based_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, price
                 stdev = 5.0
             good_years = [(y, v) for y, v in year_vals if v > med + stdev]
             bad_years = [(y, v) for y, v in year_vals if v < med - stdev]
+            lines.append("以下分析哪些年度觸發後表現特別好或特別差，幫助你判斷「現在的市場環境」是否類似歷史上的好年或壞年：")
+            lines.append("")
             if good_years:
-                lines.append("📈 **表現顯著優於歷史平均的年度**：" + "、".join([y + "(" + "{:.1f}%".format(v) + ")" for y, v in good_years]))
+                lines.append("📈 **觸發後反彈特別強的年度**：" + "、".join([y + "(" + "{:.1f}%".format(v) + ")" for y, v in good_years]))
+                lines.append("　→ 這些年的共同特點通常是：市場短暫超跌後快速修復，進場時機極佳。")
             if bad_years:
-                lines.append("📉 **表現顯著低於歷史平均的年度**：" + "、".join([y + "(" + "{:.1f}%".format(v) + ")" for y, v in bad_years]))
+                lines.append("📉 **觸發後反彈較弱甚至繼續跌的年度**：" + "、".join([y + "(" + "{:.1f}%".format(v) + ")" for y, v in bad_years]))
+                lines.append("　→ 這些年通常處於系統性風險環境（如升息、貿易戰、金融危機），整體市場持續下行，觸發後仍難反彈。")
             if not good_years and not bad_years:
-                lines.append("各年度表現相對平穩，無明顯的極端好年或壞年。")
-            lines.append("15年100天平均報酬中位數：{:.1f}%，標準差：{:.1f}%".format(med, stdev))
+                lines.append("各年度表現相對平穩，沒有特別突出的好年或壞年，代表這個策略在各種市場環境下表現較為一致。")
+            lines.append("")
+            lines.append("**投資判斷提示**：若目前總體經濟環境類似歷史上的「壞年」（升息、衰退疑慮、地緣風險等），建議縮小進場規模或提高門檻；若市場只是短暫情緒性修正，則可以更積極進場。")
+            lines.append("（15年100天平均報酬中位數：{:.1f}%，標準差：{:.1f}%）".format(med, stdev))
     else:
         lines.append("歷史資料不足，無法分析年度規律。")
     lines.append("")
@@ -682,24 +688,26 @@ def rule_based_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, price
                         if yr_avg < worst_year_dd:
                             worst_year_dd = yr_avg
                             worst_year = year
-                lines.append("在 **" + best_thr + "** 門檻下，進場後持有200天期間：")
-                lines.append("- 平均最深回撤：**{:.1f}%**（這是歷史常態，反映這個策略的正常波動幅度）".format(avg_dd))
-                lines.append("- 史上最慘單筆回撤：**{:.1f}%**（含金融危機、疫情崩盤等極端事件）".format(worst_dd_single))
-                if worst_year:
-                    lines.append("- 最差年度：**{}年**，該年平均最深回撤達 {:.1f}%".format(worst_year, worst_year_dd))
+                lines.append("以下數字是指**你進場後的報酬虧損幅度**（相對你的進場價），不是股價的絕對跌幅：")
                 lines.append("")
-                lines.append("即便遇到市場最壞的情況，這個策略最深也曾虧到 **{:.1f}%**，這是真實風險，不是小概率事件，進場前需有心理準備。".format(worst_dd_single))
+                lines.append("- **一般情況下**：進場後持有200天期間，平均最深虧損約 **{:.1f}%**。這是歷史常態，代表大部分時候你會先看到這個幅度的浮虧，再等待反彈。".format(avg_dd))
+                lines.append("- **最壞的情況**：史上曾有單筆進場後，最深虧損達 **{:.1f}%**（含金融危機、疫情崩盤等極端市場）。".format(worst_dd_single))
+                if worst_year:
+                    lines.append("- **最差年度**：{}年，該年進場後平均最深虧損達 {:.1f}%，是這15年來最難熬的時期。".format(worst_year, worst_year_dd))
+                lines.append("")
                 wr_200 = sum(1 for r in [x["ret"] for x in result["horizon_rets"][200]] if r > 0)
                 total_200 = len([x["ret"] for x in result["horizon_rets"][200]])
                 if total_200 > 0:
-                    lines.append("但根據15年回測，只要不中途停損，最終有 **{:.0f}%** 的機率在200天內回到正報酬。".format(wr_200 / total_200 * 100))
+                    lines.append("即便如此，根據15年回測，只要不中途停損，有 **{:.0f}%** 的機率在200天內回到正報酬。".format(wr_200 / total_200 * 100))
+                    lines.append("也就是說，「忍住浮虧不停損」在歷史上是正確的做法——停損反而把虧損鎖住了。")
     lines.append("")
 
     # ── 5. 進場時機建議 ──
     lines.append("### 5️⃣ 進場時機建議")
     if prices_dict and best_thr:
         thr_val_int = int(best_thr.replace("%", ""))
-        lines.append("門檻：**" + best_thr + "**｜以下列出各持有天數下，連續觸發第幾天進場的差異")
+        lines.append("門檻：**" + best_thr + "**")
+        lines.append("分析連續觸發第幾天進場，後續報酬有沒有差異。樣本數少於5筆的結果僅供參考，不具統計代表性。")
         lines.append("")
         best_timing_votes = {}
 
@@ -716,33 +724,39 @@ def rule_based_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, price
                     wr = str(row["勝率"])
                     avg = float(str(row["平均報酬%"]).replace("%", ""))
                     group_data.append((timing, n, wr, avg))
-                    lines.append("　" + timing + "：" + str(n) + "筆，勝率 " + wr + "，平均報酬 {:.2f}%".format(avg))
+                    warning = "（⚠️樣本僅" + str(n) + "筆，參考性有限）" if n < 5 else "（" + str(n) + "筆）"
+                    lines.append("　" + timing + warning + "：勝率 " + wr + "，進場後平均報酬 {:.2f}%".format(avg))
                 except:
                     pass
             if group_data:
-                valid = [(t, n, wr, avg) for t, n, wr, avg in group_data if n >= 3]
-                if valid:
-                    max_avg = max(avg for _, _, _, avg in valid)
-                    min_avg = min(avg for _, _, _, avg in valid)
+                # 分有效樣本和全部樣本兩種判斷
+                valid = [(t, n, wr, avg) for t, n, wr, avg in group_data if n >= 5]
+                all_data = [(t, n, wr, avg) for t, n, wr, avg in group_data if n >= 1]
+                use_data = valid if valid else all_data
+                if use_data:
+                    max_avg = max(avg for _, _, _, avg in use_data)
+                    min_avg = min(avg for _, _, _, avg in use_data)
                     diff = max_avg - min_avg
-                    best = max(valid, key=lambda x: x[3])
+                    best = max(use_data, key=lambda x: x[3])
+                    if not valid:
+                        lines.append("　→ ⚠️ 所有時機樣本均不足5筆，以下建議僅供參考")
                     if diff < 2.0:
-                        lines.append("　→ 各時機差距僅 {:.1f}%，**不需等待，第1天進場即可**".format(diff))
+                        lines.append("　→ 各時機報酬差距僅 {:.1f}%，差異不大，**第1天觸發直接進場即可**，不需等待".format(diff))
                         best_timing_votes["第1天"] = best_timing_votes.get("第1天", 0) + 1
                     else:
-                        lines.append("　→ 差距 {:.1f}%，**建議「{}」進場**（平均報酬最高 {:.2f}%）".format(diff, best[0], best[3]))
+                        lines.append("　→ 各時機報酬差距達 {:.1f}%，**「{}」進場報酬最高（{:.2f}%）**，值得等待".format(diff, best[0], best[3]))
                         best_timing_votes[best[0]] = best_timing_votes.get(best[0], 0) + 1
             lines.append("")
 
         if best_timing_votes:
             overall_best = max(best_timing_votes, key=lambda k: best_timing_votes[k])
             count = best_timing_votes[overall_best]
-            lines.append("**整體進場時機建議：**")
-            lines.append("在 " + str(len(HORIZONS)) + " 個持有天數中，有 " + str(count) + " 個建議「**" + overall_best + "**」進場。")
+            lines.append("**整體進場時機結論：**")
+            lines.append("在5個持有天數中，有 " + str(count) + " 個建議「**" + overall_best + "**」進場。")
             if overall_best == "第1天":
-                lines.append("結論：**觸發當天直接進場**，不需要等連續跌多天，等待並不會明顯提高報酬。")
+                lines.append("**→ 觸發當天直接進場**。多等幾天不會明顯提高報酬，反而可能錯過最佳進場點。")
             else:
-                lines.append("結論：等到 **" + overall_best + "** 再進場，歷史上報酬明顯較佳，值得等待。")
+                lines.append("**→ 等到「" + overall_best + "」再進場**，歷史上此時機報酬明顯較佳，值得等待。")
     else:
         lines.append("請確保已完成回測後再生成建議。")
     lines.append("")
@@ -754,9 +768,9 @@ def rule_based_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, price
         lines.append("- **進場訊號**：當股票觸發滾動10日跌幅達 " + str(best_thr) + " 時考慮進場")
         lines.append("- **持有期間**：目標持有約 " + str(best_h) + " 個交易日後評估出場")
         if worst_dd is not None:
-            lines.append("- **心理準備**：持有期間平均最深曾跌 {:.1f}%，屬正常波動，不建議因短期浮虧停損".format(worst_dd))
+            lines.append("- **心理準備**：進場後平均最深會虧 {:.1f}%（相對進場價的報酬虧損），這是正常波動，不建議因短期浮虧停損".format(worst_dd))
         if worst_dd_single is not None:
-            lines.append("- **極端風險**：史上最深曾跌 {:.1f}%（含金融危機等極端事件），需有此心理準備".format(worst_dd_single))
+            lines.append("- **極端風險**：史上最深曾虧 {:.1f}%（進場後報酬虧損，含金融危機等極端事件），這是這個策略的真實風險上限，需有此心理準備".format(worst_dd_single))
     lines.append("")
     lines.append("---")
     lines.append("*本分析基於歷史回測數據自動生成，不構成投資建議。歷史績效不代表未來報酬。*")
