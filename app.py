@@ -1278,7 +1278,7 @@ with tab4:
         "⚠️ 觸發次數 ≤ 5次的標的自動加注警示，樣本太少勝率參考性有限。"
     )
     st.markdown("**選擇掃描範圍（不選預設跑全部個股）**")
-    selected4 = group_selector("tab4")
+    selected4 = group_selector("winrank")
     col_h, col_m = st.columns(2)
     with col_h:
         horizon4 = st.selectbox("觀察天數", [str(h) + "天" for h in HORIZONS], index=3, key="h4")
