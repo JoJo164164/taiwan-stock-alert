@@ -1216,11 +1216,24 @@ with tab3:
                 if r_thr:
                     trig_x = [d for d in dates_all if d in set(r_thr["trigger_dates"])]
                     trig_y = [prices[d] for d in trig_x]
+                    label = "門檻 " + str(thr) + "% (" + str(r_thr["total"]) + "次)"
+                    # 圖裡的點：小一點（size=6）
                     fig.add_trace(go.Scatter(
                         x=trig_x, y=trig_y, mode="markers",
-                        name="門檻 " + str(thr) + "% (" + str(r_thr["total"]) + "次)",
+                        name=label,
+                        legendgroup=label,
                         marker=dict(color=colors_map[thr], size=6, symbol="circle"),
-                        visible=True if thr == thr_val else "legendonly"
+                        visible=True if thr == thr_val else "legendonly",
+                        showlegend=False,
+                    ))
+                    # legend用的dummy trace：大一點（size=14）方便點選
+                    fig.add_trace(go.Scatter(
+                        x=[None], y=[None], mode="markers",
+                        name=label,
+                        legendgroup=label,
+                        marker=dict(color=colors_map[thr], size=14, symbol="circle"),
+                        visible=True if thr == thr_val else "legendonly",
+                        showlegend=True,
                     ))
             fig.update_layout(
                 height=520, xaxis_title="日期", yaxis_title="收盤價",
@@ -1232,8 +1245,7 @@ with tab3:
                     font=dict(size=13),
                 )
             )
-            # 讓legend裡的marker點點變大
-            fig.update_traces(marker=dict(size=14), selector=dict(mode="markers"))
+
             st.plotly_chart(fig, use_container_width=True)
             st.caption("預設顯示選定門檻，其他門檻可點圖例開關。顏色越深代表門檻越嚴苛")
 
