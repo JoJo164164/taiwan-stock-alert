@@ -559,18 +559,22 @@ def build_consec_analysis(prices_dict, threshold, horizon):
     return pd.DataFrame(rows)
 
 
-def rule_based_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_dict=None):
-    """規則式投資分析建議"""
+
+def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_dict=None):
+    """直接用Streamlit元件render分析報告，排版清晰"""
     import statistics
-    lines = []
-    lines.append("## 📊 回測分析報告｜" + code)
-    lines.append("")
+
+    st.markdown("## 📊 回測分析報告｜" + code)
     worst_dd = None
     worst_dd_single = None
     best_h = None
+    second_h = None
 
-    # ── 1. 最佳觸發門檻 ──
-    lines.append("### 1️⃣ 最佳觸發門檻建議")
+    # ══════════════════════════════
+    # 1. 最佳觸發門檻
+    # ══════════════════════════════
+    st.markdown("### 1️⃣ 最佳觸發門檻建議")
+
     best_thr = None
     best_score = -999
     for _, row in df_win.iterrows():
@@ -589,24 +593,59 @@ def rule_based_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, price
                 best_thr = thr_str
         except:
             pass
+
     if best_thr:
         best_row = df_win[df_win["觸發門檻"] == best_thr].iloc[0]
+        samples = int(best_row.get("樣本數", 0))
         wr_100 = best_row.get("100天勝率", "N/A")
-        samples = best_row.get("樣本數", 0)
-        lines.append("建議門檻：**" + best_thr + "**（100天勝率：" + str(wr_100) + "，15年觸發：" + str(samples) + "次）")
-        if int(samples) < 10:
-            lines.append("⚠️ 注意：此門檻觸發次數較少（" + str(samples) + "次），樣本有限，建議謹慎參考。")
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("建議觸發門檻", best_thr)
+        col2.metric("100天勝率", str(wr_100))
+        col3.metric("15年觸發次數", str(samples) + " 次")
+
+        if samples < 10:
+            st.warning("⚠️ 此門檻觸發次數僅 " + str(samples) + " 次，樣本有限，建議謹慎參考")
         else:
-            lines.append("此門檻在勝率、報酬與觸發頻率上取得最佳平衡，適合作為主要進場參考。")
-    else:
-        lines.append("樣本數不足，建議累積更多歷史資料後再做判斷。")
-    lines.append("")
+            st.success("此門檻在勝率、報酬與觸發頻率上取得最佳平衡")
 
+    # 各門檻達80%勝率所需天數分析
+    st.markdown("**各觸發門檻完整比較：**")
+    thr_analysis_rows = []
+    for _, row in df_win.iterrows():
+        thr_str = row["觸發門檻"]
+        samples = int(row.get("樣本數", 0))
+        first_80 = None
+        for h in HORIZONS:
+            col = str(h) + "天勝率"
+            try:
+                v = float(str(row.get(col, "0")).replace("%", ""))
+                if v >= 80 and first_80 is None:
+                    first_80 = h
+            except:
+                pass
+        thr_analysis_rows.append({
+            "門檻": thr_str,
+            "15年觸發次數": str(samples) + ("⚠️" if samples < 10 else ""),
+            "達80%勝率最短持有": str(first_80) + "天" if first_80 else "未達80%",
+        })
+    st.markdown(pd.DataFrame(thr_analysis_rows).to_html(index=False), unsafe_allow_html=True)
 
-    # ── 2. 最佳持有天數（給兩個建議）──
-    lines.append("### 2️⃣ 最佳持有天數建議")
-    best_h = None
-    second_h = None
+    st.info(
+        "📌 重要結論：\n"
+        "・**-20%** 雖然100%勝率，但15年僅觸發幾次，樣本太少不具代表性\n"
+        "・**-15%** 是次佳選擇，需持有50~100天，勝率可達80~95%\n"
+        "・**-10%** 進場需持有至少100天才有約80%勝率\n"
+        "・除了-20%，**沒有任何門檻能在10或20天內達到80%勝率**\n"
+        "・門檻越嚴苛觸發越少但勝率越高；門檻越寬鬆觸發越頻繁但勝率偏低"
+    )
+    st.divider()
+
+    # ══════════════════════════════
+    # 2. 最佳持有天數
+    # ══════════════════════════════
+    st.markdown("### 2️⃣ 最佳持有天數建議")
+
     if best_thr:
         thr_avg_row = df_avg[df_avg["觸發門檻"] == best_thr]
         thr_dd_row = df_dd[df_dd["觸發門檻"] == best_thr]
@@ -623,27 +662,40 @@ def rule_based_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, price
             except:
                 pass
         ratios.sort(key=lambda x: x[1], reverse=True)
+
         if ratios:
             best_h = ratios[0][0]
-            avg_val = thr_avg_row[str(best_h) + "天平均報酬%"].values[0]
-            dd_val = thr_dd_row[str(best_h) + "天平均最大回撤%"].values[0]
-            lines.append("🥇 **首選：持有 " + str(best_h) + " 天**（平均報酬：" + str(avg_val) + "，平均最大回撤：" + str(dd_val) + "）")
-            lines.append("　風險報酬比最佳（報酬/回撤={:.2f}），是承受的風險相對最划算的選擇。".format(ratios[0][1]))
-            # 找次佳（選擇天數明顯較短的，給想早點出場的投資人參考）
+            avg_val = ratios[0][2]
+            dd_val = ratios[0][3]
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.success(
+                    "🥇 **首選：持有 " + str(best_h) + " 天**\n\n"
+                    "平均報酬：**{:.2f}%**\n\n"
+                    "平均最大回撤：**{:.2f}%**\n\n"
+                    "風險報酬比：**{:.2f}**（越高越划算）".format(avg_val, dd_val, ratios[0][1])
+                )
+            # 找次佳（天數較短）
             for h2, ratio2, avg2, dd2 in ratios[1:]:
                 if h2 < best_h:
                     second_h = h2
-                    avg_val2 = thr_avg_row[str(second_h) + "天平均報酬%"].values[0]
-                    dd_val2 = thr_dd_row[str(second_h) + "天平均最大回撤%"].values[0]
-                    lines.append("🥈 **次選（較短持有）：持有 " + str(second_h) + " 天**（平均報酬：" + str(avg_val2) + "，平均最大回撤：" + str(dd_val2) + "）")
-                    lines.append("　若不想持有太久，這是風險報酬比次佳的選擇（報酬/回撤={:.2f}）。".format(ratio2))
+                    with col2:
+                        st.info(
+                            "🥈 **次選（較短持有）：持有 " + str(second_h) + " 天**\n\n"
+                            "平均報酬：**{:.2f}%**\n\n"
+                            "平均最大回撤：**{:.2f}%**\n\n"
+                            "風險報酬比：**{:.2f}**（適合不想持有太久的投資人）".format(avg2, dd2, ratio2)
+                        )
                     break
-        else:
-            lines.append("建議參考100天或120天的持有效果。")
-    lines.append("")
+    st.divider()
 
-    # ── 3. 歷史規律 ──
-    lines.append("### 3️⃣ 歷史規律")
+    # ══════════════════════════════
+    # 3. 歷史規律
+    # ══════════════════════════════
+    st.markdown("### 3️⃣ 歷史規律")
+    st.caption("分析哪些年度觸發後表現特別好或特別差，幫助判斷「現在的市場環境」是否類似歷史上的好年或壞年")
+
     if df_yearly is not None and len(df_yearly) > 2:
         yearly_data = df_yearly[df_yearly["年度"] != "合計/平均"].copy()
         col_key = "100天平均%"
@@ -661,142 +713,134 @@ def rule_based_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, price
             except:
                 med = sum(valid_vals) / len(valid_vals)
                 stdev = 5.0
+
             good_years = [(y, v) for y, v in year_vals if v > med + stdev]
             bad_years = [(y, v) for y, v in year_vals if v < med - stdev]
-            lines.append("分析哪些年度觸發後表現特別好或特別差，幫助判斷「現在的市場環境」是否類似歷史上的好年或壞年：")
-            lines.append("")
-            if good_years:
-                lines.append("📈  **觸發後反彈特別強的年度**：" + "、".join([y + "(" + "{:.1f}%".format(v) + ")" for y, v in good_years]))
-                lines.append("　　→ 這些年市場屬短暫超跌後快速修復，進場時機極佳。")
-            if bad_years:
-                lines.append("📉  **觸發後反彈較弱甚至繼續跌的年度**：" + "、".join([y + "(" + "{:.1f}%".format(v) + ")" for y, v in bad_years]))
-                lines.append("　　→ 這些年通常處於系統性風險環境（升息循環、貿易戰、金融危機），整體市場持續下行，觸發後仍難反彈。")
-            if not good_years and not bad_years:
-                lines.append("📊  各年度表現相對平穩，沒有特別突出的好年或壞年，代表此策略在各種市場環境下表現較為一致。")
-            lines.append("")
-            lines.append("💡  **投資判斷提示**：若目前總體環境類似歷史上的「壞年」（升息、衰退疑慮、地緣風險），建議縮小進場規模或提高觸發門檻；若只是短暫情緒性修正，則可以積極進場。")
-            lines.append("　　（15年100天平均報酬中位數：{:.1f}%，標準差：{:.1f}%）".format(med, stdev))
-    else:
-        lines.append("歷史資料不足，無法分析年度規律。")
-    lines.append("")
 
-    # ── 4. 風險提示（兩個門檻版本）──
-    lines.append("### 4️⃣ 風險提示")
-    lines.append("以下數字是指**你進場後的報酬虧損幅度**（相對你的進場價），不是股價的絕對跌幅：")
-    lines.append("")
+            col1, col2 = st.columns(2)
+            with col1:
+                if good_years:
+                    st.success(
+                        "📈 **觸發後反彈特別強的年度**\n\n" +
+                        "\n\n".join(["**" + y + "**：" + "{:.1f}%".format(v) for y, v in good_years]) +
+                        "\n\n→ 這些年市場屬短暫超跌後快速修復，進場時機極佳"
+                    )
+                else:
+                    st.info("📈 無特別突出的強勢年度")
+            with col2:
+                if bad_years:
+                    st.warning(
+                        "📉 **觸發後反彈較弱或繼續跌的年度**\n\n" +
+                        "\n\n".join(["**" + y + "**：" + "{:.1f}%".format(v) for y, v in bad_years]) +
+                        "\n\n→ 這些年通常處於系統性風險環境（升息、貿易戰、金融危機）"
+                    )
+                else:
+                    st.info("📉 無特別突出的弱勢年度")
+
+            st.info(
+                "💡 **投資判斷提示**：若目前總體環境類似歷史上的「壞年」（升息、衰退疑慮、地緣風險），"
+                "建議縮小進場規模或提高觸發門檻；若只是短暫情緒性修正，則可以積極進場。\n\n"
+                "（15年100天平均報酬中位數：{:.1f}%，標準差：{:.1f}%）".format(med, stdev)
+            )
+    st.divider()
+
+    # ══════════════════════════════
+    # 4. 風險提示（兩個門檻）
+    # ══════════════════════════════
+    st.markdown("### 4️⃣ 風險提示")
+    st.caption("以下數字是指**你進場後的報酬虧損幅度**（相對你的進場價），不是股價的絕對跌幅")
 
     def get_dd_summary(thr_str, prices_dict):
-        """計算特定門檻的回撤摘要"""
         thr_int = int(thr_str.replace("%", ""))
         result = run_full_backtest(prices_dict, thr_int)
         if not result:
             return None
-        dds_240 = [x["dd"] for x in result["horizon_drawdowns"][240]]
-        if not dds_240:
+        dds_last = [x["dd"] for x in result["horizon_drawdowns"][HORIZONS[-1]]]
+        if not dds_last:
             return None
-        avg_dd = sum(dds_240) / len(dds_240)
-        worst_single = min(dds_240)
+        avg_dd = sum(dds_last) / len(dds_last)
+        worst_single = min(dds_last)
         worst_year = None
         worst_year_dd = 0
         for year, y in result["yearly"].items():
-            dds_y = y["dds"][240]
+            dds_y = y["dds"][HORIZONS[-1]]
             if dds_y:
                 yr_avg = sum(dds_y) / len(dds_y)
                 if yr_avg < worst_year_dd:
                     worst_year_dd = yr_avg
                     worst_year = year
-        rets_240 = [x["ret"] for x in result["horizon_rets"][240]]
-        wr_240 = sum(1 for r in rets_240 if r > 0) / max(len(rets_240), 1) * 100 if rets_240 else 0
-        return {
-            "avg_dd": avg_dd, "worst_single": worst_single,
-            "worst_year": worst_year, "worst_year_dd": worst_year_dd,
-            "wr_240": wr_240, "total": result["total"]
-        }
+        rets_last = [x["ret"] for x in result["horizon_rets"][HORIZONS[-1]]]
+        wr = sum(1 for r in rets_last if r > 0) / max(len(rets_last), 1) * 100 if rets_last else 0
+        return {"avg_dd": avg_dd, "worst_single": worst_single,
+                "worst_year": worst_year, "worst_year_dd": worst_year_dd,
+                "wr": wr, "total": result["total"]}
 
     if best_thr and prices_dict:
-        # 主要門檻
         dd_main = get_dd_summary(best_thr, prices_dict)
         if dd_main:
             worst_dd = dd_main["avg_dd"]
             worst_dd_single = dd_main["worst_single"]
-            lines.append("**▍ 主要建議門檻 " + best_thr + "**（15年觸發 " + str(dd_main["total"]) + " 次）")
-            lines.append("　・一般情況：進場後平均最深虧損約 **{:.1f}%**（歷史常態波動範圍）".format(dd_main["avg_dd"]))
-            lines.append("　・最壞情況：史上最深單筆虧損 **{:.1f}%**（含金融危機、疫情崩盤等極端事件）".format(dd_main["worst_single"]))
-            if dd_main["worst_year"]:
-                lines.append("　・最差年度：**{}年**，該年平均最深虧損 {:.1f}%".format(dd_main["worst_year"], dd_main["worst_year_dd"]))
-            lines.append("　・只要不中途停損，有 **{:.0f}%** 的機率在240天內回到正報酬".format(dd_main["wr_240"]))
-            lines.append("")
 
-        # 次要門檻（找樣本數最多且合理的門檻）
+        # 找次要門檻（樣本>=10次）
         alt_thr = None
-        for thr_candidate in ["-10%", "-7%", "-5%", "-15%"]:
-            if thr_candidate != best_thr:
-                row_c = df_win[df_win["觸發門檻"] == thr_candidate]
+        for tc in ["-10%", "-7%", "-5%", "-15%"]:
+            if tc != best_thr:
+                row_c = df_win[df_win["觸發門檻"] == tc]
                 if not row_c.empty and int(row_c.iloc[0].get("樣本數", 0)) >= 10:
-                    alt_thr = thr_candidate
+                    alt_thr = tc
                     break
+
+        cols = st.columns(2) if alt_thr else [st.container()]
+        with cols[0]:
+            if dd_main:
+                st.markdown("**▍ 主要建議門檻 " + best_thr + "**（15年觸發 " + str(dd_main["total"]) + " 次）")
+                st.markdown(
+                    "- 一般情況：進場後平均最深虧損約 **{:.1f}%**（歷史常態波動）\n"
+                    "- 最壞情況：史上最深單筆虧損 **{:.1f}%**（含金融危機、疫情崩盤）\n"
+                    "- 最差年度：**{year}年**，該年平均最深虧損 {ydd:.1f}%\n"
+                    "- 只要不中途停損，有 **{wr:.0f}%** 的機率在{h}天內回到正報酬".format(
+                        dd_main["avg_dd"], dd_main["worst_single"],
+                        year=dd_main["worst_year"] or "N/A",
+                        ydd=dd_main["worst_year_dd"],
+                        wr=dd_main["wr"], h=HORIZONS[-1]
+                    )
+                )
+
         if alt_thr:
             dd_alt = get_dd_summary(alt_thr, prices_dict)
-            if dd_alt:
-                lines.append("**▍ 次要參考門檻 " + alt_thr + "**（15年觸發 " + str(dd_alt["total"]) + " 次，樣本較充足）")
-                lines.append("　・一般情況：進場後平均最深虧損約 **{:.1f}%**".format(dd_alt["avg_dd"]))
-                lines.append("　・最壞情況：史上最深單筆虧損 **{:.1f}%**".format(dd_alt["worst_single"]))
-                if dd_alt["worst_year"]:
-                    lines.append("　・最差年度：**{}年**，該年平均最深虧損 {:.1f}%".format(dd_alt["worst_year"], dd_alt["worst_year_dd"]))
-                lines.append("　・只要不中途停損，有 **{:.0f}%** 的機率在240天內回到正報酬".format(dd_alt["wr_240"]))
-                lines.append("")
+            with cols[1]:
+                if dd_alt:
+                    st.markdown("**▍ 次要參考門檻 " + alt_thr + "**（15年觸發 " + str(dd_alt["total"]) + " 次，樣本較充足）")
+                    st.markdown(
+                        "- 一般情況：進場後平均最深虧損約 **{:.1f}%**\n"
+                        "- 最壞情況：史上最深單筆虧損 **{:.1f}%**\n"
+                        "- 最差年度：**{year}年**，該年平均最深虧損 {ydd:.1f}%\n"
+                        "- 只要不中途停損，有 **{wr:.0f}%** 的機率在{h}天內回到正報酬".format(
+                            dd_alt["avg_dd"], dd_alt["worst_single"],
+                            year=dd_alt["worst_year"] or "N/A",
+                            ydd=dd_alt["worst_year_dd"],
+                            wr=dd_alt["wr"], h=HORIZONS[-1]
+                        )
+                    )
 
-        lines.append("💡 「忍住浮虧不停損」在歷史上是正確的做法——停損反而把虧損鎖住了。")
-    lines.append("")
+        st.warning("💡 「忍住浮虧不停損」在歷史上是正確的做法——停損反而把虧損鎖住了。")
+    st.divider()
 
-    # ── 5. 最佳觸發門檻完整分析 ──
-    lines.append("### 1️⃣ 最佳觸發門檻完整分析")
-    lines.append("（本段為第1點的延伸，提供更完整的門檻選擇判斷）")
-    lines.append("")
-    # 分析各門檻的80%勝率達成情況
-    lines.append("**各門檻達到80%勝率所需的最短持有天數：**")
-    lines.append("")
-    for _, row in df_win.iterrows():
-        thr_str = row["觸發門檻"]
-        samples = int(row.get("樣本數", 0))
-        first_80 = None
-        for h in HORIZONS:
-            col = str(h) + "天勝率"
-            try:
-                v = float(str(row.get(col, "0")).replace("%", ""))
-                if v >= 80 and first_80 is None:
-                    first_80 = h
-            except:
-                pass
-        sample_note = "（⚠️僅" + str(samples) + "次）" if samples < 10 else "（" + str(samples) + "次）"
-        if first_80:
-            lines.append("　**" + thr_str + "** " + sample_note + "：持有 **" + str(first_80) + " 天**起勝率超過80%")
-        else:
-            lines.append("　**" + thr_str + "** " + sample_note + "：所有持有天數均未達80%勝率")
-    lines.append("")
-    lines.append("**重要結論：**")
-    lines.append("　・除非跌幅達到 **-20%**，否則沒有任何門檻能在10或20天內達到80%勝率")
-    lines.append("　・**-15%** 是次佳選擇，需持有50~100天，勝率可達80~95%")
-    lines.append("　・**-10%** 進場需持有至少100天才有約80%勝率")
-    lines.append("　・門檻越嚴苛（-20%），觸發次數越少但勝率越高；門檻越寬鬆（-5%），觸發越頻繁但勝率偏低")
-    lines.append("")
-
-    # ── 6. 進場時機建議 ──
-    lines.append("### 5️⃣ 進場時機建議")
+    # ══════════════════════════════
+    # 5. 進場時機建議
+    # ══════════════════════════════
+    st.markdown("### 5️⃣ 進場時機建議")
     if prices_dict and best_thr:
         thr_val_int = int(best_thr.replace("%", ""))
-        lines.append("門檻：**" + best_thr + "** | 分析連續觸發第幾天進場，後續報酬是否有差異")
-        lines.append("（⚠️ 樣本數 < 5筆僅供參考，不具統計代表性）")
-        lines.append("")
+        st.caption("門檻：" + best_thr + " ｜ 分析連續觸發第幾天進場，後續報酬是否有差異。⚠️ = 樣本數 < 5筆，僅供參考")
 
         best_timing_votes = {}
+        timing_rows = []
 
         for h in HORIZONS:
             df_consec = build_consec_analysis(prices_dict, thr_val_int, h)
             if df_consec is None:
                 continue
-
-            lines.append("**持有 " + str(h) + " 天**")
             group_data = []
             for _, row in df_consec.iterrows():
                 timing = row["連續觸發天數"]
@@ -805,59 +849,70 @@ def rule_based_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, price
                     wr = str(row["勝率"])
                     avg = float(str(row["平均報酬%"]).replace("%", ""))
                     group_data.append((timing, n, wr, avg))
-                    flag = "⚠️" if n < 5 else "✓"
-                    lines.append("　" + flag + " " + timing + "（" + str(n) + "筆）：勝率 " + wr + "，平均報酬 **{:.2f}%**".format(avg))
                 except:
                     pass
 
-            if group_data:
-                valid = [(t, n, wr, avg) for t, n, wr, avg in group_data if n >= 5]
-                use_data = valid if valid else group_data
-                if use_data:
-                    max_avg = max(avg for _, _, _, avg in use_data)
-                    min_avg = min(avg for _, _, _, avg in use_data)
-                    diff = max_avg - min_avg
-                    best_entry = max(use_data, key=lambda x: x[3])
-                    prefix = "　→ ⚠️ 樣本均不足5筆，僅供參考｜" if not valid else "　→ "
-                    if diff < 2.0:
-                        lines.append(prefix + "各時機差距僅 {:.1f}%，差異不大，**第1天觸發直接進場即可**".format(diff))
-                        best_timing_votes["第1天"] = best_timing_votes.get("第1天", 0) + 1
-                    else:
-                        lines.append(prefix + "差距達 {:.1f}%，**「{}」進場報酬最高（{:.2f}%）**".format(
-                            diff, best_entry[0], best_entry[3]))
-                        best_timing_votes[best_entry[0]] = best_timing_votes.get(best_entry[0], 0) + 1
-            lines.append("")
+            valid = [(t, n, wr, avg) for t, n, wr, avg in group_data if n >= 5]
+            use_data = valid if valid else group_data
+            conclusion = ""
+            best_entry_timing = ""
+            if use_data:
+                max_avg = max(avg for _, _, _, avg in use_data)
+                min_avg = min(avg for _, _, _, avg in use_data)
+                diff = max_avg - min_avg
+                best_entry = max(use_data, key=lambda x: x[3])
+                sample_warn = "⚠️ 樣本均不足5筆｜" if not valid else ""
+                if diff < 2.0:
+                    conclusion = sample_warn + "各時機差距僅{:.1f}%，**第1天直接進場**".format(diff)
+                    best_entry_timing = "第1天"
+                else:
+                    conclusion = sample_warn + "差距{:.1f}%，**「{}」報酬最高（{:.2f}%）**".format(diff, best_entry[0], best_entry[3])
+                    best_entry_timing = best_entry[0]
+                if best_entry_timing:
+                    best_timing_votes[best_entry_timing] = best_timing_votes.get(best_entry_timing, 0) + 1
+
+            row_data = {"持有天數": str(h) + "天"}
+            for t, n, wr, avg in group_data:
+                flag = "⚠️" if n < 5 else ""
+                short_t = t.replace("連續", "").replace("進場", "").replace("天以後", "+")
+                row_data[short_t] = flag + "{:.1f}%".format(avg) + "(" + wr + ")"
+            row_data["建議"] = conclusion
+            timing_rows.append(row_data)
+
+        if timing_rows:
+            df_timing_summary = pd.DataFrame(timing_rows)
+            st.markdown(df_timing_summary.to_html(index=False), unsafe_allow_html=True)
 
         if best_timing_votes:
             overall_best = max(best_timing_votes, key=lambda k: best_timing_votes[k])
             count = best_timing_votes[overall_best]
-            lines.append("─" * 40)
-            lines.append("**整體進場時機結論**")
-            lines.append("在 " + str(len(HORIZONS)) + " 個持有天數中，有 " + str(count) + " 個建議「**" + overall_best + "**」進場")
+            st.markdown("---")
             if overall_best == "第1天":
-                lines.append("→ **觸發當天直接進場**。多等幾天不會明顯提高報酬，反而可能錯過最佳進場點。")
+                st.success(
+                    "**整體進場時機結論**：在 " + str(len(HORIZONS)) + " 個持有天數中，有 " + str(count) + " 個建議「第1天」進場。\n\n"
+                    "→ **觸發當天直接進場**。多等幾天不會明顯提高報酬，反而可能錯過最佳進場點。"
+                )
             else:
-                lines.append("→ **等到「" + overall_best + "」再進場**。歷史上此時機報酬明顯較佳，值得等待。")
-    else:
-        lines.append("請確保已完成回測後再生成建議。")
-    lines.append("")
+                st.success(
+                    "**整體進場時機結論**：在 " + str(len(HORIZONS)) + " 個持有天數中，有 " + str(count) + " 個建議「" + overall_best + "」進場。\n\n"
+                    "→ **等到「" + overall_best + "」再進場**，歷史上此時機報酬明顯較佳，值得等待。"
+                )
+    st.divider()
 
-    # ── 7. 綜合操作建議 ──
-    lines.append("### 6️⃣ 綜合操作建議")
+    # ══════════════════════════════
+    # 6. 綜合操作建議
+    # ══════════════════════════════
+    st.markdown("### 6️⃣ 綜合操作建議")
     if best_thr and best_h:
-        lines.append("根據15年回測數據，建議操作策略如下：")
-        lines.append("")
-        lines.append("　・**進場訊號**：當股票觸發滾動10日跌幅達 " + str(best_thr) + " 時考慮進場")
-        lines.append("　・**持有期間**：首選持有 **" + str(best_h) + " 天**後評估出場" + ("；次選 **" + str(second_h) + " 天**（不想持有太久）" if second_h else ""))
-        if worst_dd is not None:
-            lines.append("　・**心理準備**：進場後平均最深會虧 **{:.1f}%**（相對進場價的報酬虧損），屬正常波動，不建議因短期浮虧停損".format(worst_dd))
-        if worst_dd_single is not None:
-            lines.append("　・**極端風險**：史上最深曾虧 **{:.1f}%**（含金融危機等極端事件），這是真實風險上限，需有心理準備".format(worst_dd_single))
-    lines.append("")
-    lines.append("---")
-    lines.append("*本分析基於歷史回測數據自動生成，不構成投資建議。歷史績效不代表未來報酬。*")
-
-    return "\n".join(lines)
+        st.markdown(
+            "根據15年回測數據，建議操作策略如下：\n\n"
+            "- **進場訊號**：當股票觸發滾動10日跌幅達 **" + str(best_thr) + "** 時考慮進場\n"
+            "- **持有期間**：首選持有 **" + str(best_h) + " 天**後評估出場" +
+            ("；次選 **" + str(second_h) + " 天**（不想持有太久）" if second_h else "") + "\n" +
+            ("- **心理準備**：進場後平均最深會虧 **{:.1f}%**（相對進場價的報酬虧損），屬正常波動，不建議因短期浮虧停損\n".format(worst_dd) if worst_dd else "") +
+            ("- **極端風險**：史上最深曾虧 **{:.1f}%**（含金融危機等極端事件），需有心理準備".format(worst_dd_single) if worst_dd_single else "")
+        )
+    st.caption("*本分析基於歷史回測數據自動生成，不構成投資建議。歷史績效不代表未來報酬。*")
 
 @st.cache_data(ttl=86400)
 def get_industry_lookup():
@@ -1358,10 +1413,9 @@ with tab3:
             st.session_state["bt_code"] = single_code
             st.session_state["bt_thr"] = int(ref_threshold.replace("%", ""))
             st.session_state["bt_thr_str"] = ref_threshold
-            st.session_state["ai_result"] = None
+            st.session_state["bt_done"] = True
 
-    # 有資料就顯示（session_state保存，AI按鈕不會清空）
-    if "bt_prices" in st.session_state and st.session_state.get("bt_code") == single_code:
+    if st.session_state.get("bt_done") and st.session_state.get("bt_code") == single_code:
         prices = st.session_state["bt_prices"]
         thr_val = st.session_state["bt_thr"]
         ref_threshold_display = st.session_state["bt_thr_str"]
@@ -1375,18 +1429,13 @@ with tab3:
         avg_cols = [str(h) + "天平均報酬%" for h in HORIZONS]
         dd_cols = [str(h) + "天平均最大回撤%" for h in HORIZONS]
 
-        # 表A：勝率
         st.markdown("### 表A：勝率（各門檻 × 觀察天數）｜橘色 ≥ 80%")
         st.caption("勝率 = 觸發進場後，T+N天收盤價高於進場收盤價的比例")
         show_html(df_win.style.map(color_winrate, subset=win_cols))
 
-        # 表B：平均報酬
         st.markdown("### 表B：平均單次報酬%（各門檻 × 觀察天數）")
-        st.caption("每次觸發進場，持有至第N天收盤的平均報酬。越深紅越好")
         show_html(heatmap_positive(df_avg, avg_cols))
 
-        # 表C：累積報酬
-        st.markdown("### 表C：累積報酬%（所有觸發報酬加總，不除筆數）")
         cum_rows = []
         for thr in THRESHOLDS:
             result_c = run_full_backtest(prices, thr)
@@ -1400,13 +1449,11 @@ with tab3:
             cum_rows.append(row)
         df_cum = pd.DataFrame(cum_rows)
         cum_cols = [str(h) + "天累積%" for h in HORIZONS]
+        st.markdown("### 表C：累積報酬%（所有觸發報酬加總，不除筆數）")
         show_html(heatmap_positive(df_cum, cum_cols))
 
-        # 表D：進場時機
         st.markdown("### 表D：進場時機比較（門檻 " + ref_threshold_display + "）")
-        st.caption("連續觸發第幾天進場效果最好？切換天數觀察不同持有長度的差異")
-        horizon_choice = st.selectbox("選擇觀察天數", [str(h) + "天" for h in HORIZONS],
-                                       index=2, key="timing_horizon")
+        horizon_choice = st.selectbox("選擇觀察天數", [str(h) + "天" for h in HORIZONS], index=4, key="timing_horizon")
         h_timing = int(horizon_choice.replace("天", ""))
         df_timing = build_entry_timing_table(prices, thr_val, h_timing)
         if df_timing is not None:
@@ -1418,33 +1465,24 @@ with tab3:
         else:
             st.warning("此門檻無觸發紀錄")
 
-        # 表E：最大回撤 + 發生天數
         st.markdown("### 表E：最大回撤分析（門檻 " + ref_threshold_display + "）")
-        st.caption("持有期間最深跌幅，以及平均在第幾天出現。幫助你判斷要有多少耐心")
         df_dd_enhanced = build_dd_timing_table(prices, thr_val)
         if df_dd_enhanced is not None:
             show_html(df_dd_enhanced.style.map(color_dd, subset=["平均最大回撤%", "最深回撤%"]))
 
         st.info(
-            "計算邏輯：\n"
-            "- 勝率與報酬均以 T+N 那天收盤價計算\n"
-            "- 年度歸屬以觸發當天為準，報酬計算可跨年度\n"
-            "- 待觀察：觸發後未滿觀察天數，不計入統計"
+            "計算邏輯：勝率與報酬均以 T+N 那天收盤價計算｜"
+            "年度歸屬以觸發當天為準｜待觀察：觸發後未滿觀察天數，不計入統計"
         )
 
-        # 年度明細
         df_yearly, result = build_yearly_table(prices, thr_val)
         if df_yearly is not None:
             st.markdown("### 年度明細（門檻 " + ref_threshold_display + "）")
-            st.caption("橫向看哪個持有天數最穩；縱向看哪幾年跌破門檻後反彈最強")
             yr_cols = [str(h) + "天平均%" for h in HORIZONS]
             show_html(heatmap_positive(df_yearly, yr_cols))
 
-        # 連續觸發分析
         st.markdown("### 連續觸發分析（門檻 " + ref_threshold_display + "）")
-        st.caption("跌越多天觸發，後續報酬是更好還是更差？")
-        horizon_consec = st.selectbox("選擇觀察天數", [str(h) + "天" for h in HORIZONS],
-                                       index=2, key="consec_horizon")
+        horizon_consec = st.selectbox("選擇觀察天數", [str(h) + "天" for h in HORIZONS], index=4, key="consec_horizon")
         h_consec = int(horizon_consec.replace("天", ""))
         df_consec = build_consec_analysis(prices, thr_val, h_consec)
         if df_consec is not None:
@@ -1452,19 +1490,14 @@ with tab3:
             styled_c = styled_c.map(color_winrate, subset=["勝率"])
             styled_c = styled_c.map(color_ret, subset=["最佳報酬%", "最差報酬%"])
             show_html(styled_c)
-            st.caption("分析連續觸發第幾天進場，後續報酬的勝率與平均報酬差異")
 
-        # 門檻比較線圖
         if result:
             st.markdown("### 股價走勢 + 各門檻觸發標記")
-            st.caption("同時顯示多個門檻的觸發點，可點圖例開關各門檻")
             dates_all = sorted(prices.keys())
             price_values = [prices[d] for d in dates_all]
             fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=dates_all, y=price_values, mode="lines", name="收盤價",
-                line=dict(color="#2196F3", width=1.5)
-            ))
+            fig.add_trace(go.Scatter(x=dates_all, y=price_values, mode="lines", name="收盤價",
+                                     line=dict(color="#2196F3", width=1.5)))
             colors_map = {-5: "#FFA500", -7: "#FF6B35", -10: "#E63946", -15: "#9B2335", -20: "#5C0A14"}
             for thr in THRESHOLDS:
                 r_thr = run_full_backtest(prices, thr)
@@ -1472,37 +1505,17 @@ with tab3:
                     trig_x = [d for d in dates_all if d in set(r_thr["trigger_dates"])]
                     trig_y = [prices[d] for d in trig_x]
                     label = "門檻 " + str(thr) + "% (" + str(r_thr["total"]) + "次)"
-                    # 圖裡的點：小一點（size=6）
-                    fig.add_trace(go.Scatter(
-                        x=trig_x, y=trig_y, mode="markers",
-                        name=label,
-                        legendgroup=label,
-                        marker=dict(color=colors_map[thr], size=6, symbol="circle"),
-                        visible=True if thr == thr_val else "legendonly",
-                        showlegend=False,
-                    ))
-                    # legend用的dummy trace：大一點（size=14）方便點選
-                    fig.add_trace(go.Scatter(
-                        x=[None], y=[None], mode="markers",
-                        name=label,
-                        legendgroup=label,
-                        marker=dict(color=colors_map[thr], size=14, symbol="circle"),
-                        visible=True if thr == thr_val else "legendonly",
-                        showlegend=True,
-                    ))
-            fig.update_layout(
-                height=520, xaxis_title="日期", yaxis_title="收盤價",
-                hovermode="x unified",
-                legend=dict(
-                    orientation="h", yanchor="bottom", y=1.02,
-                    itemsizing="constant",
-                    itemwidth=50,
-                    font=dict(size=13),
-                )
-            )
-
+                    fig.add_trace(go.Scatter(x=trig_x, y=trig_y, mode="markers", name=label,
+                                             legendgroup=label, marker=dict(color=colors_map[thr], size=6),
+                                             visible=True if thr == thr_val else "legendonly", showlegend=False))
+                    fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name=label,
+                                             legendgroup=label, marker=dict(color=colors_map[thr], size=14),
+                                             visible=True if thr == thr_val else "legendonly", showlegend=True))
+            fig.update_layout(height=520, xaxis_title="日期", yaxis_title="收盤價",
+                              hovermode="x unified",
+                              legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                         itemsizing="constant", font=dict(size=13)))
             st.plotly_chart(fig, use_container_width=True)
-            st.caption("預設顯示選定門檻，其他門檻可點圖例開關。顏色越深代表門檻越嚴苛")
 
             with st.expander("查看觸發日明細（門檻 " + ref_threshold_display + "）"):
                 df_trig = pd.DataFrame([{
@@ -1512,17 +1525,179 @@ with tab3:
                 } for t in result["triggers"]])
                 show_html(df_trig)
 
-        # 回測分析建議
+        # 分析建議（直接render，不存session_state）
+        st.markdown("---")
         st.markdown("### 📋 回測分析建議")
-        st.caption("根據上方回測數據自動生成分析建議（規則式，不需要API key）")
+        st.caption("根據上方回測數據自動生成，不構成投資建議")
         if st.button("📋 生成分析建議", key="ai_analysis"):
-            with st.spinner("分析中..."):
-                ai_text = rule_based_analysis(
-                    single_code, df_win, df_avg, df_dd,
-                    df_yearly if df_yearly is not None else None, thr_val,
-                    prices_dict=prices
-                )
-            st.session_state["ai_result"] = ai_text
+            render_analysis(single_code, df_win, df_avg, df_dd, df_yearly, thr_val, prices_dict=prices)
 
-        if st.session_state.get("ai_result"):
-            st.markdown(st.session_state["ai_result"])
+# ==============================
+# TAB 4: 全市場勝率排行
+# ==============================
+with tab4:
+    st.subheader("全市場勝率排行（各門檻前10名）")
+    st.info(
+        "系統對每檔股票跑15年回測，找出各觸發門檻下勝率最高的前10名，合併成一張表橫向比較。\n\n"
+        "📌 **怎麼讀這張表**：橫向看同一檔股票在各門檻的勝率，找出在多個門檻都表現穩定的股票；"
+        "縱向看同一門檻哪些股票勝率最高。橘色 ≥ 80%，淡黃色 ≥ 70%。\n\n"
+        "📌 **觀察天數**：你想研究跌破門檻後，放多久再看結果？"
+        "選10天 = 觸發後持有10天的勝率排行；選100天 = 觸發後持有100天的勝率排行。\n\n"
+        "⚠️ 觸發次數 ≤ 5次的標的自動加注警示，樣本太少勝率參考性有限。"
+    )
+    st.markdown("**選擇掃描範圍（不選預設跑全部個股）**")
+    selected4 = group_selector("tab4")
+    horizon4 = st.selectbox("觀察天數（觸發後持有多久再看勝率）",
+                             [str(h) + "天" for h in HORIZONS], index=6, key="h4")
+
+    if st.button("🏆 開始計算勝率排行", type="primary", key="winrank"):
+        all_stocks_r = get_all_tw_stocks()
+        rank_list = ([s for s in all_stocks_r if s["group"] in selected4]
+                     if selected4 else [s for s in all_stocks_r if s["type"] == "個股"])
+        h_val = int(horizon4.replace("天", ""))
+        total = len(rank_list)
+        st.info("共 " + str(total) + " 檔，開始計算（需較長時間）...")
+
+        stock_results = {}
+        progress = st.progress(0)
+        status = st.empty()
+
+        for i, stock in enumerate(rank_list):
+            code = stock["code"]
+            status.text("計算中：" + code + " " + stock["name"] + "（" + str(i+1) + "/" + str(total) + "）")
+            prices_r = get_yahoo_history_15y(code)
+            if not prices_r:
+                progress.progress((i+1)/total)
+                time.sleep(0.1)
+                continue
+
+            # 產業別優先用真實產業，沒有才用group
+            industry_display = stock["industry"] if stock["industry"] and stock["industry"] != "" else stock["group"]
+
+            stock_data = {"代碼": code, "名稱": stock["name"], "產業別": industry_display}
+            has_any = False
+            for thr in THRESHOLDS:
+                result_r = run_full_backtest(prices_r, thr)
+                if result_r is None:
+                    stock_data[str(thr) + "%勝率"] = None
+                    stock_data[str(thr) + "%次數"] = 0
+                else:
+                    rets = [x["ret"] for x in result_r["horizon_rets"][h_val]]
+                    if not rets:
+                        stock_data[str(thr) + "%勝率"] = None
+                        stock_data[str(thr) + "%次數"] = result_r["total"]
+                    else:
+                        wins = sum(1 for r in rets if r > 0)
+                        stock_data[str(thr) + "%勝率"] = round(wins / len(rets) * 100, 2)
+                        stock_data[str(thr) + "%次數"] = result_r["total"]
+                        has_any = True
+            if has_any:
+                stock_results[code] = stock_data
+            progress.progress((i+1)/total)
+            time.sleep(0.2)
+
+        progress.empty()
+        status.empty()
+
+        if not stock_results:
+            st.warning("沒有找到足夠資料")
+        else:
+            st.success("✅ 計算完成！")
+
+            # 合併各門檻前10名
+            top_codes = set()
+            for thr in THRESHOLDS:
+                col = str(thr) + "%勝率"
+                ranked = sorted(
+                    [(c, d) for c, d in stock_results.items() if d.get(col) is not None],
+                    key=lambda x: x[1][col], reverse=True
+                )[:10]
+                for c, _ in ranked:
+                    top_codes.add(c)
+
+            rows = []
+            for code in top_codes:
+                data = stock_results[code]
+                row = {"代碼": data["代碼"], "名稱": data["名稱"], "產業別": data["產業別"]}
+                for thr in THRESHOLDS:
+                    wr = data.get(str(thr) + "%勝率")
+                    cnt = data.get(str(thr) + "%次數", 0)
+                    if wr is None:
+                        row[str(thr) + "%"] = "---"
+                    elif cnt <= 5:
+                        row[str(thr) + "%"] = "{:.1f}%⚠️".format(wr)
+                    else:
+                        row[str(thr) + "%"] = "{:.1f}%".format(wr)
+                rows.append(row)
+
+            df_combined = pd.DataFrame(rows)
+            df_combined = df_combined.sort_values(
+                "-10%",
+                key=lambda col: col.map(lambda v: float(str(v).replace("%","").replace("⚠️","")) if v not in ["---"] else 0),
+                ascending=False
+            ).reset_index(drop=True)
+
+            thr_cols = [str(thr) + "%" for thr in THRESHOLDS]
+
+            def style_winrate_cell(val):
+                if str(val) in ["", "---"]:
+                    return ""
+                try:
+                    v = float(str(val).replace("%","").replace("⚠️",""))
+                    if v >= 80:
+                        return "background-color: #FF8C00; color: white; font-weight: bold"
+                    elif v >= 70:
+                        return "background-color: #FFD580; color: #5a3e00; font-weight: bold"
+                    elif v >= 60:
+                        return "color: red; font-weight: bold"
+                    else:
+                        return "color: #888888"
+                except:
+                    return ""
+
+            st.markdown(
+                "### 各門檻勝率合併排行｜觀察天數：**" + horizon4 +
+                "**（觸發後持有" + horizon4 + "的勝率）"
+            )
+            st.caption(
+                "橘色 ≥ 80%　淡黃色 ≥ 70%　紅色 ≥ 60%　⚠️ = 觸發次數 ≤ 5次樣本不足\n"
+                "依 -10% 門檻勝率排序｜橫向看同一檔在各門檻的表現，找在多個門檻都穩定高勝率的股票"
+            )
+            show_html(df_combined.style.map(style_winrate_cell, subset=thr_cols))
+
+            # 自動分析
+            st.markdown("#### 📊 自動分析")
+            # 找多門檻高勝率股票
+            multi_high = []
+            for _, row in df_combined.iterrows():
+                high_count = 0
+                for thr in THRESHOLDS:
+                    v_str = str(row.get(str(thr) + "%", "0"))
+                    try:
+                        v = float(v_str.replace("%","").replace("⚠️",""))
+                        if v >= 70:
+                            high_count += 1
+                    except:
+                        pass
+                if high_count >= 3:
+                    multi_high.append(row["名稱"] + "(" + row["代碼"] + ")")
+
+            # 產業分布
+            industry_counts = df_combined["產業別"].value_counts()
+
+            col1, col2 = st.columns(2)
+            with col1:
+                if multi_high:
+                    st.success(
+                        "**🏆 多門檻穩定高勝率（≥3個門檻勝率≥70%）**\n\n" +
+                        "　" + "、".join(multi_high[:8]) + "\n\n" +
+                        "→ 這些股票在多種跌幅門檻下都有較高勝率，代表跌後反彈能力較強，適合作為優先候選標的。"
+                    )
+                else:
+                    st.info("無多門檻同時高勝率的標的")
+            with col2:
+                industry_str = "、".join([k + "(" + str(v) + "檔)" for k, v in industry_counts.items()])
+                st.info(
+                    "**📊 產業分布**\n\n" + industry_str + "\n\n" +
+                    "→ 若特定產業集中出現，代表該產業在此門檻觸發後歷史上反彈能力較強，可作為產業輪動參考。"
+                )
