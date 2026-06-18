@@ -1548,7 +1548,7 @@ with tab4:
     st.markdown("**選擇掃描範圍（不選預設跑全部個股）**")
     selected4 = group_selector("tab4")
     horizon4 = st.selectbox("觀察天數（觸發後持有多久再看勝率）",
-                             [str(h) + "天" for h in HORIZONS], index=6, key="h4")
+                             [str(h) + "天" for h in HORIZONS], index=6, key="winrank_h4")
 
     if st.button("🏆 開始計算勝率排行", type="primary", key="winrank"):
         all_stocks_r = get_all_tw_stocks()
