@@ -594,7 +594,12 @@ def call_claude_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold):
             timeout=30
         )
         data = res.json()
-        return data["content"][0]["text"]
+        if "content" in data and len(data["content"]) > 0:
+            return data["content"][0]["text"]
+        elif "error" in data:
+            return "AI分析錯誤：" + str(data["error"].get("message", str(data["error"])))
+        else:
+            return "AI分析回傳格式異常：" + str(data)[:300]
     except Exception as e:
         return "AI分析暫時無法使用：" + str(e)
 
@@ -1220,8 +1225,15 @@ with tab3:
             fig.update_layout(
                 height=520, xaxis_title="日期", yaxis_title="收盤價",
                 hovermode="x unified",
-                legend=dict(orientation="h", yanchor="bottom", y=1.02)
+                legend=dict(
+                    orientation="h", yanchor="bottom", y=1.02,
+                    itemsizing="constant",
+                    itemwidth=50,
+                    font=dict(size=13),
+                )
             )
+            # 讓legend裡的marker點點變大
+            fig.update_traces(marker=dict(size=14), selector=dict(mode="markers"))
             st.plotly_chart(fig, use_container_width=True)
             st.caption("預設顯示選定門檻，其他門檻可點圖例開關。顏色越深代表門檻越嚴苛")
 
