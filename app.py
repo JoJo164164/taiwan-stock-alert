@@ -4,6 +4,7 @@ import requests
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import time
+import json
 
 INDUSTRY_GROUP = {
     "被動ETF": [], "主動ETF": [],
@@ -22,7 +23,6 @@ INDUSTRY_GROUP = {
     "數位雲端": ["數位雲端"], "運動休閒": ["運動休閒"],
     "居家生活": ["居家生活"], "綜合": ["綜合"],
 }
-
 GROUP_ICONS = {
     "被動ETF": "📊", "主動ETF": "✨", "半導體": "🔵", "電腦與週邊": "🖥️",
     "光電與通信": "📡", "電子零組件": "⚙️", "金融保險": "🏦", "生技醫療": "🧬",
@@ -33,7 +33,6 @@ GROUP_ICONS = {
     "觀光餐旅": "🏨", "貿易百貨": "🛒", "數位雲端": "☁️",
     "運動休閒": "⛳", "居家生活": "🏡", "綜合": "📌",
 }
-
 THRESHOLDS = [-5, -7, -10, -15, -20]
 HORIZONS = [10, 20, 50, 100, 200]
 
@@ -195,6 +194,8 @@ def run_full_backtest(prices_dict, threshold):
 
     horizon_rets = {h: [] for h in HORIZONS}
     horizon_drawdowns = {h: [] for h in HORIZONS}
+    # 新增：記錄最大回撤發生的天數
+    horizon_dd_days = {h: [] for h in HORIZONS}
 
     for t in triggers:
         idx = date_to_idx.get(t["date"])
@@ -209,6 +210,7 @@ def run_full_backtest(prices_dict, threshold):
                 ret = (future_price - entry_price) / entry_price * 100
                 horizon_rets[h].append({"ret": round(ret, 2), "year": year, "date": t["date"]})
                 min_ret = 0.0
+                min_day = 0
                 for d in range(1, h + 1):
                     fi = idx + d
                     if fi < len(dates):
@@ -216,7 +218,9 @@ def run_full_backtest(prices_dict, threshold):
                         r = (p - entry_price) / entry_price * 100
                         if r < min_ret:
                             min_ret = r
+                            min_day = d
                 horizon_drawdowns[h].append({"dd": round(min_ret, 2), "year": year})
+                horizon_dd_days[h].append(min_day)
 
     yearly = {}
     for t in triggers:
@@ -247,14 +251,16 @@ def run_full_backtest(prices_dict, threshold):
                 cc = 0
         yearly[year]["max_consec"] = mc
 
-    return {"triggers": triggers, "trigger_dates": list(trigger_dates),
-            "max_consecutive": max_consecutive, "horizon_rets": horizon_rets,
-            "horizon_drawdowns": horizon_drawdowns, "yearly": yearly, "total": len(triggers)}
+    return {
+        "triggers": triggers, "trigger_dates": list(trigger_dates),
+        "max_consecutive": max_consecutive,
+        "horizon_rets": horizon_rets,
+        "horizon_drawdowns": horizon_drawdowns,
+        "horizon_dd_days": horizon_dd_days,
+        "yearly": yearly, "total": len(triggers)
+    }
 
 
-# ==============================
-# 顏色與樣式函數
-# ==============================
 def color_ret(val):
     if val is None or str(val) in ["", "---", "待觀察"]:
         return ""
@@ -288,7 +294,6 @@ def color_winrate(val):
 
 
 def heatmap_positive(df, cols):
-    """正報酬熱力圖：越高越深紅，負報酬越深綠，確保文字可讀"""
     all_vals = []
     for c in cols:
         for v in df[c]:
@@ -306,7 +311,6 @@ def heatmap_positive(df, cols):
             v = float(str(val).replace("%", ""))
             if v > 0:
                 intensity = min(v / max_pos, 1.0)
-                # 淺到深紅：從 #FFE0E0 到 #8B0000
                 r = int(255 - intensity * 115)
                 g = int(224 - intensity * 224)
                 b = int(224 - intensity * 224)
@@ -314,7 +318,6 @@ def heatmap_positive(df, cols):
                 return "background-color: rgb({},{},{}); color: {}; font-weight: bold".format(r, g, b, text)
             elif v < 0:
                 intensity = min(abs(v) / abs(min_neg), 1.0)
-                # 淺到深綠：從 #E0FFE0 到 #006400
                 r = int(224 - intensity * 224)
                 g = int(255 - intensity * 111)
                 b = int(224 - intensity * 224)
@@ -323,12 +326,10 @@ def heatmap_positive(df, cols):
             return ""
         except:
             return ""
-
     return df.style.map(cell_style, subset=cols)
 
 
 def heatmap_negative(df, cols):
-    """回撤熱力圖：越深（越負）越深橘/紅，代表風險越高"""
     all_vals = []
     for c in cols:
         for v in df[c]:
@@ -345,7 +346,6 @@ def heatmap_negative(df, cols):
             v = float(str(val).replace("%", ""))
             if v < 0:
                 intensity = min(abs(v) / abs(min_neg), 1.0)
-                # 淺黃到深橘紅：代表回撤越深風險越高
                 r = int(255)
                 g = int(255 - intensity * 180)
                 b = int(200 - intensity * 200)
@@ -354,28 +354,18 @@ def heatmap_negative(df, cols):
             return ""
         except:
             return ""
-
     return df.style.map(cell_style, subset=cols)
 
 
 def fmt(v):
-    if v is None:
-        return "待觀察"
-    return "{:.2f}%".format(v)
+    return "待觀察" if v is None else "{:.2f}%".format(v)
 
 
-def show_html(styled_or_df):
-    if hasattr(styled_or_df, "to_html"):
-        st.markdown(styled_or_df.to_html(index=False), unsafe_allow_html=True)
-    else:
-        st.markdown(styled_or_df.to_html(index=False), unsafe_allow_html=True)
+def show_html(s):
+    st.markdown(s.to_html(index=False), unsafe_allow_html=True)
 
 
-# ==============================
-# 建立整合總覽表（A/B/E）
-# ==============================
 def build_summary_tables(prices_dict):
-    """建立三張總覽表：勝率、平均報酬、最大回撤（格式：門檻 x 觀察天數）"""
     win_rows, avg_rows, dd_rows = [], [], []
     for thr in THRESHOLDS:
         result = run_full_backtest(prices_dict, thr)
@@ -387,16 +377,12 @@ def build_summary_tables(prices_dict):
             col_a = str(h) + "天平均報酬%"
             col_d = str(h) + "天平均最大回撤%"
             if result is None:
-                win_row[col_w] = "---"
-                avg_row[col_a] = "---"
-                dd_row[col_d] = "---"
+                win_row[col_w] = avg_row[col_a] = dd_row[col_d] = "---"
             else:
                 rets = [x["ret"] for x in result["horizon_rets"][h]]
                 dds = [x["dd"] for x in result["horizon_drawdowns"][h]]
                 if not rets:
-                    win_row[col_w] = "待觀察"
-                    avg_row[col_a] = "待觀察"
-                    dd_row[col_d] = "待觀察"
+                    win_row[col_w] = avg_row[col_a] = dd_row[col_d] = "待觀察"
                 else:
                     wins = sum(1 for r in rets if r > 0)
                     win_row[col_w] = "{:.2f}%".format(wins / len(rets) * 100)
@@ -408,9 +394,6 @@ def build_summary_tables(prices_dict):
     return pd.DataFrame(win_rows), pd.DataFrame(avg_rows), pd.DataFrame(dd_rows)
 
 
-# ==============================
-# 年度明細：一張表，只留平均報酬（簡潔可讀）
-# ==============================
 def build_yearly_table(prices_dict, threshold):
     result = run_full_backtest(prices_dict, threshold)
     if not result:
@@ -423,7 +406,6 @@ def build_yearly_table(prices_dict, threshold):
             rets = y["rets"][h]
             row[str(h) + "天平均%"] = fmt(round(sum(rets) / len(rets), 2) if rets else None)
         rows.append(row)
-    # 合計列
     total_row = {"年度": "合計/平均", "觸發次數": result["total"], "最長連續觸發": result["max_consecutive"]}
     for h in HORIZONS:
         rets = [x["ret"] for x in result["horizon_rets"][h]]
@@ -432,9 +414,6 @@ def build_yearly_table(prices_dict, threshold):
     return pd.DataFrame(rows), result
 
 
-# ==============================
-# 進場時機：單一天數，四時機橫向比較
-# ==============================
 def build_entry_timing_table(prices_dict, threshold, horizon):
     rolling = calc_all_rolling_returns(prices_dict)
     if not rolling:
@@ -444,7 +423,6 @@ def build_entry_timing_table(prices_dict, threshold, horizon):
     triggers = [r for r in rolling if r["return"] <= threshold]
     if not triggers:
         return None
-
     trigger_date_set = set(t["date"] for t in triggers)
     consec_day = {}
     cc = 0
@@ -454,7 +432,6 @@ def build_entry_timing_table(prices_dict, threshold, horizon):
             consec_day[r["date"]] = cc
         else:
             cc = 0
-
     groups = {"連續第1天進場": [], "連續第2天進場": [], "連續第3天以後進場": [], "連續結束翌日進場": []}
     rolling_list = list(rolling)
     for i, r in enumerate(rolling_list):
@@ -482,7 +459,6 @@ def build_entry_timing_table(prices_dict, threshold, horizon):
                 groups["連續第2天進場"].append(ret)
             else:
                 groups["連續第3天以後進場"].append(ret)
-
     rows = []
     for gname, rets_raw in groups.items():
         rets = [r for r in rets_raw if r is not None]
@@ -498,6 +474,129 @@ def build_entry_timing_table(prices_dict, threshold, horizon):
             row["累積報酬%"] = "{:.2f}%".format(sum(rets))
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def build_dd_timing_table(prices_dict, threshold):
+    """表E增強：最大回撤 + 平均發生天數"""
+    result = run_full_backtest(prices_dict, threshold)
+    if not result:
+        return None
+    rows = []
+    for h in HORIZONS:
+        dds = [x["dd"] for x in result["horizon_drawdowns"][h]]
+        dd_days = result["horizon_dd_days"][h]
+        if not dds:
+            rows.append({"觀察天數": str(h) + "天", "樣本數": 0,
+                         "平均最大回撤%": "待觀察", "最深回撤%": "待觀察",
+                         "平均回撤發生於第幾天": "待觀察"})
+        else:
+            valid_days = [d for d in dd_days if d > 0]
+            rows.append({
+                "觀察天數": str(h) + "天",
+                "樣本數": len(dds),
+                "平均最大回撤%": "{:.2f}%".format(sum(dds) / len(dds)),
+                "最深回撤%": "{:.2f}%".format(min(dds)),
+                "平均回撤發生於第幾天": "{:.1f}天".format(sum(valid_days) / len(valid_days)) if valid_days else "無回撤",
+            })
+    return pd.DataFrame(rows)
+
+
+def build_consec_analysis(prices_dict, threshold, horizon):
+    """連續觸發天數 vs 後續報酬交叉分析"""
+    rolling = calc_all_rolling_returns(prices_dict)
+    if not rolling:
+        return None
+    dates = sorted(prices_dict.keys())
+    date_to_idx = {d: i for i, d in enumerate(dates)}
+    triggers = [r for r in rolling if r["return"] <= threshold]
+    if not triggers:
+        return None
+    trigger_date_set = set(t["date"] for t in triggers)
+    consec_day = {}
+    cc = 0
+    for r in rolling:
+        if r["date"] in trigger_date_set:
+            cc += 1
+            consec_day[r["date"]] = cc
+        else:
+            cc = 0
+
+    buckets = {"第1天": [], "第2天": [], "第3天": [], "第4天以後": []}
+    for t in triggers:
+        dn = consec_day.get(t["date"], 1)
+        idx = date_to_idx.get(t["date"])
+        if idx is None:
+            continue
+        ep = t["curr_price"]
+        fi = idx + horizon
+        if fi >= len(dates):
+            continue
+        ret = round((prices_dict[dates[fi]] - ep) / ep * 100, 2)
+        if dn == 1:
+            buckets["第1天"].append(ret)
+        elif dn == 2:
+            buckets["第2天"].append(ret)
+        elif dn == 3:
+            buckets["第3天"].append(ret)
+        else:
+            buckets["第4天以後"].append(ret)
+
+    rows = []
+    for bucket, rets in buckets.items():
+        if not rets:
+            rows.append({"連續觸發天數": bucket, "樣本數": 0,
+                         "勝率": "---", "平均報酬%": "---", "最佳報酬%": "---", "最差報酬%": "---"})
+        else:
+            wins = sum(1 for r in rets if r > 0)
+            rows.append({
+                "連續觸發天數": bucket,
+                "樣本數": len(rets),
+                "勝率": "{:.2f}%".format(wins / len(rets) * 100),
+                "平均報酬%": "{:.2f}%".format(sum(rets) / len(rets)),
+                "最佳報酬%": "{:.2f}%".format(max(rets)),
+                "最差報酬%": "{:.2f}%".format(min(rets)),
+            })
+    return pd.DataFrame(rows)
+
+
+def call_claude_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold):
+    """呼叫Claude API生成投資分析建議"""
+    summary = {
+        "股票代碼": code,
+        "分析門檻": str(threshold) + "%",
+        "勝率表": df_win.to_dict(orient="records"),
+        "平均報酬表": df_avg.to_dict(orient="records"),
+        "最大回撤表": df_dd.to_dict(orient="records"),
+        "年度明細（最近5年）": df_yearly.tail(6).to_dict(orient="records") if df_yearly is not None else [],
+    }
+    prompt = """你是一位資深量化分析師，請根據以下台股回測數據，提供投資參考建議。
+
+數據摘要：
+""" + json.dumps(summary, ensure_ascii=False, indent=2) + """
+
+請分析：
+1. 最佳觸發門檻建議（哪個門檻的勝率與報酬最佳？）
+2. 最佳持有天數建議（哪個觀察天數的風險報酬比最好？）
+3. 歷史規律（年度明細中有無明顯的好年/壞年？）
+4. 風險提示（最大回撤情況，投資人需有何心理準備？）
+5. 綜合建議（一段簡潔的操作建議）
+
+請用繁體中文回答，語氣專業但清晰易懂，每點不超過3句話。"""
+
+    try:
+        res = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            json={
+                "model": "claude-sonnet-4-6",
+                "max_tokens": 1000,
+                "messages": [{"role": "user", "content": prompt}]
+            },
+            timeout=30
+        )
+        data = res.json()
+        return data["content"][0]["text"]
+    except Exception as e:
+        return "AI分析暫時無法使用：" + str(e)
 
 
 @st.cache_data(ttl=86400)
@@ -564,9 +663,16 @@ def group_selector(key_prefix):
     return selected
 
 
-tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📖 使用說明", "🔍 每日警示掃描", "📊 批次回測",
-    "🔬 個股回測", "🏆 全市場勝率排行", "🔧 系統檢核"
+# ==============================
+# 頁籤順序：使用說明→系統檢核→每日警示→批次回測→個股回測→全市場勝率
+# ==============================
+tab0, tab5, tab1, tab2, tab3, tab4 = st.tabs([
+    "📖 使用說明",
+    "🔧 系統檢核",
+    "🔍 每日警示掃描",
+    "📊 批次回測",
+    "🔬 個股回測",
+    "🏆 全市場勝率排行",
 ])
 
 # ==============================
@@ -586,8 +692,35 @@ with tab0:
 - 🔴 **紅色文字** = 正數（獲利）
 - 🟢 **綠色文字** = 負數（虧損）
 - 🟠 **橘色背景** = 勝率 ≥ 80%
-- **報酬熱力圖**：越深紅 = 報酬越高，越深綠 = 報酬越低（虧損越深）
-- **回撤熱力圖**：越深橘紅 = 回撤越深 = 持有過程越痛苦
+- **報酬熱力圖**：越深紅報酬越高，越深綠虧損越深
+- **回撤熱力圖**：越深橘紅回撤越深，風險越高
+    """)
+    st.divider()
+    st.markdown("### 計算邏輯說明")
+    st.markdown("""
+- **觸發定義**：當日還原收盤價相較10個交易日前，跌幅達門檻即觸發
+- **進場方式**：每個觸發日各自進場，連續觸發N天即有N筆紀錄
+- **勝率**：以 T+N 那天的收盤價計算，T+N收盤 > 進場收盤 = 獲勝
+- **平均報酬%**：每筆觸發各自以 T+N 收盤計算報酬，取算術平均
+- **年度歸屬**：以觸發當天日期為準，報酬計算可跨年度
+- **待觀察**：觸發後未滿觀察天數，不計入統計
+    """)
+    st.divider()
+    st.markdown("### 建議使用流程（研究順序）")
+    st.markdown("""
+**步驟一：每日警示掃描**
+→ 先看今天收盤後有哪些標的觸發門檻，建立今日候選名單
+
+**步驟二：個股回測**
+→ 針對候選名單中的標的，深入研究歷史勝率、最佳持有天數、最佳進場時機
+→ 搭配AI分析建議，快速掌握該標的的歷史規律
+
+**步驟三：全市場勝率排行**
+→ 定期跑一次，建立長期高勝率股票的參考名單
+→ 各門檻前10名，搭配產業分布，找出結構性強勢產業
+
+**步驟四：批次回測**
+→ 針對特定產業做系統性研究，了解整個產業的歷史回測表現
     """)
     st.divider()
     st.markdown("### 觀察天數說明")
@@ -599,36 +732,112 @@ with tab0:
 | 50天 | 2.5個月 | 季線修復 |
 | 100天 | 5個月 | 半年趨勢 |
 | 200天 | 1年 | 年線修復 |
-
-> **中長線投資者建議**：主要參考 100天 及 200天 的勝率與報酬
     """)
     st.divider()
     st.markdown("### 全市場勝率排行：參數說明")
     st.markdown("""
-- **觀察天數**：你進場後要持有多久再看結果。選100天代表「觸發後持有5個月的勝率」
-- **最低觸發次數**：過濾掉樣本太少的股票，避免只觸發1次就100%勝率的假象
-- 中長線投資者建議：觀察天數選 **100天或200天**，最低觸發次數設 **8次以上**
-    """)
-    st.divider()
-    st.markdown("### 核心表格說明")
-    st.markdown("""
-| 表格 | 用途 |
-|------|------|
-| 表A 勝率 | 觸發後持有N天，收益為正的機率（≥80%橘色highlight） |
-| 表B 平均報酬% | 平均每次觸發進場，持有N天的平均獲利（熱力圖：越深紅越好） |
-| 表E 平均最大回撤% | 持有期間內最深跌幅平均（熱力圖：越深橘紅風險越高） |
-| 年度明細 | 各年度觸發次數與平均報酬，一眼看出哪幾年表現最好 |
-| 進場時機（表D） | 連續觸發第幾天進場勝率最高（搭配觀察天數選單切換） |
-    """)
-    st.divider()
-    st.markdown("### 建議使用流程")
-    st.markdown("""
-1. **全市場勝率排行** → 找出各門檻下勝率最高的股票群
-2. **批次回測** → 針對特定產業深入分析年度表現
-3. **個股回測** → 找出最適合的進場門檻與時機
-4. **每日警示掃描** → 每天收盤後檢查當天觸發標的
+- **觀察天數**：你想研究跌破門檻後，放多久再看結果？選100天 = 觸發後持有5個月的勝率排行
+- **最低觸發次數**：自動標示 ⚠️，觸發次數 ≤ 5次代表樣本不足，勝率參考性有限
     """)
     st.warning("本系統為輔助研究工具，不構成投資建議。歷史回測不代表未來績效。")
+
+# ==============================
+# TAB 系統檢核
+# ==============================
+with tab5:
+    st.subheader("🔧 系統檢核")
+    st.info("點擊下方按鈕，自動驗證各項資料來源、API連線、計算邏輯與資料新鮮度")
+
+    if st.button("▶️ 執行系統檢核", type="primary", key="check"):
+        checks = []
+
+        def run_check(name, fn):
+            try:
+                ok, detail = fn()
+                checks.append({"項目": name, "狀態": "✅ 正常" if ok else "❌ 異常", "說明": detail})
+            except Exception as e:
+                checks.append({"項目": name, "狀態": "❌ 失敗", "說明": str(e)[:120]})
+
+        with st.spinner("執行中..."):
+
+            def check_twse():
+                res = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10)
+                data = res.json()
+                return len(data) > 100, "取得 " + str(len(data)) + " 筆上市證券"
+            run_check("證交所TWSE API", check_twse)
+
+            def check_tpex():
+                res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=10)
+                data = res.json()
+                return len(data) > 50, "取得 " + str(len(data)) + " 筆上櫃證券"
+            run_check("櫃買中心TPEX API", check_tpex)
+
+            def check_yahoo():
+                p = get_yahoo_history("2330", days=60)
+                if len(p) < 10:
+                    return False, "資料筆數不足：" + str(len(p))
+                d = sorted(p.keys())
+                return True, "2330台積電 最新收盤：" + str(p[d[-1]]) + "（" + d[-1] + "）｜取得 " + str(len(p)) + " 筆"
+            run_check("Yahoo Finance API（2330）", check_yahoo)
+
+            def check_freshness():
+                p = get_yahoo_history("2330", days=10)
+                if not p:
+                    return False, "無法取得資料"
+                latest_date = sorted(p.keys())[-1]
+                days_diff = (datetime.today() - datetime.strptime(latest_date, "%Y-%m-%d")).days
+                ok = days_diff <= 4
+                return ok, "最新資料日期：" + latest_date + "（距今 " + str(days_diff) + " 天）" + ("✓" if ok else " ⚠️ 資料可能延遲")
+            run_check("資料即時性（最新資料距今天數）", check_freshness)
+
+            def check_logic():
+                tp = {(datetime.today() - timedelta(days=20 - i)).strftime("%Y-%m-%d"):
+                      (100.0 if i < 11 else 88.0) for i in range(20)}
+                ret = calc_rolling_return_latest(tp)
+                ok = ret is not None and abs(ret - (-12.0)) < 0.01
+                return ok, "計算結果：{:.2f}%（預期 -12.00%）{}".format(ret or 0, "✓" if ok else "✗")
+            run_check("滾動10日報酬計算邏輯", check_logic)
+
+            def check_15y():
+                p = get_yahoo_history_15y("0050")
+                if len(p) < 1000:
+                    return False, "資料筆數不足：" + str(len(p))
+                d = sorted(p.keys())
+                return True, "0050 取得 " + str(len(p)) + " 日（" + d[0] + " ~ " + d[-1] + "）還原後股價"
+            run_check("還原後股價（0050 15年）", check_15y)
+
+            def check_trigger():
+                p = get_yahoo_history_15y("2330")
+                r = run_full_backtest(p, -7)
+                if r and r["total"] > 0:
+                    return True, "2330 @-7%：觸發 " + str(r["total"]) + " 次，最長連續 " + str(r["max_consecutive"]) + " 天"
+                return False, "觸發次數為0"
+            run_check("觸發計算驗證（2330 @-7%）", check_trigger)
+
+            def check_adj_price():
+                p = get_yahoo_history_15y("0050")
+                if len(p) < 100:
+                    return False, "資料不足"
+                dates = sorted(p.keys())
+                nearby = [d for d in dates if "2021-10" in d or "2021-09" in d or "2021-11" in d]
+                if len(nearby) < 10:
+                    return True, "無法取得2021年資料，跳過此項"
+                prices_nearby = [p[d] for d in sorted(nearby)]
+                max_jump = max(
+                    abs(prices_nearby[i] - prices_nearby[i-1]) / prices_nearby[i-1] * 100
+                    for i in range(1, len(prices_nearby))
+                )
+                if max_jump < 15:
+                    return True, "0050還原股價連續性正常（除息前後最大單日跳空：{:.2f}%）".format(max_jump)
+                return False, "還原股價異常！最大單日跳空：{:.2f}%".format(max_jump)
+            run_check("還原股價連續性驗證（0050除息）", check_adj_price)
+
+        show_html(pd.DataFrame(checks))
+        if all("✅" in c["狀態"] for c in checks):
+            st.success("✅ 所有系統檢核通過！")
+        else:
+            failed = [c["項目"] for c in checks if "❌" in c["狀態"]]
+            st.error("❌ 異常項目：" + "、".join(failed))
 
 # ==============================
 # TAB 1: 每日警示掃描
@@ -732,9 +941,6 @@ with tab2:
             avg_cols = [str(h) + "天平均%" for h in HORIZONS]
             dd_cols = [str(h) + "天回撤%" for h in HORIZONS]
             st.success("✅ 回測完成！")
-            styled = heatmap_positive(df_bt, avg_cols)
-            styled = heatmap_negative(df_bt.style, dd_cols) if hasattr(df_bt, "style") else styled
-            # 分兩段顯示：報酬 + 回撤
             st.markdown("**報酬表（熱力圖：越深紅報酬越高）**")
             avg_display = df_bt[["產業群組", "代碼", "名稱", "年度", "觸發次數", "最長連續觸發"] + avg_cols]
             show_html(heatmap_positive(avg_display, avg_cols))
@@ -768,98 +974,126 @@ with tab3:
             with st.spinner("計算各門檻回測中..."):
                 df_win, df_avg, df_dd = build_summary_tables(prices)
 
+            thr_val = int(ref_threshold.replace("%", ""))
             win_cols = [str(h) + "天勝率" for h in HORIZONS]
             avg_cols = [str(h) + "天平均報酬%" for h in HORIZONS]
             dd_cols = [str(h) + "天平均最大回撤%" for h in HORIZONS]
 
             # 表A：勝率
             st.markdown("### 表A：勝率（各門檻 × 觀察天數）｜橘色 ≥ 80%")
-            st.caption("勝率 = 觸發進場後，持有到觀察天數當天收益為正的比例")
+            st.caption("勝率 = 觸發進場後，T+N天收盤價高於進場收盤價的比例")
             show_html(df_win.style.map(color_winrate, subset=win_cols))
 
-            # 表B：平均報酬（熱力圖）
+            # 表B：平均報酬
             st.markdown("### 表B：平均單次報酬%（各門檻 × 觀察天數）")
-            st.caption("每次觸發進場後，持有到觀察天數的平均報酬。越深紅 = 報酬越高")
+            st.caption("每次觸發進場，持有至第N天收盤的平均報酬。越深紅越好")
             show_html(heatmap_positive(df_avg, avg_cols))
 
-            # 表E：平均最大回撤（熱力圖）
-            st.markdown("### 表E：平均最大回撤%（各門檻 × 觀察天數）")
-            st.caption("觸發進場後，持有期間曾經最深跌到多少。越深橘紅 = 持有過程越痛苦，需有心理準備")
-            show_html(heatmap_negative(df_dd, dd_cols))
+            # 表C：累積報酬（所有觸發加總）
+            st.markdown("### 表C：累積報酬%（所有觸發報酬加總，不除筆數）")
+            cum_rows = []
+            for thr in THRESHOLDS:
+                result = run_full_backtest(prices, thr)
+                row = {"觸發門檻": str(thr) + "%", "樣本數": 0 if result is None else result["total"]}
+                for h in HORIZONS:
+                    if result is None:
+                        row[str(h) + "天累積%"] = "---"
+                    else:
+                        rets = [x["ret"] for x in result["horizon_rets"][h]]
+                        row[str(h) + "天累積%"] = fmt(round(sum(rets), 2) if rets else None)
+                cum_rows.append(row)
+            df_cum = pd.DataFrame(cum_rows)
+            cum_cols = [str(h) + "天累積%" for h in HORIZONS]
+            show_html(heatmap_positive(df_cum, cum_cols))
 
-            st.info(
-                "計算邏輯：\n"
-                "- 每個觸發日各自進場，連續觸發N天即有N筆紀錄\n"
-                "- 勝率：觀察天數當天報酬 > 0% 的比例\n"
-                "- 平均報酬%：所有觸發單次報酬的算術平均\n"
-                "- 最大回撤%：每筆觸發在持有期間曾出現的最深跌幅，取平均\n"
-                "- 待觀察：觸發後未滿觀察天數，不計入統計"
-            )
-
-            thr_val = int(ref_threshold.replace("%", ""))
-
-            # 年度明細：一張表，只顯示平均報酬，有熱力圖
-            df_yearly, result = build_yearly_table(prices, thr_val)
-            if df_yearly is not None:
-                yearly_avg_cols = [str(h) + "天平均%" for h in HORIZONS]
-                st.markdown("### 年度明細（門檻 " + ref_threshold + "）")
-                st.caption(
-                    "各年度觸發次數與各持有天數的平均報酬。\n"
-                    "解讀重點：橫向看哪個持有天數報酬最穩；縱向看哪幾年跌破門檻後反彈最強。"
-                )
-                show_html(heatmap_positive(df_yearly, yearly_avg_cols))
-
-            # 進場時機：選單切換天數，單一張表四時機比較
-            st.markdown("### 進場時機比較（表D）｜門檻 " + ref_threshold + "）")
-            st.caption(
-                "連續觸發第幾天進場勝率最高？\n"
-                "解讀重點：比較四種進場時機的勝率與報酬，找出最佳切入點。\n"
-                "切換下方天數選單，觀察不同持有長度下各進場時機的差異。"
-            )
-            horizon_choice = st.selectbox(
-                "選擇觀察天數",
-                [str(h) + "天" for h in HORIZONS],
-                index=2,
-                key="timing_horizon"
-            )
+            # 表D：進場時機
+            st.markdown("### 表D：進場時機比較（門檻 " + ref_threshold + "）")
+            st.caption("連續觸發第幾天進場效果最好？切換天數觀察不同持有長度的差異")
+            horizon_choice = st.selectbox("選擇觀察天數", [str(h) + "天" for h in HORIZONS],
+                                           index=2, key="timing_horizon")
             h_timing = int(horizon_choice.replace("天", ""))
             df_timing = build_entry_timing_table(prices, thr_val, h_timing)
             if df_timing is not None:
                 ret_cols_t = ["平均報酬%", "累積報酬%"]
-                win_col_t = ["勝率"]
                 styled_t = heatmap_positive(df_timing, ret_cols_t)
-                styled_t = styled_t.map(color_winrate, subset=win_col_t)
+                styled_t = styled_t.map(color_winrate, subset=["勝率"])
                 show_html(styled_t)
-                st.caption(
-                    "四種進場時機說明：\n"
-                    "• 連續第1天：跌幅首次觸發門檻當天進場（最早，風險最高但數量最多）\n"
-                    "• 連續第2天：已連續觸發2天才進場（稍微確認下跌趨勢）\n"
-                    "• 連續第3天以後：連續觸發3天以上才進場（等待更深的超跌）\n"
-                    "• 連續結束翌日：連續觸發全部結束、止跌後第一天進場（最保守，確認止跌）"
-                )
+                st.caption("連續第1天：首次觸發｜連續第2天：跌2天才進｜連續第3天以後：等更深跌｜連續結束翌日：止跌確認後才進")
             else:
                 st.warning("此門檻無觸發紀錄")
 
-            # 線圖
-            if result:
-                st.markdown("### 股價走勢＋觸發標記（門檻 " + ref_threshold + "）")
-                dates = sorted(prices.keys())
-                price_values = [prices[d] for d in dates]
-                trigger_dates = set(result["trigger_dates"])
-                trigger_x = [d for d in dates if d in trigger_dates]
-                trigger_y = [prices[d] for d in trigger_x]
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=dates, y=price_values, mode="lines", name="收盤價",
-                                         line=dict(color="#2196F3", width=1.5)))
-                fig.add_trace(go.Scatter(x=trigger_x, y=trigger_y, mode="markers",
-                                         name="觸發日（" + ref_threshold + "）",
-                                         marker=dict(color="red", size=8, symbol="circle")))
-                fig.update_layout(height=500, xaxis_title="日期", yaxis_title="收盤價",
-                                  hovermode="x unified",
-                                  legend=dict(orientation="h", yanchor="bottom", y=1.02))
-                st.plotly_chart(fig, use_container_width=True)
+            # 表E：最大回撤 + 發生天數
+            st.markdown("### 表E：最大回撤分析（門檻 " + ref_threshold + "）")
+            st.caption("持有期間最深跌幅，以及平均在第幾天出現。幫助你判斷要有多少耐心")
+            df_dd_enhanced = build_dd_timing_table(prices, thr_val)
+            if df_dd_enhanced is not None:
+                show_html(df_dd_enhanced.style.map(color_dd, subset=["平均最大回撤%", "最深回撤%"]))
 
-                with st.expander("查看所有觸發日明細"):
+            st.info(
+                "計算邏輯：\n"
+                "- 勝率與報酬均以 T+N 那天收盤價計算\n"
+                "- 年度歸屬以觸發當天為準，報酬計算可跨年度\n"
+                "- 待觀察：觸發後未滿觀察天數，不計入統計"
+            )
+
+            # 年度明細
+            df_yearly, result = build_yearly_table(prices, thr_val)
+            if df_yearly is not None:
+                st.markdown("### 年度明細（門檻 " + ref_threshold + "）")
+                st.caption("橫向看哪個持有天數最穩；縱向看哪幾年跌破門檻後反彈最強")
+                yr_cols = [str(h) + "天平均%" for h in HORIZONS]
+                show_html(heatmap_positive(df_yearly, yr_cols))
+
+            # 連續觸發分析
+            st.markdown("### 連續觸發分析（門檻 " + ref_threshold + "）")
+            st.caption("跌越多天觸發，後續報酬是更好還是更差？")
+            horizon_consec = st.selectbox("選擇觀察天數", [str(h) + "天" for h in HORIZONS],
+                                           index=2, key="consec_horizon")
+            h_consec = int(horizon_consec.replace("天", ""))
+            df_consec = build_consec_analysis(prices, thr_val, h_consec)
+            if df_consec is not None:
+                ret_cols_c = ["平均報酬%", "最佳報酬%", "最差報酬%"]
+                styled_c = heatmap_positive(df_consec, ["平均報酬%"])
+                styled_c = styled_c.map(color_winrate, subset=["勝率"])
+                styled_c = styled_c.map(color_ret, subset=["最佳報酬%", "最差報酬%"])
+                show_html(styled_c)
+                st.caption("分析連續觸發第幾天進場，後續報酬的勝率與平均報酬差異，判斷是否越跌越值得進場")
+
+            # 門檻比較線圖
+            if result:
+                st.markdown("### 股價走勢 + 各門檻觸發標記")
+                st.caption("同時顯示多個門檻的觸發點，視覺化哪些時點跌幅較深")
+                dates_all = sorted(prices.keys())
+                price_values = [prices[d] for d in dates_all]
+
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=dates_all, y=price_values, mode="lines", name="收盤價",
+                    line=dict(color="#2196F3", width=1.5)
+                ))
+
+                colors_map = {-5: "#FFA500", -7: "#FF6B35", -10: "#E63946", -15: "#9B2335", -20: "#5C0A14"}
+                for thr in THRESHOLDS:
+                    r_thr = run_full_backtest(prices, thr)
+                    if r_thr:
+                        trig_x = [d for d in dates_all if d in set(r_thr["trigger_dates"])]
+                        trig_y = [prices[d] for d in trig_x]
+                        fig.add_trace(go.Scatter(
+                            x=trig_x, y=trig_y, mode="markers",
+                            name="門檻 " + str(thr) + "% (" + str(r_thr["total"]) + "次)",
+                            marker=dict(color=colors_map[thr], size=6, symbol="circle"),
+                            visible=True if thr == thr_val else "legendonly"
+                        ))
+
+                fig.update_layout(
+                    height=520, xaxis_title="日期", yaxis_title="收盤價",
+                    hovermode="x unified",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02)
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                st.caption("預設顯示選定門檻，其他門檻可點圖例開關。顏色越深代表門檻越嚴苛")
+
+                with st.expander("查看觸發日明細（門檻 " + ref_threshold + "）"):
                     df_trig = pd.DataFrame([{
                         "觸發日": t["date"], "基準日": t["base_date"],
                         "基準價": t["base_price"], "觸發當日收盤": t["curr_price"],
@@ -867,40 +1101,42 @@ with tab3:
                     } for t in result["triggers"]])
                     show_html(df_trig)
 
-# ==============================
+            # AI分析建議
+            st.markdown("### 🤖 AI投資分析建議")
+            st.caption("根據上方回測數據，由AI生成投資參考建議（不構成投資建議）")
+            if st.button("✨ 生成AI分析", key="ai_analysis"):
+                with st.spinner("AI分析中..."):
+                    analysis_text = call_claude_analysis(
+                        single_code, df_win, df_avg, df_dd,
+                        df_yearly, thr_val
+                    )
+                st.markdown(analysis_text)
 
 # ==============================
 # TAB 4: 全市場勝率排行
 # ==============================
 with tab4:
-    st.subheader("全市場勝率排行（各門檻 × 前10名）")
+    st.subheader("全市場勝率排行（各門檻前10名）")
     st.info(
-        "系統對每檔股票跑15年回測，計算各觸發門檻下的勝率，找出前10名並合併顯示。\n\n"
-        "📌 觀察天數說明：你想研究跌破門檻後，放多久再看結果？\n"
-        "選10天 = 看觸發後2週的勝率排行；選100天 = 看觸發後5個月的勝率排行。\n"
-        "不同天數會得到不同排行，因為有些股票短線反彈快，有些需要更長時間恢復。\n\n"
-        "⚠️ 觸發次數 ≤ 5次的標的會自動加注警示，代表樣本太少，勝率參考性有限。"
+        "系統會跑15年回測，找出各觸發門檻下勝率最高的前10檔股票\n\n"
+        "📌 觀察天數：你想研究跌破門檻後，放多久再看結果？\n"
+        "選10天 = 觸發後2週的勝率排行；選100天 = 觸發後5個月的勝率排行。\n\n"
+        "⚠️ 觸發次數 ≤ 5次的標的自動加注警示，樣本太少勝率參考性有限。"
     )
     st.markdown("**選擇掃描範圍（不選預設跑全部個股）**")
     selected4 = group_selector("tab4")
-    horizon4 = st.selectbox(
-        "觀察天數（你想持有多久再看結果）",
-        [str(h) + "天" for h in HORIZONS],
-        index=3,
-        key="h4",
-        help="10天=2週短線反彈｜20天=月線修復｜50天=季線修復｜100天=半年趨勢｜200天=年線修復"
-    )
+    col_h, col_m = st.columns(2)
+    with col_h:
+        horizon4 = st.selectbox("觀察天數", [str(h) + "天" for h in HORIZONS], index=3, key="h4")
 
     if st.button("🏆 開始計算勝率排行", type="primary", key="winrank"):
         all_stocks_r = get_all_tw_stocks()
         rank_list = ([s for s in all_stocks_r if s["group"] in selected4]
                      if selected4 else [s for s in all_stocks_r if s["type"] == "個股"])
-
         h_val = int(horizon4.replace("天", ""))
         total = len(rank_list)
-        st.info("共 " + str(total) + " 檔，開始計算（需要較長時間）...")
+        st.info("共 " + str(total) + " 檔，開始計算...")
 
-        # 收集每檔股票在各門檻下的勝率
         stock_results = {}
         progress = st.progress(0)
         status = st.empty()
@@ -915,8 +1151,7 @@ with tab4:
                 continue
 
             stock_data = {
-                "代碼": code,
-                "名稱": stock["name"],
+                "代碼": code, "名稱": stock["name"],
                 "產業別": stock["industry"] if stock["industry"] else stock["group"],
             }
             has_any = False
@@ -950,7 +1185,6 @@ with tab4:
         else:
             st.success("✅ 計算完成！觀察天數：" + horizon4)
 
-            # 對每個門檻找前10名，然後合併成一張表
             top_codes = set()
             for thr in THRESHOLDS:
                 col = str(thr) + "%勝率"
@@ -961,15 +1195,10 @@ with tab4:
                 for code, _ in ranked:
                     top_codes.add(code)
 
-            # 建合併表
             rows = []
             for code in top_codes:
                 data = stock_results[code]
-                row = {
-                    "代碼": data["代碼"],
-                    "名稱": data["名稱"],
-                    "產業別": data["產業別"],
-                }
+                row = {"代碼": data["代碼"], "名稱": data["名稱"], "產業別": data["產業別"]}
                 for thr in THRESHOLDS:
                     wr = data.get(str(thr) + "%勝率")
                     cnt = data.get(str(thr) + "%次數", 0)
@@ -982,17 +1211,9 @@ with tab4:
                 rows.append(row)
 
             df_combined = pd.DataFrame(rows)
-
-            # 依-10%勝率排序（最常用門檻）
-            def sort_key(r):
-                v = r.get("-10%", "0%")
-                try:
-                    return float(str(v).replace("%", "").replace("⚠️", ""))
-                except:
-                    return 0
             df_combined = df_combined.sort_values(
                 "-10%",
-                key=lambda col: col.map(lambda v: float(str(v).replace("%", "").replace("⚠️", "")) if v not in ["---", "待觀察"] else 0),
+                key=lambda col: col.map(lambda v: float(str(v).replace("%", "").replace("⚠️", "")) if v not in ["---"] else 0),
                 ascending=False
             ).reset_index(drop=True)
 
@@ -1015,110 +1236,5 @@ with tab4:
                     return ""
 
             st.markdown("### 各門檻勝率合併排行｜觀察天數：" + horizon4)
-            st.caption(
-                "橘色 ≥ 80%、淡黃色 ≥ 70%、紅色 ≥ 60%。⚠️ 表示觸發次數 ≤ 5次，樣本不足請謹慎參考。\n"
-                "依 -10% 門檻勝率排序。可橫向看同一檔在各門檻的表現，找出哪個門檻最適合這檔股票。"
-            )
+            st.caption("橘色 ≥ 80%、淡黃色 ≥ 70%、紅色 ≥ 60%。⚠️ = 觸發次數 ≤ 5次，樣本不足。依 -10% 門檻勝率排序")
             show_html(df_combined.style.map(style_winrate_cell, subset=thr_cols))
-
-# ==============================
-# TAB 5: 系統檢核
-# ==============================
-with tab5:
-    st.subheader("🔧 系統檢核")
-    st.info("點擊下方按鈕，自動驗證各項資料來源與計算邏輯是否正常")
-
-    if st.button("▶️ 執行系統檢核", type="primary", key="check"):
-        checks = []
-
-        def run_check(name, fn):
-            try:
-                ok, detail = fn()
-                checks.append({"項目": name, "狀態": "✅ 正常" if ok else "❌ 異常", "說明": detail})
-            except Exception as e:
-                checks.append({"項目": name, "狀態": "❌ 失敗", "說明": str(e)})
-
-        with st.spinner("執行中..."):
-
-            def check_twse():
-                res = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10)
-                data = res.json()
-                return len(data) > 100, "取得 " + str(len(data)) + " 筆上市證券"
-            run_check("證交所TWSE API", check_twse)
-
-            def check_tpex():
-                res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=10)
-                data = res.json()
-                return len(data) > 50, "取得 " + str(len(data)) + " 筆上櫃證券"
-            run_check("櫃買中心TPEX API", check_tpex)
-
-            def check_yahoo():
-                p = get_yahoo_history("2330", days=60)
-                if len(p) < 10:
-                    return False, "資料筆數不足：" + str(len(p))
-                d = sorted(p.keys())
-                return True, "2330台積電 最新收盤：" + str(p[d[-1]]) + "（" + d[-1] + "）｜取得 " + str(len(p)) + " 筆"
-            run_check("Yahoo Finance API（2330）", check_yahoo)
-
-            def check_freshness():
-                p = get_yahoo_history("2330", days=10)
-                if not p:
-                    return False, "無法取得資料"
-                latest_date = sorted(p.keys())[-1]
-                latest_dt = datetime.strptime(latest_date, "%Y-%m-%d")
-                days_diff = (datetime.today() - latest_dt).days
-                if days_diff <= 4:
-                    return True, "最新資料日期：" + latest_date + "（距今 " + str(days_diff) + " 天）✓"
-                else:
-                    return False, "最新資料距今 " + str(days_diff) + " 天，可能有延遲！"
-            run_check("資料即時性（最新資料距今天數）", check_freshness)
-
-            def check_logic():
-                tp = {(datetime.today() - timedelta(days=20 - i)).strftime("%Y-%m-%d"):
-                      (100.0 if i < 11 else 88.0) for i in range(20)}
-                ret = calc_rolling_return_latest(tp)
-                ok = ret is not None and abs(ret - (-12.0)) < 0.01
-                return ok, "計算結果：{:.2f}%（預期 -12.00%）{}".format(ret or 0, "✓" if ok else "✗")
-            run_check("滾動10日報酬計算邏輯", check_logic)
-
-            def check_15y():
-                p = get_yahoo_history_15y("0050")
-                if len(p) < 1000:
-                    return False, "資料筆數不足：" + str(len(p))
-                d = sorted(p.keys())
-                return True, "0050 取得 " + str(len(p)) + " 日（" + d[0] + " ~ " + d[-1] + "）還原後股價"
-            run_check("還原後股價（0050 15年）", check_15y)
-
-            def check_trigger():
-                p = get_yahoo_history_15y("2330")
-                r = run_full_backtest(p, -7)
-                if r and r["total"] > 0:
-                    return True, "2330 @-7%：觸發 " + str(r["total"]) + " 次，最長連續 " + str(r["max_consecutive"]) + " 天"
-                return False, "觸發次數為0"
-            run_check("觸發計算驗證（2330 @-7%）", check_trigger)
-
-            def check_adj_price():
-                p = get_yahoo_history_15y("0050")
-                if len(p) < 100:
-                    return False, "資料不足"
-                dates = sorted(p.keys())
-                nearby = [d for d in dates if "2021-10" in d or "2021-09" in d or "2021-11" in d]
-                if len(nearby) < 10:
-                    return True, "無法取得2021年資料，跳過此項"
-                prices_nearby = [p[d] for d in sorted(nearby)]
-                max_jump = max(
-                    abs(prices_nearby[i] - prices_nearby[i-1]) / prices_nearby[i-1] * 100
-                    for i in range(1, len(prices_nearby))
-                )
-                if max_jump < 15:
-                    return True, "0050還原股價連續性正常（除息前後最大單日跳空：{:.2f}%）".format(max_jump)
-                else:
-                    return False, "還原股價異常！最大單日跳空：{:.2f}%（超過15%門檻）".format(max_jump)
-            run_check("還原股價連續性驗證（0050除息）", check_adj_price)
-
-        show_html(pd.DataFrame(checks))
-        if all("✅" in c["狀態"] for c in checks):
-            st.success("✅ 所有系統檢核通過！")
-        else:
-            failed = [c["項目"] for c in checks if "❌" in c["狀態"]]
-            st.error("❌ 異常項目：" + "、".join(failed))
