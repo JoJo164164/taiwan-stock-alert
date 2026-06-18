@@ -1267,132 +1267,6 @@ with tab2:
             st.warning("沒有找到任何觸發紀錄")
 
 # ==============================
-# TAB 4: 全市場勝率排行
-# ==============================
-with tab4:
-    st.subheader("全市場勝率排行（各門檻前10名）")
-    st.info(
-        "系統會跑15年回測，找出各觸發門檻下勝率最高的前10檔股票\n\n"
-        "📌 觀察天數：你想研究跌破門檻後，放多久再看結果？\n"
-        "選10天 = 觸發後2週的勝率排行；選100天 = 觸發後5個月的勝率排行。\n\n"
-        "⚠️ 觸發次數 ≤ 5次的標的自動加注警示，樣本太少勝率參考性有限。"
-    )
-    st.markdown("**選擇掃描範圍（不選預設跑全部個股）**")
-    selected4 = group_selector("winrank")
-    col_h, col_m = st.columns(2)
-    with col_h:
-        horizon4 = st.selectbox("觀察天數", [str(h) + "天" for h in HORIZONS], index=3, key="h4")
-
-    if st.button("🏆 開始計算勝率排行", type="primary", key="winrank"):
-        all_stocks_r = get_all_tw_stocks()
-        rank_list = ([s for s in all_stocks_r if s["group"] in selected4]
-                     if selected4 else [s for s in all_stocks_r if s["type"] == "個股"])
-        h_val = int(horizon4.replace("天", ""))
-        total = len(rank_list)
-        st.info("共 " + str(total) + " 檔，開始計算...")
-
-        stock_results = {}
-        progress = st.progress(0)
-        status = st.empty()
-
-        for i, stock in enumerate(rank_list):
-            code = stock["code"]
-            status.text("計算中：" + code + " " + stock["name"] + "（" + str(i + 1) + "/" + str(total) + "）")
-            prices = get_yahoo_history_15y(code)
-            if not prices:
-                progress.progress((i + 1) / total)
-                time.sleep(0.1)
-                continue
-
-            stock_data = {
-                "代碼": code, "名稱": stock["name"],
-                "產業別": stock["industry"] if stock["industry"] else stock["group"],
-            }
-            has_any = False
-            for thr in THRESHOLDS:
-                result = run_full_backtest(prices, thr)
-                if result is None:
-                    stock_data[str(thr) + "%勝率"] = None
-                    stock_data[str(thr) + "%次數"] = 0
-                else:
-                    rets = [x["ret"] for x in result["horizon_rets"][h_val]]
-                    if not rets:
-                        stock_data[str(thr) + "%勝率"] = None
-                        stock_data[str(thr) + "%次數"] = result["total"]
-                    else:
-                        wins = sum(1 for r in rets if r > 0)
-                        stock_data[str(thr) + "%勝率"] = round(wins / len(rets) * 100, 2)
-                        stock_data[str(thr) + "%次數"] = result["total"]
-                        has_any = True
-
-            if has_any:
-                stock_results[code] = stock_data
-
-            progress.progress((i + 1) / total)
-            time.sleep(0.2)
-
-        progress.empty()
-        status.empty()
-
-        if not stock_results:
-            st.warning("沒有找到足夠資料")
-        else:
-            st.success("✅ 計算完成！觀察天數：" + horizon4)
-
-            top_codes = set()
-            for thr in THRESHOLDS:
-                col = str(thr) + "%勝率"
-                ranked = sorted(
-                    [(code, data) for code, data in stock_results.items() if data.get(col) is not None],
-                    key=lambda x: x[1][col], reverse=True
-                )[:10]
-                for code, _ in ranked:
-                    top_codes.add(code)
-
-            rows = []
-            for code in top_codes:
-                data = stock_results[code]
-                row = {"代碼": data["代碼"], "名稱": data["名稱"], "產業別": data["產業別"]}
-                for thr in THRESHOLDS:
-                    wr = data.get(str(thr) + "%勝率")
-                    cnt = data.get(str(thr) + "%次數", 0)
-                    if wr is None:
-                        row[str(thr) + "%"] = "---"
-                    elif cnt <= 5:
-                        row[str(thr) + "%"] = "{:.1f}%⚠️".format(wr)
-                    else:
-                        row[str(thr) + "%"] = "{:.1f}%".format(wr)
-                rows.append(row)
-
-            df_combined = pd.DataFrame(rows)
-            df_combined = df_combined.sort_values(
-                "-10%",
-                key=lambda col: col.map(lambda v: float(str(v).replace("%", "").replace("⚠️", "")) if v not in ["---"] else 0),
-                ascending=False
-            ).reset_index(drop=True)
-
-            thr_cols = [str(thr) + "%" for thr in THRESHOLDS]
-
-            def style_winrate_cell(val):
-                if val is None or str(val) in ["", "---"]:
-                    return ""
-                try:
-                    v = float(str(val).replace("%", "").replace("⚠️", ""))
-                    if v >= 80:
-                        return "background-color: #FF8C00; color: white; font-weight: bold"
-                    elif v >= 70:
-                        return "background-color: #FFD580; color: #5a3e00; font-weight: bold"
-                    elif v >= 60:
-                        return "color: red; font-weight: bold"
-                    else:
-                        return "color: #888888"
-                except:
-                    return ""
-
-            st.markdown("### 各門檻勝率合併排行｜觀察天數：" + horizon4)
-            st.caption("橘色 ≥ 80%、淡黃色 ≥ 70%、紅色 ≥ 60%。⚠️ = 觸發次數 ≤ 5次，樣本不足。依 -10% 門檻勝率排序")
-            show_html(df_combined.style.map(style_winrate_cell, subset=thr_cols))
-# ==============================
 # TAB 3: 個股回測
 # ==============================
 with tab3:
@@ -1548,7 +1422,7 @@ with tab4:
     st.markdown("**選擇掃描範圍（不選預設跑全部個股）**")
     selected4 = group_selector("tab4")
     horizon4 = st.selectbox("觀察天數（觸發後持有多久再看勝率）",
-                             [str(h) + "天" for h in HORIZONS], index=6, key="winrank_h4")
+                             [str(h) + "天" for h in HORIZONS], index=6, key="h4")
 
     if st.button("🏆 開始計算勝率排行", type="primary", key="winrank"):
         all_stocks_r = get_all_tw_stocks()
