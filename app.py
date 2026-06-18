@@ -868,33 +868,40 @@ with tab3:
                     show_html(df_trig)
 
 # ==============================
+
+# ==============================
 # TAB 4: 全市場勝率排行
 # ==============================
 with tab4:
-    st.subheader("全市場勝率排行（各門檻前10名）")
+    st.subheader("全市場勝率排行（各門檻 × 前10名）")
     st.info(
-        "系統會跑15年回測，找出各觸發門檻下勝率最高的前10檔股票\n\n"
-        "參數說明：\n"
-        "- **觀察天數**：進場後持有多久再看結果（建議中長線選100天或200天）\n"
-        "- **最低觸發次數**：過濾樣本太少的股票（建議設8~10次以上，避免假勝率）"
+        "系統對每檔股票跑15年回測，計算各觸發門檻下的勝率，找出前10名並合併顯示。\n\n"
+        "📌 觀察天數說明：你想研究跌破門檻後，放多久再看結果？\n"
+        "選10天 = 看觸發後2週的勝率排行；選100天 = 看觸發後5個月的勝率排行。\n"
+        "不同天數會得到不同排行，因為有些股票短線反彈快，有些需要更長時間恢復。\n\n"
+        "⚠️ 觸發次數 ≤ 5次的標的會自動加注警示，代表樣本太少，勝率參考性有限。"
     )
-    st.markdown("**選擇掃描範圍**")
+    st.markdown("**選擇掃描範圍（不選預設跑全部個股）**")
     selected4 = group_selector("tab4")
-    col_h, col_m = st.columns(2)
-    with col_h:
-        horizon4 = st.selectbox("觀察天數", [str(h) + "天" for h in HORIZONS], index=3, key="h4")
-    with col_m:
-        min_triggers = st.number_input("最低觸發次數", min_value=3, max_value=30, value=8)
+    horizon4 = st.selectbox(
+        "觀察天數（你想持有多久再看結果）",
+        [str(h) + "天" for h in HORIZONS],
+        index=3,
+        key="h4",
+        help="10天=2週短線反彈｜20天=月線修復｜50天=季線修復｜100天=半年趨勢｜200天=年線修復"
+    )
 
     if st.button("🏆 開始計算勝率排行", type="primary", key="winrank"):
         all_stocks_r = get_all_tw_stocks()
         rank_list = ([s for s in all_stocks_r if s["group"] in selected4]
                      if selected4 else [s for s in all_stocks_r if s["type"] == "個股"])
+
         h_val = int(horizon4.replace("天", ""))
         total = len(rank_list)
-        st.info("共 " + str(total) + " 檔，開始計算...")
+        st.info("共 " + str(total) + " 檔，開始計算（需要較長時間）...")
 
-        thr_results = {thr: [] for thr in THRESHOLDS}
+        # 收集每檔股票在各門檻下的勝率
+        stock_results = {}
         progress = st.progress(0)
         status = st.empty()
 
@@ -904,42 +911,115 @@ with tab4:
             prices = get_yahoo_history_15y(code)
             if not prices:
                 progress.progress((i + 1) / total)
+                time.sleep(0.1)
                 continue
+
+            stock_data = {
+                "代碼": code,
+                "名稱": stock["name"],
+                "產業別": stock["industry"] if stock["industry"] else stock["group"],
+            }
+            has_any = False
             for thr in THRESHOLDS:
                 result = run_full_backtest(prices, thr)
                 if result is None:
-                    continue
-                rets = [x["ret"] for x in result["horizon_rets"][h_val]]
-                if len(rets) < min_triggers:
-                    continue
-                wins = sum(1 for r in rets if r > 0)
-                thr_results[thr].append({
-                    "代碼": code, "名稱": stock["name"],
-                    "產業群組": stock["group"], "產業別": stock["industry"],
-                    "觸發次數": result["total"],
-                    "勝率%": round(wins / len(rets) * 100, 2),
-                    "平均報酬%": round(sum(rets) / len(rets), 2),
-                })
+                    stock_data[str(thr) + "%勝率"] = None
+                    stock_data[str(thr) + "%次數"] = 0
+                else:
+                    rets = [x["ret"] for x in result["horizon_rets"][h_val]]
+                    if not rets:
+                        stock_data[str(thr) + "%勝率"] = None
+                        stock_data[str(thr) + "%次數"] = result["total"]
+                    else:
+                        wins = sum(1 for r in rets if r > 0)
+                        stock_data[str(thr) + "%勝率"] = round(wins / len(rets) * 100, 2)
+                        stock_data[str(thr) + "%次數"] = result["total"]
+                        has_any = True
+
+            if has_any:
+                stock_results[code] = stock_data
+
             progress.progress((i + 1) / total)
             time.sleep(0.2)
 
         progress.empty()
         status.empty()
-        st.success("✅ 計算完成！觀察天數：" + horizon4 + "｜最低觸發次數：" + str(min_triggers))
 
-        for thr in THRESHOLDS:
-            items = thr_results[thr]
-            if not items:
-                st.markdown("#### 門檻 " + str(thr) + "%：無足夠資料")
-                continue
-            df_rank = pd.DataFrame(items).sort_values("勝率%", ascending=False).head(10).reset_index(drop=True)
-            industry_str = "、".join([k + "(" + str(v) + "檔)" for k, v in df_rank["產業群組"].value_counts().items()])
-            st.markdown("#### 門檻 " + str(thr) + "%：勝率前10名")
-            st.caption("產業分布：" + industry_str)
-            df_rank["勝率%"] = df_rank["勝率%"].apply(lambda x: "{:.2f}%".format(x))
-            df_rank["平均報酬%"] = df_rank["平均報酬%"].apply(lambda x: "{:.2f}%".format(x))
-            show_html(df_rank.style.map(color_winrate, subset=["勝率%"]).map(color_ret, subset=["平均報酬%"]))
-            st.divider()
+        if not stock_results:
+            st.warning("沒有找到足夠資料")
+        else:
+            st.success("✅ 計算完成！觀察天數：" + horizon4)
+
+            # 對每個門檻找前10名，然後合併成一張表
+            top_codes = set()
+            for thr in THRESHOLDS:
+                col = str(thr) + "%勝率"
+                ranked = sorted(
+                    [(code, data) for code, data in stock_results.items() if data.get(col) is not None],
+                    key=lambda x: x[1][col], reverse=True
+                )[:10]
+                for code, _ in ranked:
+                    top_codes.add(code)
+
+            # 建合併表
+            rows = []
+            for code in top_codes:
+                data = stock_results[code]
+                row = {
+                    "代碼": data["代碼"],
+                    "名稱": data["名稱"],
+                    "產業別": data["產業別"],
+                }
+                for thr in THRESHOLDS:
+                    wr = data.get(str(thr) + "%勝率")
+                    cnt = data.get(str(thr) + "%次數", 0)
+                    if wr is None:
+                        row[str(thr) + "%"] = "---"
+                    elif cnt <= 5:
+                        row[str(thr) + "%"] = "{:.1f}%⚠️".format(wr)
+                    else:
+                        row[str(thr) + "%"] = "{:.1f}%".format(wr)
+                rows.append(row)
+
+            df_combined = pd.DataFrame(rows)
+
+            # 依-10%勝率排序（最常用門檻）
+            def sort_key(r):
+                v = r.get("-10%", "0%")
+                try:
+                    return float(str(v).replace("%", "").replace("⚠️", ""))
+                except:
+                    return 0
+            df_combined = df_combined.sort_values(
+                "-10%",
+                key=lambda col: col.map(lambda v: float(str(v).replace("%", "").replace("⚠️", "")) if v not in ["---", "待觀察"] else 0),
+                ascending=False
+            ).reset_index(drop=True)
+
+            thr_cols = [str(thr) + "%" for thr in THRESHOLDS]
+
+            def style_winrate_cell(val):
+                if val is None or str(val) in ["", "---"]:
+                    return ""
+                try:
+                    v = float(str(val).replace("%", "").replace("⚠️", ""))
+                    if v >= 80:
+                        return "background-color: #FF8C00; color: white; font-weight: bold"
+                    elif v >= 70:
+                        return "background-color: #FFD580; color: #5a3e00; font-weight: bold"
+                    elif v >= 60:
+                        return "color: red; font-weight: bold"
+                    else:
+                        return "color: #888888"
+                except:
+                    return ""
+
+            st.markdown("### 各門檻勝率合併排行｜觀察天數：" + horizon4)
+            st.caption(
+                "橘色 ≥ 80%、淡黃色 ≥ 70%、紅色 ≥ 60%。⚠️ 表示觸發次數 ≤ 5次，樣本不足請謹慎參考。\n"
+                "依 -10% 門檻勝率排序。可橫向看同一檔在各門檻的表現，找出哪個門檻最適合這檔股票。"
+            )
+            show_html(df_combined.style.map(style_winrate_cell, subset=thr_cols))
 
 # ==============================
 # TAB 5: 系統檢核
@@ -959,14 +1039,18 @@ with tab5:
                 checks.append({"項目": name, "狀態": "❌ 失敗", "說明": str(e)})
 
         with st.spinner("執行中..."):
-            run_check("證交所TWSE API", lambda: (
-                len(requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10).json()) > 100,
-                "取得 " + str(len(requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10).json())) + " 筆上市證券"
-            ))
-            run_check("櫃買中心TPEX API", lambda: (
-                len(requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=10).json()) > 50,
-                "取得 " + str(len(requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=10).json())) + " 筆上櫃證券"
-            ))
+
+            def check_twse():
+                res = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10)
+                data = res.json()
+                return len(data) > 100, "取得 " + str(len(data)) + " 筆上市證券"
+            run_check("證交所TWSE API", check_twse)
+
+            def check_tpex():
+                res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=10)
+                data = res.json()
+                return len(data) > 50, "取得 " + str(len(data)) + " 筆上櫃證券"
+            run_check("櫃買中心TPEX API", check_tpex)
 
             def check_yahoo():
                 p = get_yahoo_history("2330", days=60)
@@ -975,42 +1059,23 @@ with tab5:
                 d = sorted(p.keys())
                 return True, "2330台積電 最新收盤：" + str(p[d[-1]]) + "（" + d[-1] + "）｜取得 " + str(len(p)) + " 筆"
             run_check("Yahoo Finance API（2330）", check_yahoo)
-def check_data_freshness():
+
+            def check_freshness():
                 p = get_yahoo_history("2330", days=10)
                 if not p:
                     return False, "無法取得資料"
                 latest_date = sorted(p.keys())[-1]
                 latest_dt = datetime.strptime(latest_date, "%Y-%m-%d")
                 days_diff = (datetime.today() - latest_dt).days
-                # 允許週末+假日，超過4天才算異常
                 if days_diff <= 4:
                     return True, "最新資料日期：" + latest_date + "（距今 " + str(days_diff) + " 天）✓"
                 else:
-                    return False, "最新資料距今 " + str(days_diff) + " 天，可能有延遲！最新日期：" + latest_date
-            run_check("資料即時性（最新資料距今天數）", check_data_freshness)
+                    return False, "最新資料距今 " + str(days_diff) + " 天，可能有延遲！"
+            run_check("資料即時性（最新資料距今天數）", check_freshness)
 
-            def check_adj_price():
-                # 驗證0050在2021-10-21除息後還原股價是否合理
-                # 除息前後兩個月各抓，還原後不應有大跳空
-                p = get_yahoo_history_15y("0050")
-                if len(p) < 100:
-                    return False, "資料不足"
-                dates = sorted(p.keys())
-                # 找2021-10附近的價格，還原後應該平滑連續
-                nearby = [d for d in dates if "2021-10" in d or "2021-09" in d or "2021-11" in d]
-                if len(nearby) < 10:
-                    return True, "無法取得2021年資料驗證（標的可能較新），跳過此項"
-                prices_nearby = [p[d] for d in sorted(nearby)]
-                # 計算相鄰日價差，還原後不應超過15%的單日跳空
-                max_jump = max(abs(prices_nearby[i] - prices_nearby[i-1]) / prices_nearby[i-1] * 100
-                               for i in range(1, len(prices_nearby)))
-                if max_jump < 15:
-                    return True, "0050還原股價連續性正常（2021年除息前後最大單日跳空：{:.2f}%）".format(max_jump)
-                else:
-                    return False, "還原股價異常！最大單日跳空：{:.2f}%（超過15%門檻）".format(max_jump)
-            run_check("還原股價連續性驗證（0050除息）", check_adj_price)
             def check_logic():
-                tp = {(datetime.today() - timedelta(days=20 - i)).strftime("%Y-%m-%d"): (100.0 if i < 11 else 88.0) for i in range(20)}
+                tp = {(datetime.today() - timedelta(days=20 - i)).strftime("%Y-%m-%d"):
+                      (100.0 if i < 11 else 88.0) for i in range(20)}
                 ret = calc_rolling_return_latest(tp)
                 ok = ret is not None and abs(ret - (-12.0)) < 0.01
                 return ok, "計算結果：{:.2f}%（預期 -12.00%）{}".format(ret or 0, "✓" if ok else "✗")
@@ -1031,6 +1096,25 @@ def check_data_freshness():
                     return True, "2330 @-7%：觸發 " + str(r["total"]) + " 次，最長連續 " + str(r["max_consecutive"]) + " 天"
                 return False, "觸發次數為0"
             run_check("觸發計算驗證（2330 @-7%）", check_trigger)
+
+            def check_adj_price():
+                p = get_yahoo_history_15y("0050")
+                if len(p) < 100:
+                    return False, "資料不足"
+                dates = sorted(p.keys())
+                nearby = [d for d in dates if "2021-10" in d or "2021-09" in d or "2021-11" in d]
+                if len(nearby) < 10:
+                    return True, "無法取得2021年資料，跳過此項"
+                prices_nearby = [p[d] for d in sorted(nearby)]
+                max_jump = max(
+                    abs(prices_nearby[i] - prices_nearby[i-1]) / prices_nearby[i-1] * 100
+                    for i in range(1, len(prices_nearby))
+                )
+                if max_jump < 15:
+                    return True, "0050還原股價連續性正常（除息前後最大單日跳空：{:.2f}%）".format(max_jump)
+                else:
+                    return False, "還原股價異常！最大單日跳空：{:.2f}%（超過15%門檻）".format(max_jump)
+            run_check("還原股價連續性驗證（0050除息）", check_adj_price)
 
         show_html(pd.DataFrame(checks))
         if all("✅" in c["狀態"] for c in checks):
