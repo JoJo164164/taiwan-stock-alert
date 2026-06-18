@@ -666,13 +666,13 @@ def group_selector(key_prefix):
 # ==============================
 # 頁籤順序：使用說明→系統檢核→每日警示→批次回測→個股回測→全市場勝率
 # ==============================
-tab0, tab5, tab1, tab2, tab3, tab4 = st.tabs([
+tab0, tab5, tab1, tab3, tab4, tab2 = st.tabs([
     "📖 使用說明",
     "🔧 系統檢核",
     "🔍 每日警示掃描",
-    "📊 批次回測",
     "🔬 個股回測",
     "🏆 全市場勝率排行",
+    "📊 批次回測",
 ])
 
 # ==============================
@@ -952,167 +952,6 @@ with tab2:
             st.warning("沒有找到任何觸發紀錄")
 
 # ==============================
-# TAB 3: 個股回測
-# ==============================
-with tab3:
-    st.subheader("個股／ETF 回測＋線圖")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        single_code = st.text_input("輸入股票／ETF代碼", value="0050", key="single")
-    with col2:
-        ref_threshold = st.selectbox("年度明細與進場時機顯示門檻", [str(t) + "%" for t in THRESHOLDS], index=2, key="ref_thr")
-
-    if st.button("🔬 開始分析", type="primary", key="single_bt"):
-        with st.spinner("抓取 " + single_code + " 15年資料中..."):
-            prices = get_yahoo_history_15y(single_code)
-
-        if not prices:
-            st.error("抓取失敗，請確認代碼是否正確")
-        else:
-            st.success("成功抓取 " + str(len(prices)) + " 個交易日（" + min(prices.keys()) + " ~ " + max(prices.keys()) + "）")
-
-            with st.spinner("計算各門檻回測中..."):
-                df_win, df_avg, df_dd = build_summary_tables(prices)
-
-            thr_val = int(ref_threshold.replace("%", ""))
-            win_cols = [str(h) + "天勝率" for h in HORIZONS]
-            avg_cols = [str(h) + "天平均報酬%" for h in HORIZONS]
-            dd_cols = [str(h) + "天平均最大回撤%" for h in HORIZONS]
-
-            # 表A：勝率
-            st.markdown("### 表A：勝率（各門檻 × 觀察天數）｜橘色 ≥ 80%")
-            st.caption("勝率 = 觸發進場後，T+N天收盤價高於進場收盤價的比例")
-            show_html(df_win.style.map(color_winrate, subset=win_cols))
-
-            # 表B：平均報酬
-            st.markdown("### 表B：平均單次報酬%（各門檻 × 觀察天數）")
-            st.caption("每次觸發進場，持有至第N天收盤的平均報酬。越深紅越好")
-            show_html(heatmap_positive(df_avg, avg_cols))
-
-            # 表C：累積報酬（所有觸發加總）
-            st.markdown("### 表C：累積報酬%（所有觸發報酬加總，不除筆數）")
-            cum_rows = []
-            for thr in THRESHOLDS:
-                result = run_full_backtest(prices, thr)
-                row = {"觸發門檻": str(thr) + "%", "樣本數": 0 if result is None else result["total"]}
-                for h in HORIZONS:
-                    if result is None:
-                        row[str(h) + "天累積%"] = "---"
-                    else:
-                        rets = [x["ret"] for x in result["horizon_rets"][h]]
-                        row[str(h) + "天累積%"] = fmt(round(sum(rets), 2) if rets else None)
-                cum_rows.append(row)
-            df_cum = pd.DataFrame(cum_rows)
-            cum_cols = [str(h) + "天累積%" for h in HORIZONS]
-            show_html(heatmap_positive(df_cum, cum_cols))
-
-            # 表D：進場時機
-            st.markdown("### 表D：進場時機比較（門檻 " + ref_threshold + "）")
-            st.caption("連續觸發第幾天進場效果最好？切換天數觀察不同持有長度的差異")
-            horizon_choice = st.selectbox("選擇觀察天數", [str(h) + "天" for h in HORIZONS],
-                                           index=2, key="timing_horizon")
-            h_timing = int(horizon_choice.replace("天", ""))
-            df_timing = build_entry_timing_table(prices, thr_val, h_timing)
-            if df_timing is not None:
-                ret_cols_t = ["平均報酬%", "累積報酬%"]
-                styled_t = heatmap_positive(df_timing, ret_cols_t)
-                styled_t = styled_t.map(color_winrate, subset=["勝率"])
-                show_html(styled_t)
-                st.caption("連續第1天：首次觸發｜連續第2天：跌2天才進｜連續第3天以後：等更深跌｜連續結束翌日：止跌確認後才進")
-            else:
-                st.warning("此門檻無觸發紀錄")
-
-            # 表E：最大回撤 + 發生天數
-            st.markdown("### 表E：最大回撤分析（門檻 " + ref_threshold + "）")
-            st.caption("持有期間最深跌幅，以及平均在第幾天出現。幫助你判斷要有多少耐心")
-            df_dd_enhanced = build_dd_timing_table(prices, thr_val)
-            if df_dd_enhanced is not None:
-                show_html(df_dd_enhanced.style.map(color_dd, subset=["平均最大回撤%", "最深回撤%"]))
-
-            st.info(
-                "計算邏輯：\n"
-                "- 勝率與報酬均以 T+N 那天收盤價計算\n"
-                "- 年度歸屬以觸發當天為準，報酬計算可跨年度\n"
-                "- 待觀察：觸發後未滿觀察天數，不計入統計"
-            )
-
-            # 年度明細
-            df_yearly, result = build_yearly_table(prices, thr_val)
-            if df_yearly is not None:
-                st.markdown("### 年度明細（門檻 " + ref_threshold + "）")
-                st.caption("橫向看哪個持有天數最穩；縱向看哪幾年跌破門檻後反彈最強")
-                yr_cols = [str(h) + "天平均%" for h in HORIZONS]
-                show_html(heatmap_positive(df_yearly, yr_cols))
-
-            # 連續觸發分析
-            st.markdown("### 連續觸發分析（門檻 " + ref_threshold + "）")
-            st.caption("跌越多天觸發，後續報酬是更好還是更差？")
-            horizon_consec = st.selectbox("選擇觀察天數", [str(h) + "天" for h in HORIZONS],
-                                           index=2, key="consec_horizon")
-            h_consec = int(horizon_consec.replace("天", ""))
-            df_consec = build_consec_analysis(prices, thr_val, h_consec)
-            if df_consec is not None:
-                ret_cols_c = ["平均報酬%", "最佳報酬%", "最差報酬%"]
-                styled_c = heatmap_positive(df_consec, ["平均報酬%"])
-                styled_c = styled_c.map(color_winrate, subset=["勝率"])
-                styled_c = styled_c.map(color_ret, subset=["最佳報酬%", "最差報酬%"])
-                show_html(styled_c)
-                st.caption("分析連續觸發第幾天進場，後續報酬的勝率與平均報酬差異，判斷是否越跌越值得進場")
-
-            # 門檻比較線圖
-            if result:
-                st.markdown("### 股價走勢 + 各門檻觸發標記")
-                st.caption("同時顯示多個門檻的觸發點，視覺化哪些時點跌幅較深")
-                dates_all = sorted(prices.keys())
-                price_values = [prices[d] for d in dates_all]
-
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=dates_all, y=price_values, mode="lines", name="收盤價",
-                    line=dict(color="#2196F3", width=1.5)
-                ))
-
-                colors_map = {-5: "#FFA500", -7: "#FF6B35", -10: "#E63946", -15: "#9B2335", -20: "#5C0A14"}
-                for thr in THRESHOLDS:
-                    r_thr = run_full_backtest(prices, thr)
-                    if r_thr:
-                        trig_x = [d for d in dates_all if d in set(r_thr["trigger_dates"])]
-                        trig_y = [prices[d] for d in trig_x]
-                        fig.add_trace(go.Scatter(
-                            x=trig_x, y=trig_y, mode="markers",
-                            name="門檻 " + str(thr) + "% (" + str(r_thr["total"]) + "次)",
-                            marker=dict(color=colors_map[thr], size=6, symbol="circle"),
-                            visible=True if thr == thr_val else "legendonly"
-                        ))
-
-                fig.update_layout(
-                    height=520, xaxis_title="日期", yaxis_title="收盤價",
-                    hovermode="x unified",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02)
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                st.caption("預設顯示選定門檻，其他門檻可點圖例開關。顏色越深代表門檻越嚴苛")
-
-                with st.expander("查看觸發日明細（門檻 " + ref_threshold + "）"):
-                    df_trig = pd.DataFrame([{
-                        "觸發日": t["date"], "基準日": t["base_date"],
-                        "基準價": t["base_price"], "觸發當日收盤": t["curr_price"],
-                        "滾動10日報酬率": "{:.2f}%".format(t["return"])
-                    } for t in result["triggers"]])
-                    show_html(df_trig)
-
-            # AI分析建議
-            st.markdown("### 🤖 AI投資分析建議")
-            st.caption("根據上方回測數據，由AI生成投資參考建議（不構成投資建議）")
-            if st.button("✨ 生成AI分析", key="ai_analysis"):
-                with st.spinner("AI分析中..."):
-                    analysis_text = call_claude_analysis(
-                        single_code, df_win, df_avg, df_dd,
-                        df_yearly, thr_val
-                    )
-                st.markdown(analysis_text)
-
-# ==============================
 # TAB 4: 全市場勝率排行
 # ==============================
 with tab4:
@@ -1238,3 +1077,172 @@ with tab4:
             st.markdown("### 各門檻勝率合併排行｜觀察天數：" + horizon4)
             st.caption("橘色 ≥ 80%、淡黃色 ≥ 70%、紅色 ≥ 60%。⚠️ = 觸發次數 ≤ 5次，樣本不足。依 -10% 門檻勝率排序")
             show_html(df_combined.style.map(style_winrate_cell, subset=thr_cols))
+# ==============================
+# TAB 3: 個股回測
+# ==============================
+with tab3:
+    st.subheader("個股／ETF 回測＋線圖")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        single_code = st.text_input("輸入股票／ETF代碼", value="0050", key="single")
+    with col2:
+        ref_threshold = st.selectbox("年度明細與進場時機顯示門檻", [str(t) + "%" for t in THRESHOLDS], index=2, key="ref_thr")
+
+    if st.button("🔬 開始分析", type="primary", key="single_bt"):
+        with st.spinner("抓取 " + single_code + " 15年資料中..."):
+            prices_new = get_yahoo_history_15y(single_code)
+        if not prices_new:
+            st.error("抓取失敗，請確認代碼是否正確")
+        else:
+            st.session_state["bt_prices"] = prices_new
+            st.session_state["bt_code"] = single_code
+            st.session_state["bt_thr"] = int(ref_threshold.replace("%", ""))
+            st.session_state["bt_thr_str"] = ref_threshold
+            st.session_state["ai_result"] = None
+
+    # 有資料就顯示（session_state保存，AI按鈕不會清空）
+    if "bt_prices" in st.session_state and st.session_state.get("bt_code") == single_code:
+        prices = st.session_state["bt_prices"]
+        thr_val = st.session_state["bt_thr"]
+        ref_threshold_display = st.session_state["bt_thr_str"]
+
+        st.success("成功抓取 " + str(len(prices)) + " 個交易日（" + min(prices.keys()) + " ~ " + max(prices.keys()) + "）")
+
+        with st.spinner("計算各門檻回測中..."):
+            df_win, df_avg, df_dd = build_summary_tables(prices)
+
+        win_cols = [str(h) + "天勝率" for h in HORIZONS]
+        avg_cols = [str(h) + "天平均報酬%" for h in HORIZONS]
+        dd_cols = [str(h) + "天平均最大回撤%" for h in HORIZONS]
+
+        # 表A：勝率
+        st.markdown("### 表A：勝率（各門檻 × 觀察天數）｜橘色 ≥ 80%")
+        st.caption("勝率 = 觸發進場後，T+N天收盤價高於進場收盤價的比例")
+        show_html(df_win.style.map(color_winrate, subset=win_cols))
+
+        # 表B：平均報酬
+        st.markdown("### 表B：平均單次報酬%（各門檻 × 觀察天數）")
+        st.caption("每次觸發進場，持有至第N天收盤的平均報酬。越深紅越好")
+        show_html(heatmap_positive(df_avg, avg_cols))
+
+        # 表C：累積報酬
+        st.markdown("### 表C：累積報酬%（所有觸發報酬加總，不除筆數）")
+        cum_rows = []
+        for thr in THRESHOLDS:
+            result_c = run_full_backtest(prices, thr)
+            row = {"觸發門檻": str(thr) + "%", "樣本數": 0 if result_c is None else result_c["total"]}
+            for h in HORIZONS:
+                if result_c is None:
+                    row[str(h) + "天累積%"] = "---"
+                else:
+                    rets = [x["ret"] for x in result_c["horizon_rets"][h]]
+                    row[str(h) + "天累積%"] = fmt(round(sum(rets), 2) if rets else None)
+            cum_rows.append(row)
+        df_cum = pd.DataFrame(cum_rows)
+        cum_cols = [str(h) + "天累積%" for h in HORIZONS]
+        show_html(heatmap_positive(df_cum, cum_cols))
+
+        # 表D：進場時機
+        st.markdown("### 表D：進場時機比較（門檻 " + ref_threshold_display + "）")
+        st.caption("連續觸發第幾天進場效果最好？切換天數觀察不同持有長度的差異")
+        horizon_choice = st.selectbox("選擇觀察天數", [str(h) + "天" for h in HORIZONS],
+                                       index=2, key="timing_horizon")
+        h_timing = int(horizon_choice.replace("天", ""))
+        df_timing = build_entry_timing_table(prices, thr_val, h_timing)
+        if df_timing is not None:
+            ret_cols_t = ["平均報酬%", "累積報酬%"]
+            styled_t = heatmap_positive(df_timing, ret_cols_t)
+            styled_t = styled_t.map(color_winrate, subset=["勝率"])
+            show_html(styled_t)
+            st.caption("連續第1天：首次觸發｜連續第2天：跌2天才進｜連續第3天以後：等更深跌｜連續結束翌日：止跌確認後才進")
+        else:
+            st.warning("此門檻無觸發紀錄")
+
+        # 表E：最大回撤 + 發生天數
+        st.markdown("### 表E：最大回撤分析（門檻 " + ref_threshold_display + "）")
+        st.caption("持有期間最深跌幅，以及平均在第幾天出現。幫助你判斷要有多少耐心")
+        df_dd_enhanced = build_dd_timing_table(prices, thr_val)
+        if df_dd_enhanced is not None:
+            show_html(df_dd_enhanced.style.map(color_dd, subset=["平均最大回撤%", "最深回撤%"]))
+
+        st.info(
+            "計算邏輯：\n"
+            "- 勝率與報酬均以 T+N 那天收盤價計算\n"
+            "- 年度歸屬以觸發當天為準，報酬計算可跨年度\n"
+            "- 待觀察：觸發後未滿觀察天數，不計入統計"
+        )
+
+        # 年度明細
+        df_yearly, result = build_yearly_table(prices, thr_val)
+        if df_yearly is not None:
+            st.markdown("### 年度明細（門檻 " + ref_threshold_display + "）")
+            st.caption("橫向看哪個持有天數最穩；縱向看哪幾年跌破門檻後反彈最強")
+            yr_cols = [str(h) + "天平均%" for h in HORIZONS]
+            show_html(heatmap_positive(df_yearly, yr_cols))
+
+        # 連續觸發分析
+        st.markdown("### 連續觸發分析（門檻 " + ref_threshold_display + "）")
+        st.caption("跌越多天觸發，後續報酬是更好還是更差？")
+        horizon_consec = st.selectbox("選擇觀察天數", [str(h) + "天" for h in HORIZONS],
+                                       index=2, key="consec_horizon")
+        h_consec = int(horizon_consec.replace("天", ""))
+        df_consec = build_consec_analysis(prices, thr_val, h_consec)
+        if df_consec is not None:
+            styled_c = heatmap_positive(df_consec, ["平均報酬%"])
+            styled_c = styled_c.map(color_winrate, subset=["勝率"])
+            styled_c = styled_c.map(color_ret, subset=["最佳報酬%", "最差報酬%"])
+            show_html(styled_c)
+            st.caption("分析連續觸發第幾天進場，後續報酬的勝率與平均報酬差異")
+
+        # 門檻比較線圖
+        if result:
+            st.markdown("### 股價走勢 + 各門檻觸發標記")
+            st.caption("同時顯示多個門檻的觸發點，可點圖例開關各門檻")
+            dates_all = sorted(prices.keys())
+            price_values = [prices[d] for d in dates_all]
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=dates_all, y=price_values, mode="lines", name="收盤價",
+                line=dict(color="#2196F3", width=1.5)
+            ))
+            colors_map = {-5: "#FFA500", -7: "#FF6B35", -10: "#E63946", -15: "#9B2335", -20: "#5C0A14"}
+            for thr in THRESHOLDS:
+                r_thr = run_full_backtest(prices, thr)
+                if r_thr:
+                    trig_x = [d for d in dates_all if d in set(r_thr["trigger_dates"])]
+                    trig_y = [prices[d] for d in trig_x]
+                    fig.add_trace(go.Scatter(
+                        x=trig_x, y=trig_y, mode="markers",
+                        name="門檻 " + str(thr) + "% (" + str(r_thr["total"]) + "次)",
+                        marker=dict(color=colors_map[thr], size=6, symbol="circle"),
+                        visible=True if thr == thr_val else "legendonly"
+                    ))
+            fig.update_layout(
+                height=520, xaxis_title="日期", yaxis_title="收盤價",
+                hovermode="x unified",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.caption("預設顯示選定門檻，其他門檻可點圖例開關。顏色越深代表門檻越嚴苛")
+
+            with st.expander("查看觸發日明細（門檻 " + ref_threshold_display + "）"):
+                df_trig = pd.DataFrame([{
+                    "觸發日": t["date"], "基準日": t["base_date"],
+                    "基準價": t["base_price"], "觸發當日收盤": t["curr_price"],
+                    "滾動10日報酬率": "{:.2f}%".format(t["return"])
+                } for t in result["triggers"]])
+                show_html(df_trig)
+
+        # AI分析建議（session_state保存結果，不會因重渲染消失）
+        st.markdown("### 🤖 AI投資分析建議")
+        st.caption("根據上方回測數據，由AI生成投資參考建議（不構成投資建議）")
+        if st.button("✨ 生成AI分析", key="ai_analysis"):
+            with st.spinner("AI分析中..."):
+                ai_text = call_claude_analysis(
+                    single_code, df_win, df_avg, df_dd,
+                    df_yearly if "df_yearly" in dir() else None, thr_val
+                )
+            st.session_state["ai_result"] = ai_text
+
+        if st.session_state.get("ai_result"):
+            st.markdown(st.session_state["ai_result"])
