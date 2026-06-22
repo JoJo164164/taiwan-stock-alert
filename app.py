@@ -1365,7 +1365,7 @@ def get_book_value_per_share(codes):
 
 
 def build_qualified_pool(all_stocks, fin_data):
-    """建立合格標的池，套用六個條件"""
+    """建立合格標的池，套用兩層六個條件，分A/B/C/排除四個等級"""
     if fin_data is None or fin_data.empty:
         return None
 
@@ -1373,18 +1373,15 @@ def build_qualified_pool(all_stocks, fin_data):
     stock_dict = {s['code']: s for s in all_stocks}
     codes = list(stock_dict.keys())
 
-    # 取最新一季每股淨值（算PB用）
     bvps_map = get_book_value_per_share(set(codes))
 
-    # 取每股最新收盤價（算PB用）
     price_map = {}
-    for code in codes[:20]:  # 避免太多API呼叫，先取前20測試
+    for code in codes:
         p = get_yahoo_history(code, days=5)
         if p:
             price_map[code] = calc_latest_close(p)
-        time.sleep(0.1)
+        time.sleep(0.05)
 
-    # 依股票代碼彙整近5年EPS
     eps_by_code = {}
     for _, row in fin_data.iterrows():
         code = str(row.get('code', '')).strip()
@@ -1398,10 +1395,8 @@ def build_qualified_pool(all_stocks, fin_data):
                 eps_by_code[code][yr_key] = []
             eps_by_code[code][yr_key].append(float(eps))
 
-    # 依股票代碼取最新ROE、負債比
     latest_roe = {}
     latest_debt = {}
-    latest_eps_annual = {}
     for _, row in fin_data.sort_values(['year_roc', 'season'], ascending=False).iterrows():
         code = str(row.get('code', '')).strip()
         if code not in latest_roe and not pd.isna(row.get('roe')):
@@ -1409,16 +1404,14 @@ def build_qualified_pool(all_stocks, fin_data):
         if code not in latest_debt and not pd.isna(row.get('debt_ratio')):
             latest_debt[code] = float(row['debt_ratio'])
 
-    # 計算年度EPS（取各年度Q4或全年加總）
     now_yr = datetime.now().year - 1911
+    latest_eps_annual = {}
     for code, yr_data in eps_by_code.items():
         annual_eps = {}
         for yr, eps_list in yr_data.items():
-            # 取年度加總（每股盈餘四季加總）
             annual_eps[yr] = sum(eps_list)
         latest_eps_annual[code] = annual_eps
 
-    # 套用六個條件
     for code in codes:
         stock = stock_dict.get(code, {})
         if stock.get('type') not in ['個股']:
@@ -1429,69 +1422,87 @@ def build_qualified_pool(all_stocks, fin_data):
         debt = latest_debt.get(code)
         bvps = bvps_map.get(code)
         price = price_map.get(code)
-
-        # 計算PB
         pb = round(price / bvps, 2) if price and bvps and bvps > 0 else None
 
-        # 條件1：近5年EPS皆為正
+        # ── 第一層：硬性排除條件 ──
         valid_years = sorted([yr for yr in eps_annual.keys() if yr >= now_yr - 5], reverse=True)
-        c1_eps_positive = all(eps_annual.get(yr, -1) > 0 for yr in valid_years) if len(valid_years) >= 3 else False
+        c1 = all(eps_annual.get(yr, -1) > 0 for yr in valid_years) if len(valid_years) >= 3 else False
 
-        # 條件2：近3年EPS成長率 > 0（最新年 vs 3年前）
-        c2_eps_growth = False
+        c2 = False
         recent_years = sorted(valid_years, reverse=True)
         if len(recent_years) >= 2:
             newest = eps_annual.get(recent_years[0], None)
             oldest = eps_annual.get(recent_years[min(2, len(recent_years)-1)], None)
             if newest and oldest and oldest != 0:
-                c2_eps_growth = newest > oldest
+                c2 = newest > oldest
 
-        # 條件3：PB < 3
-        c3_pb = pb < 3 if pb is not None else None
+        c3 = debt < 50 if debt is not None else None
 
-        # 條件4：ROE > 15%
-        c4_roe = roe > 15 if roe is not None else None
+        # ── 第二層：品質評分條件 ──
+        c4 = roe > 15 if roe is not None else None
+        c5 = pb < 3 if pb is not None else None
+        c6 = round(pb / roe, 3) < 0.20 if pb and roe and roe > 0 else None
 
-        # 條件5：負債比 < 50%
-        c5_debt = debt < 50 if debt is not None else None
+        # ── 分級 ──
+        hard_pass = c1 and c2 and (c3 is True)
+        quality_scores = [x for x in [c4, c5, c6] if x is not None]
+        quality_pass_count = sum(1 for x in quality_scores if x is True)
 
-        # 條件6：PB/ROE < 0.20
-        c6_pb_roe = round(pb / roe, 3) < 0.20 if pb and roe and roe > 0 else None
+        if not hard_pass:
+            hard_fail = []
+            if not c1:
+                hard_fail.append("近5年有虧損年度")
+            if not c2:
+                hard_fail.append("近3年EPS未成長")
+            if c3 is False:
+                hard_fail.append("負債比≥50%")
+            grade = "❌ 排除"
+            grade_reason = "硬性條件未通過：" + "、".join(hard_fail)
+            grade_short = "排除"
+        else:
+            quality_fail = []
+            if c4 is False:
+                quality_fail.append("ROE<15%（獲利能力偏弱）")
+            if c5 is False:
+                quality_fail.append("PB≥3（估值偏高，如台積電）")
+            if c6 is False:
+                quality_fail.append("PB/ROE≥0.20（為ROE付出過高溢價）")
 
-        # 通過數（只計算有資料的條件）
-        conditions = {
-            '5年EPS皆正': c1_eps_positive,
-            'EPS成長': c2_eps_growth,
-            'PB<3': c3_pb,
-            'ROE>15%': c4_roe,
-            '負債比<50%': c5_debt,
-            'PB/ROE<0.20': c6_pb_roe,
-        }
-        passed = sum(1 for v in conditions.values() if v is True)
-        failed = sum(1 for v in conditions.values() if v is False)
-        all_pass = all(v is True for v in conditions.values() if v is not None) and None not in conditions.values()
+            if quality_pass_count >= 3 or (len(quality_scores) < 3 and quality_pass_count == len(quality_scores)):
+                grade = "🥇 A級"
+                grade_reason = "通過全部條件，優先進場"
+                grade_short = "A級"
+            elif quality_pass_count >= 2:
+                grade = "🥈 B級"
+                grade_reason = "次要條件部分未通過：" + "、".join(quality_fail)
+                grade_short = "B級"
+            else:
+                grade = "🥉 C級"
+                grade_reason = "次要條件多項未通過：" + "、".join(quality_fail)
+                grade_short = "C級"
 
         results.append({
+            '等級': grade,
             '代碼': code,
             '名稱': stock.get('name', ''),
             '產業別': stock.get('industry', stock.get('group', '')),
+            '降級原因': grade_reason,
             '股價': price,
             'PB': pb,
             'ROE%': roe,
             '負債比%': debt,
             'PB/ROE': round(pb / roe, 3) if pb and roe and roe > 0 else None,
-            '5年EPS皆正': '✅' if c1_eps_positive else '❌',
-            'EPS成長': '✅' if c2_eps_growth else '❌',
-            'PB<3': '✅' if c3_pb else ('❌' if c3_pb is False else '⚠️'),
-            'ROE>15%': '✅' if c4_roe else ('❌' if c4_roe is False else '⚠️'),
-            '負債比<50%': '✅' if c5_debt else ('❌' if c5_debt is False else '⚠️'),
-            'PB/ROE<0.20': '✅' if c6_pb_roe else ('❌' if c6_pb_roe is False else '⚠️'),
-            '通過條件數': str(passed) + '/6',
-            '合格': all_pass,
+            '①5年EPS正': '✅' if c1 else '❌',
+            '②EPS成長': '✅' if c2 else '❌',
+            '③負債比<50%': '✅' if c3 else ('❌' if c3 is False else '⚠️'),
+            '④ROE>15%': '✅' if c4 else ('❌' if c4 is False else '⚠️'),
+            '⑤PB<3': '✅' if c5 else ('❌' if c5 is False else '⚠️'),
+            '⑥PB/ROE<0.20': '✅' if c6 else ('❌' if c6 is False else '⚠️'),
+            '_grade_short': grade_short,
+            '_hard_pass': hard_pass,
         })
 
-    df_result = pd.DataFrame(results)
-    return df_result
+    return pd.DataFrame(results)
 
 
 def get_sox_data():
@@ -1575,7 +1586,6 @@ def get_twd_data():
         dates = sorted(prices.keys())
         current = prices[dates[-1]]
         price_30d_ago = prices[dates[0]] if len(dates) >= 20 else None
-        # 台幣升值 = TWD=X下降（因為是USD/TWD，數字越小代表台幣越強）
         change_30d = round(current - price_30d_ago, 2) if price_30d_ago else None
         return {
             "current": round(current, 2),
@@ -1586,7 +1596,118 @@ def get_twd_data():
         return None
 
 
-with tab6:
+def get_sp500_data():
+    """抓S&P500"""
+    try:
+        prices = get_yahoo_history_us("^GSPC", days=365)
+        if not prices or len(prices) < 30:
+            return None
+        dates = sorted(prices.keys())
+        current = prices[dates[-1]]
+        high_52w = max(prices.values())
+        pct_from_high = (current - high_52w) / high_52w * 100
+        ma20 = sum([prices[d] for d in dates[-20:]]) / 20
+        ret_20d = (current - prices[dates[-21]]) / prices[dates[-21]] * 100 if len(dates) >= 21 else None
+        return {
+            "current": current,
+            "high_52w": high_52w,
+            "pct_from_high": round(pct_from_high, 1),
+            "above_ma20": current > ma20,
+            "ret_20d": round(ret_20d, 1) if ret_20d else None,
+            "date": dates[-1],
+        }
+    except:
+        return None
+
+
+@st.cache_data(ttl=3600)
+def get_twii_heat():
+    """台股加權指數市場熱度（vs 240日均線偏離度，分10級）"""
+    try:
+        prices = get_yahoo_history_us("^TWII", days=365 + 60)
+        if not prices or len(prices) < 250:
+            return None
+        dates = sorted(prices.keys())
+        current = prices[dates[-1]]
+        # 240日均線
+        ma240_prices = [prices[d] for d in dates[-240:]]
+        ma240 = sum(ma240_prices) / len(ma240_prices)
+        ma60_prices = [prices[d] for d in dates[-60:]]
+        ma60 = sum(ma60_prices) / len(ma60_prices)
+        ma20_prices = [prices[d] for d in dates[-20:]]
+        ma20 = sum(ma20_prices) / len(ma20_prices)
+
+        deviation = (current - ma240) / ma240 * 100
+
+        # 10級熱度
+        if deviation < -30:
+            level = 1
+            label = "極冷（歷史性崩潰）"
+            color = "🔵"
+            action = "最佳進場時機，全力進場"
+        elif deviation < -20:
+            level = 2
+            label = "極冷（嚴重超賣）"
+            color = "🔵"
+            action = "積極進場，正常倉位"
+        elif deviation < -15:
+            level = 3
+            label = "冷（顯著超賣）"
+            color = "🟢"
+            action = "積極進場"
+        elif deviation < -10:
+            level = 4
+            label = "微冷（輕微超賣）"
+            color = "🟢"
+            action = "正常進場"
+        elif deviation < -5:
+            level = 5
+            label = "中性偏冷"
+            color = "🟢"
+            action = "正常進場"
+        elif deviation < 0:
+            level = 6
+            label = "中性"
+            color = "🟢"
+            action = "正常進場"
+        elif deviation < 10:
+            level = 7
+            label = "微熱（輕微過熱）"
+            color = "🟡"
+            action = "正常但留意，勿追高"
+        elif deviation < 20:
+            level = 8
+            label = "熱（明顯過熱）"
+            color = "🟠"
+            action = "縮小倉位，等回測深度觸發"
+        elif deviation < 30:
+            level = 9
+            label = "很熱（嚴重過熱）"
+            color = "🔴"
+            action = "大幅縮倉，門檻提高到-15%"
+        else:
+            level = 10
+            label = "極熱（泡沫化）"
+            color = "🔴"
+            action = "暫停策略，等市場熱度降至7級以下"
+
+        return {
+            "current": current,
+            "ma240": round(ma240, 0),
+            "ma60": round(ma60, 0),
+            "ma20": round(ma20, 0),
+            "deviation": round(deviation, 1),
+            "level": level,
+            "label": label,
+            "color": color,
+            "action": action,
+            "date": dates[-1],
+        }
+    except:
+        return None
+
+
+
     st.subheader("📋 合格標的池")
     st.caption("基本面篩選器：只在通過六個條件的股票中尋找進場機會，排除基本面有問題的標的")
 
@@ -1599,6 +1720,8 @@ with tab6:
         us10y = get_us10y_data()
         vix = get_vix_data()
         twd = get_twd_data()
+        sp500 = get_sp500_data()
+        twii_heat = get_twii_heat()
 
     # ── SOX ──
     st.markdown("---")
@@ -1774,6 +1897,131 @@ with tab6:
             "那年我們策略的觸發後勝率明顯低於平均，匯率是重要原因之一"
         )
 
+    # ── S&P500 ──
+    st.markdown("---")
+    col_sp1, col_sp2 = st.columns([1, 2])
+    with col_sp1:
+        if sp500:
+            st.metric("S&P500",
+                     "{:,.0f}".format(sp500["current"]),
+                     "{:.1f}% 距52週高點".format(sp500["pct_from_high"]))
+            if sp500["ret_20d"]:
+                st.caption("近20日：{:+.1f}%".format(sp500["ret_20d"]))
+            ma_s = "高於20MA ✅" if sp500["above_ma20"] else "低於20MA ⚠️"
+            st.caption("均線狀態：" + ma_s)
+            if sp500["pct_from_high"] > -10:
+                st.success("🟢 S&P500強勢，全球風險胃納良好")
+            elif sp500["pct_from_high"] > -20:
+                st.warning("🟡 S&P500回落中，留意全球資金情緒")
+            else:
+                st.error("🔴 S&P500顯著下行，全球資金撤出風險資產")
+        else:
+            st.warning("S&P500資料無法取得")
+
+    with col_sp2:
+        st.markdown("**📖 S&P500怎麼讀、為什麼重要**")
+        st.info(
+            "**SOX vs S&P500，各看什麼？**\n\n"
+            "SOX看的是半導體景氣週期，S&P500看的是全球資金的風險胃納量。"
+            "兩個指標互補，不能只看一個。\n\n"
+            "**S&P500的作用：**\n"
+            "外資管理的是全球資產組合，不只是台灣。當S&P500大跌，"
+            "代表全球資金在撤出所有風險性資產，台股不管基本面多好都會被拖累。"
+            "這種情況下，即使SOX還算穩定，也要謹慎。\n\n"
+            "**兩個指標的組合解讀：**\n"
+            "・ SOX強 + S&P500強：最佳環境，台股個股超跌直接進場\n"
+            "・ SOX強 + S&P500弱：半導體景氣好但全球資金緊縮，需觀察\n"
+            "・ SOX弱 + S&P500強：可能是半導體週期性調整，不是系統性風險\n"
+            "・ SOX弱 + S&P500弱：系統性風險，類2022，策略勝率最低\n\n"
+            "**距52週高點的意義：**\n"
+            "・ > -10%：全球資金偏樂觀，風險胃納良好\n"
+            "・ -10% ~ -20%：全球資金開始謹慎\n"
+            "・ < -20%：全球資金明顯撤退，台股受外資賣壓"
+        )
+
+    # ── 台股市場熱度計 ──
+    st.markdown("---")
+    st.markdown("### 🌡️ 台股市場熱度計（10級）")
+    st.caption("台灣加權指數相對240日均線的偏離幅度，衡量市場過熱或過冷程度")
+
+    if twii_heat:
+        col_h1, col_h2 = st.columns([1, 2])
+        with col_h1:
+            st.metric("台灣加權指數",
+                     "{:,.0f}".format(twii_heat["current"]),
+                     "vs 240MA：{:+.1f}%".format(twii_heat["deviation"]))
+            st.markdown("**熱度等級：{} 第{}級 — {}**".format(
+                twii_heat["color"], twii_heat["level"], twii_heat["label"]))
+
+            # 視覺化進度條
+            level = twii_heat["level"]
+            bar_html = ""
+            for i in range(1, 11):
+                if i <= level:
+                    if i <= 3:
+                        color = "#1a73e8"
+                    elif i <= 6:
+                        color = "#34a853"
+                    elif i <= 8:
+                        color = "#fbbc04"
+                    else:
+                        color = "#ea4335"
+                    bar_html += '<span style="background:{}; color:white; padding:2px 6px; margin:1px; border-radius:3px; font-size:12px;">{}</span>'.format(color, i)
+                else:
+                    bar_html += '<span style="background:#e0e0e0; color:#888; padding:2px 6px; margin:1px; border-radius:3px; font-size:12px;">{}</span>'.format(i)
+            st.markdown(bar_html, unsafe_allow_html=True)
+
+            st.markdown("")
+            st.markdown("**均線參考：**")
+            st.markdown("・20MA：{:,.0f}".format(twii_heat["ma20"]))
+            st.markdown("・60MA：{:,.0f}".format(twii_heat["ma60"]))
+            st.markdown("・240MA：{:,.0f}".format(twii_heat["ma240"]))
+
+            # 策略建議
+            if level <= 6:
+                st.success("**策略建議：** " + twii_heat["action"])
+            elif level <= 7:
+                st.warning("**策略建議：** " + twii_heat["action"])
+            else:
+                st.error("**策略建議：** " + twii_heat["action"])
+
+        with col_h2:
+            st.markdown("**📖 市場熱度計怎麼讀、為什麼重要**")
+            st.info(
+                "**核心邏輯：均值回歸不只適用於個股，也適用於整體市場**\n\n"
+                "我們的策略是「個股跌幅觸發後均值回歸」，但如果整體市場嚴重過熱，"
+                "個股的均值本身也在高位，觸發後反彈的幅度會受限，甚至觸發後繼續跌。\n\n"
+                "**為什麼用240日均線（約一年）？**\n"
+                "240日均線代表市場的「正常基準」，它過濾掉短期波動，"
+                "顯示市場的長期趨勢中樞。相對於這個中樞的偏離，"
+                "才能反映真正的過熱或過冷程度。\n\n"
+                "**各級別的歷史對應：**\n"
+                "・ 1~2級（極冷）：對應2020年3月疫情崩盤、2008年金融海嘯底部，"
+                "歷史上這個時候進場的長期報酬最高\n"
+                "・ 5~6級（中性）：市場正常運作，策略最容易執行\n"
+                "・ 8~9級（過熱）：對應2021年台股多頭高峰，"
+                "2022年隨後大幅修正，那時進場的人多數套牢\n"
+                "・ 10級（極熱）：歷史罕見，出現即代表高度風險\n\n"
+                "**跟基本面條件的搭配：**\n"
+                "・ 熱度7~8級 + 基本面好的標的觸發：提高觸發門檻要求（從-10%提高到-15%），"
+                "等更深的超跌才進場\n"
+                "・ 熱度9~10級：即使有好標的觸發，也建議等市場熱度降至7級以下再進場，"
+                "因為市場過熱時的觸發往往不是真正的超跌，而是大趨勢向下的開始"
+            )
+
+            # 10級完整說明表
+            heat_table = pd.DataFrame([
+                {"級別": "1-2級 🔵", "偏離幅度": "< -20%", "市場狀態": "極冷/嚴重超賣", "進場策略": "全力進場"},
+                {"級別": "3-4級 🟢", "偏離幅度": "-10% ~ -20%", "市場狀態": "冷/輕微超賣", "進場策略": "積極進場"},
+                {"級別": "5-6級 🟢", "偏離幅度": "-10% ~ 0%", "市場狀態": "中性", "進場策略": "正常進場"},
+                {"級別": "7級 🟡", "偏離幅度": "0% ~ +10%", "市場狀態": "微熱", "進場策略": "正常，勿追高"},
+                {"級別": "8級 🟠", "偏離幅度": "+10% ~ +20%", "市場狀態": "明顯過熱", "進場策略": "縮倉，等-15%觸發"},
+                {"級別": "9-10級 🔴", "偏離幅度": "> +20%", "市場狀態": "嚴重過熱/泡沫", "進場策略": "暫停策略"},
+            ])
+            st.markdown(heat_table.to_html(index=False), unsafe_allow_html=True)
+    else:
+        st.warning("台股熱度數據無法取得（需要超過250個交易日的歷史數據）")
+
     # ── 整體環境綜合判斷 ──
     st.markdown("---")
     st.markdown("### 🎯 整體環境綜合判斷")
@@ -1786,6 +2034,8 @@ with tab6:
         vix_val = vix["current"]
         twd_chg = twd.get("change_30d") or 0
         twd_ok = twd_chg < 0.5
+        sp500_ok = sp500["pct_from_high"] > -10 if sp500 else True
+        heat_level = twii_heat["level"] if twii_heat else 6
 
         # 計分
         score = 0
@@ -1827,34 +2077,77 @@ with tab6:
             score -= 1
             signals.append("⚠️ 台幣貶值，注意外資持續賣壓")
 
+        # S&P500評分
+        if sp500_ok:
+            score += 1
+            signals.append("✅ S&P500距高點<10%，全球風險胃納良好")
+        elif sp500 and sp500["pct_from_high"] > -20:
+            score += 0
+            signals.append("🟡 S&P500回落中（距高點10~20%），全球資金開始謹慎")
+        else:
+            score -= 2
+            signals.append("❌ S&P500顯著下行（距高點>20%），全球資金撤出風險資產")
+
+        # 台股熱度評分
+        if heat_level <= 6:
+            score += 1
+            signals.append("✅ 台股熱度第{}級（{}），市場未過熱，進場時機合理".format(
+                heat_level, twii_heat["label"] if twii_heat else ""))
+        elif heat_level == 7:
+            score += 0
+            signals.append("🟡 台股熱度第7級（微熱），正常進場但勿追高")
+        elif heat_level == 8:
+            score -= 1
+            signals.append("⚠️ 台股熱度第8級（明顯過熱），建議縮小倉位，等更深觸發（-15%）")
+        else:
+            score -= 3
+            signals.append("❌ 台股熱度第{}級（{}），市場嚴重過熱，建議暫停策略等市場回歸正常".format(
+                heat_level, twii_heat["label"] if twii_heat else ""))
+
         # 綜合結論
         for s in signals:
             st.markdown("　" + s)
         st.markdown("")
 
-        if score >= 4:
+        # 熱度對進場門檻的影響
+        if twii_heat:
+            if heat_level >= 9:
+                st.error("🌡️ **熱度警示**：市場第{}級過熱，建議等熱度降至7級以下再執行策略".format(heat_level))
+            elif heat_level == 8:
+                st.warning("🌡️ **熱度調整**：市場第8級過熱，建議將觸發門檻從 -10% 提高至 -15%，等更深的超跌")
+            elif heat_level <= 2:
+                st.success("🌡️ **熱度機會**：市場第{}級極冷，歷史上是最佳進場時機，可積極進場".format(heat_level))
+
+        if score >= 5:
             st.success(
                 "**🟢 環境：積極進場**\n\n"
-                "多項指標支持，觸發標的在通過基本面篩選後可以正常倉位進場。"
-                "這種環境下我們策略的歷史勝率最高。"
+                "多項指標同時支持，這是我們策略歷史上勝率最高的環境。"
+                "觸發標的通過基本面篩選後，可以正常倉位進場。"
             )
-        elif score >= 1:
+        elif score >= 2:
+            st.success(
+                "**🟢 環境：正常進場**\n\n"
+                "整體環境良好，按正常策略執行。"
+                "觸發標的通過基本面篩選後可以進場。"
+            )
+        elif score >= 0:
             st.warning(
-                "**🟡 環境：正常操作，注意風險**\n\n"
-                "整體環境中性，部分指標需留意。觸發標的通過基本面篩選後可以進場，"
-                "但建議控制單筆倉位，不要滿倉。"
+                "**🟡 環境：正常但留意**\n\n"
+                "部分指標需留意。觸發標的通過基本面篩選後可以進場，"
+                "但建議控制單筆倉位在正常的70~80%。"
             )
-        elif score >= -1:
+        elif score >= -2:
             st.warning(
                 "**🟡 環境：謹慎，縮小倉位**\n\n"
-                "環境偏弱，建議只進入通過所有6個基本面條件且歷史勝率最高的標的，"
-                "倉位減至正常的50~70%。"
+                "環境偏弱，建議只進入通過全部硬性條件且評分最高的標的，"
+                "倉位減至正常的50%。"
             )
         else:
             st.error(
-                "**🔴 環境：高風險，大幅縮減**\n\n"
-                "類2022環境，多項指標顯示系統性風險。建議只操作最高品質標的，"
-                "倉位減至正常的30~50%，或暫停操作等待環境改善。"
+                "**🔴 環境：高風險，暫停或大幅縮減**\n\n"
+                "多項指標顯示系統性風險，類2022環境。"
+                "建議暫停操作或只用極小倉位（正常的20~30%），"
+                "等待環境改善後再恢復。"
             )
 
         st.caption(
@@ -1862,7 +2155,9 @@ with tab6:
             "殖利率穩定+2、殖利率緩升0、殖利率快升-2｜"
             "VIX>30（恐慌）+2、VIX 20~30+1、VIX<20+0｜"
             "台幣穩定/升值+1、台幣貶值-1｜"
-            "總分≥4積極、≥1正常、≥-1謹慎、<-1高風險"
+            "S&P500強+1、S&P500回落0、S&P500下行-2｜"
+            "熱度1~6級+1、7級0、8級-1、9~10級-3｜"
+            "總分≥5積極、≥2正常、≥0留意、≥-2謹慎、<-2高風險"
         )
     else:
         st.info("部分市場數據無法取得，請稍後重整頁面")
@@ -1912,46 +2207,70 @@ with tab6:
                 st.error("財報資料抓取失敗，請稍後再試")
 
         if fin_data is not None:
-            with st.spinner("步驟3/3：套用六個條件篩選..."):
+            with st.spinner("步驟3/3：套用六個條件分級..."):
                 df_pool = build_qualified_pool(all_stocks, fin_data)
 
             if df_pool is not None:
-                qualified = df_pool[df_pool['合格'] == True].reset_index(drop=True)
-                st.session_state['qualified_pool'] = qualified
-                st.session_state['full_pool'] = df_pool
-                st.success("✅ 合格標的池建立完成！共 " + str(len(qualified)) + " 檔通過全部6個條件")
+                grade_a = df_pool[df_pool['_grade_short'] == 'A級']
+                grade_b = df_pool[df_pool['_grade_short'] == 'B級']
+                grade_c = df_pool[df_pool['_grade_short'] == 'C級']
+                excluded = df_pool[df_pool['_grade_short'] == '排除']
+                st.session_state['df_pool'] = df_pool
+                st.success(
+                    "✅ 分級完成！"
+                    "🥇 A級：" + str(len(grade_a)) + "檔　"
+                    "🥈 B級：" + str(len(grade_b)) + "檔　"
+                    "🥉 C級：" + str(len(grade_c)) + "檔　"
+                    "❌ 排除：" + str(len(excluded)) + "檔"
+                )
 
     # 顯示合格標的池
-    if 'qualified_pool' in st.session_state:
-        df_q = st.session_state['qualified_pool']
-        df_full = st.session_state.get('full_pool')
+    if 'df_pool' in st.session_state:
+        df_pool = st.session_state['df_pool']
+        display_cols = ['等級', '代碼', '名稱', '產業別', '降級原因', '股價', 'PB', 'ROE%', '負債比%', 'PB/ROE',
+                        '①5年EPS正', '②EPS成長', '③負債比<50%', '④ROE>15%', '⑤PB<3', '⑥PB/ROE<0.20']
 
-        st.markdown("### ✅ 合格標的清單（通過全部6個條件）")
+        # A級
+        st.markdown("### 🥇 A級標的（優先進場）")
+        st.caption("通過全部6個條件，觸發時優先評估進場")
+        df_a = df_pool[df_pool['_grade_short'] == 'A級'].reset_index(drop=True)
+        if not df_a.empty:
+            industry_a = "　".join([k + "(" + str(v) + ")" for k, v in df_a['產業別'].value_counts().head(6).items()])
+            st.caption("產業分布：" + industry_a)
+            show_html(df_a[display_cols])
+        else:
+            st.info("無A級標的")
 
-        # 產業分布
-        if '產業別' in df_q.columns:
-            industry_counts = df_q['產業別'].value_counts().head(8)
-            industry_str = "　".join([k + "(" + str(v) + ")" for k, v in industry_counts.items()])
-            st.info("**產業分布**：" + industry_str)
+        # B級
+        st.markdown("### 🥈 B級標的（次要進場，A級無觸發時考慮）")
+        st.caption("通過3個硬性條件，但1~2個品質條件未通過（如估值偏高的優質企業）")
+        df_b = df_pool[df_pool['_grade_short'] == 'B級'].reset_index(drop=True)
+        if not df_b.empty:
+            st.caption("共 " + str(len(df_b)) + " 檔，「降級原因」欄說明為何未達A級")
+            show_html(df_b[display_cols])
+        else:
+            st.info("無B級標的")
 
-        display_cols = ['代碼', '名稱', '產業別', '股價', 'PB', 'ROE%', '負債比%', 'PB/ROE', '通過條件數']
-        show_html(df_q[display_cols].style.background_gradient(subset=['ROE%'], cmap='RdYlGn'))
+        # C級
+        with st.expander("🥉 C級標的（觀察，暫不主動進場）共 " + str(len(df_pool[df_pool['_grade_short'] == 'C級'])) + " 檔"):
+            df_c = df_pool[df_pool['_grade_short'] == 'C級'].reset_index(drop=True)
+            if not df_c.empty:
+                show_html(df_c[display_cols])
+
+        # 下載
         st.download_button(
-            "📥 下載合格標的清單CSV",
-            df_q.to_csv(index=False).encode('utf-8-sig'),
-            "qualified_pool.csv", "text/csv"
+            "📥 下載全部標的分級CSV",
+            df_pool[display_cols].to_csv(index=False).encode('utf-8-sig'),
+            "stock_grades.csv", "text/csv"
         )
 
-        if df_full is not None:
-            with st.expander("查看全部股票的條件評分（含未通過）"):
-                cond_cols = ['代碼', '名稱', '產業別', '5年EPS皆正', 'EPS成長', 'PB<3', 'ROE>15%', '負債比<50%', 'PB/ROE<0.20', '通過條件數']
-                show_html(df_full[cond_cols])
+
 
     st.divider()
 
     # ── 個股快查 ──
     st.markdown("### 🔎 個股快查（進場前確認）")
-    st.caption("輸入股票代碼，快速確認這六個條件是否通過")
+    st.caption("輸入股票代碼，快速確認等級與六個條件")
 
     check_code = st.text_input("輸入股票代碼", placeholder="例：2317", key="pool_check_code")
     if st.button("確認基本面條件", key="check_fundamental"):
@@ -1959,41 +2278,66 @@ with tab6:
             st.warning("請輸入代碼")
         else:
             code = check_code.strip()
-            # 從session_state的pool找
             found = False
-            if 'full_pool' in st.session_state:
-                df_full = st.session_state['full_pool']
-                row = df_full[df_full['代碼'] == code]
-                if not row.empty:
-                    row = row.iloc[0]
+            if 'df_pool' in st.session_state:
+                df_pool_check = st.session_state['df_pool']
+                row_df = df_pool_check[df_pool_check['代碼'] == code]
+                if not row_df.empty:
+                    row = row_df.iloc[0]
                     found = True
+                    grade = row.get('等級', '')
+                    grade_reason = row.get('降級原因', '')
+
                     st.markdown("**" + code + " " + str(row.get('名稱', '')) + "**")
-                    cols = st.columns(3)
-                    conditions = [
-                        ('① 近5年EPS皆正', row.get('5年EPS皆正', '⚠️')),
-                        ('② 近3年EPS成長', row.get('EPS成長', '⚠️')),
-                        ('③ PB < 3', row.get('PB<3', '⚠️') + "　（PB=" + str(row.get('PB', 'N/A')) + "）"),
-                        ('④ ROE > 15%', row.get('ROE>15%', '⚠️') + "　（ROE=" + str(row.get('ROE%', 'N/A')) + "%）"),
-                        ('⑤ 負債比 < 50%', row.get('負債比<50%', '⚠️') + "　（" + str(row.get('負債比%', 'N/A')) + "%）"),
-                        ('⑥ PB/ROE < 0.20', row.get('PB/ROE<0.20', '⚠️') + "　（" + str(row.get('PB/ROE', 'N/A')) + "）"),
+
+                    # 等級顯示
+                    if 'A級' in grade:
+                        st.success("**" + grade + "**　→ 優先進場標的")
+                    elif 'B級' in grade:
+                        st.warning("**" + grade + "**　→ 次要進場標的\n\n降級原因：" + grade_reason)
+                    elif 'C級' in grade:
+                        st.warning("**" + grade + "**　→ 暫不主動進場\n\n降級原因：" + grade_reason)
+                    else:
+                        st.error("**" + grade + "**　→ 硬性條件未通過，不進場\n\n原因：" + grade_reason)
+
+                    # 條件明細
+                    st.markdown("**條件明細：**")
+                    st.caption("第一層（硬性條件）")
+                    cols1 = st.columns(3)
+                    hard_conditions = [
+                        ('① 近5年EPS皆正', row.get('①5年EPS正', '⚠️'), '硬性'),
+                        ('② 近3年EPS成長', row.get('②EPS成長', '⚠️'), '硬性'),
+                        ('③ 負債比<50%', row.get('③負債比<50%', '⚠️') + "（" + str(row.get('負債比%', 'N/A')) + "%）", '硬性'),
                     ]
-                    for i, (label, val) in enumerate(conditions):
-                        with cols[i % 3]:
+                    for i, (label, val, _) in enumerate(hard_conditions):
+                        with cols1[i]:
                             if '✅' in str(val):
                                 st.success(label + "\n" + str(val))
                             elif '❌' in str(val):
                                 st.error(label + "\n" + str(val))
                             else:
-                                st.warning(label + "\n" + str(val) + "（資料不足）")
+                                st.warning(label + "\n" + str(val))
 
-                    all_pass = row.get('合格', False)
-                    if all_pass:
-                        st.success("✅ **此標的通過全部條件，可列入進場候選**")
-                    else:
-                        st.error("❌ **此標的未通過全部條件，進場需謹慎評估**")
+                    st.caption("第二層（品質條件，影響A/B/C分級）")
+                    cols2 = st.columns(3)
+                    quality_conditions = [
+                        ('④ ROE>15%', row.get('④ROE>15%', '⚠️') + "（" + str(row.get('ROE%', 'N/A')) + "%）"),
+                        ('⑤ PB<3', row.get('⑤PB<3', '⚠️') + "（PB=" + str(row.get('PB', 'N/A')) + "）"),
+                        ('⑥ PB/ROE<0.20', row.get('⑥PB/ROE<0.20', '⚠️') + "（" + str(row.get('PB/ROE', 'N/A')) + "）"),
+                    ]
+                    for i, (label, val) in enumerate(quality_conditions):
+                        with cols2[i]:
+                            if '✅' in str(val):
+                                st.success(label + "\n" + str(val))
+                            elif '❌' in str(val):
+                                st.error(label + "\n" + str(val))
+                            else:
+                                st.warning(label + "\n" + str(val))
 
             if not found:
                 st.warning("請先建立合格標的池，或此代碼不在個股範圍內")
+
+
 
 with tab1:
     threshold1 = st.slider("警示門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t1")
@@ -2109,6 +2453,25 @@ with tab2:
 # ==============================
 with tab3:
     st.subheader("個股／ETF 回測＋線圖")
+
+    # 市場熱度快速顯示
+    twii_heat_bt = get_twii_heat()
+    if twii_heat_bt:
+        level_bt = twii_heat_bt["level"]
+        if level_bt >= 9:
+            st.error("🌡️ 台股市場熱度第{}級（{}）｜建議暫停策略，等熱度降至7級以下".format(
+                level_bt, twii_heat_bt["label"]))
+        elif level_bt == 8:
+            st.warning("🌡️ 台股市場熱度第8級（明顯過熱）｜建議將觸發門檻提高至-15%，等更深超跌進場")
+        elif level_bt <= 2:
+            st.success("🌡️ 台股市場熱度第{}級（{}）｜歷史最佳進場時機，可積極進場".format(
+                level_bt, twii_heat_bt["label"]))
+        else:
+            st.info("🌡️ 台股市場熱度第{}級（{}）｜240MA={:,.0f}，偏離{:+.1f}%｜{}".format(
+                level_bt, twii_heat_bt["label"],
+                twii_heat_bt["ma240"], twii_heat_bt["deviation"],
+                twii_heat_bt["action"]))
+
     col1, col2 = st.columns([2, 1])
     with col1:
         single_code = st.text_input("輸入股票／ETF代碼", value="0050", key="single")
