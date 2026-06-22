@@ -92,6 +92,30 @@ def get_yahoo_history(code, days=60):
         return {}
 
 
+def get_yahoo_history_us(code, days=365):
+    """抓美國指數/ETF歷史資料（不加.TW後綴），用於SOX、TNX、VIX等"""
+    end = datetime.today()
+    start = end - timedelta(days=days)
+    url = ("https://query1.finance.yahoo.com/v8/finance/chart/" + code
+           + "?interval=1d&period1=" + str(int(start.timestamp()))
+           + "&period2=" + str(int(end.timestamp())))
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        data = res.json()
+        result = data["chart"]["result"][0]
+        timestamps = result["timestamp"]
+        closes = result["indicators"]["quote"][0]["close"]
+        prices = {}
+        for ts, cl in zip(timestamps, closes):
+            if cl is not None:
+                date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+                prices[date] = round(cl, 2)
+        return prices
+    except:
+        return {}
+
+
 def get_yahoo_history_15y(code):
     end = datetime.today()
     start = end - timedelta(days=365 * 15 + 30)
@@ -1473,22 +1497,22 @@ def build_qualified_pool(all_stocks, fin_data):
 def get_sox_data():
     """抓費城半導體指數（SOX）"""
     try:
-        prices = get_yahoo_history("^SOX", days=365)
-        if not prices:
+        prices = get_yahoo_history_us("^SOX", days=365)
+        if not prices or len(prices) < 10:
             return None
         dates = sorted(prices.keys())
         current = prices[dates[-1]]
         high_52w = max(prices.values())
         pct_from_high = (current - high_52w) / high_52w * 100
-        ma20_prices = list(prices.values())[-20:]
+        ma20_prices = [prices[d] for d in dates[-20:]]
         ma20 = sum(ma20_prices) / len(ma20_prices)
         above_ma20 = current > ma20
         return {
-            'current': current,
-            'high_52w': high_52w,
-            'pct_from_high': round(pct_from_high, 1),
-            'above_ma20': above_ma20,
-            'date': dates[-1],
+            "current": current,
+            "high_52w": high_52w,
+            "pct_from_high": round(pct_from_high, 1),
+            "above_ma20": above_ma20,
+            "date": dates[-1],
         }
     except:
         return None
@@ -1497,17 +1521,17 @@ def get_sox_data():
 def get_us10y_data():
     """抓美國10年期公債殖利率"""
     try:
-        prices = get_yahoo_history("^TNX", days=120)
-        if not prices:
+        prices = get_yahoo_history_us("^TNX", days=120)
+        if not prices or len(prices) < 10:
             return None
         dates = sorted(prices.keys())
         current = prices[dates[-1]]
         price_90d_ago = prices[dates[0]] if len(dates) > 60 else None
         change_90d = round(current - price_90d_ago, 2) if price_90d_ago else None
         return {
-            'current': round(current, 2),
-            'change_90d': change_90d,
-            'date': dates[-1],
+            "current": round(current, 2),
+            "change_90d": change_90d,
+            "date": dates[-1],
         }
     except:
         return None
