@@ -933,19 +933,34 @@ def get_industry_lookup():
 def get_all_tw_stocks():
     stocks = []
     industry_lookup = get_industry_lookup()
-    try:
-        res = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10)
-        for d in res.json():
-            code = d.get("Code", "").strip()
-            name = d.get("Name", "").strip()
-            if not code:
-                continue
-            t = classify_code(code)
-            industry = industry_lookup.get(code, "")
-            group = get_industry_group(industry, t)
-            stocks.append({"code": code, "name": name, "market": "上市", "type": t, "industry": industry, "group": group})
-    except:
-        pass
+
+    # TWSE API with retry (偶發性503/空白回應，retry最多3次)
+    twse_urls = [
+        "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+        "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+        "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+    ]
+    twse_data = []
+    for attempt, url in enumerate(twse_urls):
+        try:
+            res = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+            if res.status_code == 200 and len(res.text) > 100:
+                twse_data = res.json()
+                break
+        except:
+            pass
+        if attempt < len(twse_urls) - 1:
+            time.sleep(2)
+
+    for d in twse_data:
+        code = d.get("Code", "").strip()
+        name = d.get("Name", "").strip()
+        if not code:
+            continue
+        t = classify_code(code)
+        industry = industry_lookup.get(code, "")
+        group = get_industry_group(industry, t)
+        stocks.append({"code": code, "name": name, "market": "上市", "type": t, "industry": industry, "group": group})
     try:
         res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=10)
         for d in res.json():
@@ -1077,9 +1092,19 @@ with tab5:
         with st.spinner("執行中..."):
 
             def check_twse():
-                res = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=10)
-                data = res.json()
-                return len(data) > 100, "取得 " + str(len(data)) + " 筆上市證券"
+                url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+                for attempt in range(3):
+                    try:
+                        res = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+                        if res.status_code == 200 and len(res.text) > 100:
+                            data = res.json()
+                            if len(data) > 100:
+                                return True, "取得 " + str(len(data)) + " 筆上市證券（第" + str(attempt+1) + "次嘗試成功）"
+                    except Exception as e:
+                        last_err = str(e)
+                    if attempt < 2:
+                        time.sleep(2)
+                return False, "連續3次嘗試均失敗（" + last_err[:60] + "）。TWSE API偶發性不穩，非程式問題，稍後再試即可。"
             run_check("證交所TWSE API", check_twse)
 
             def check_tpex():
@@ -1093,7 +1118,7 @@ with tab5:
                 if len(p) < 10:
                     return False, "資料筆數不足：" + str(len(p))
                 d = sorted(p.keys())
-                return True, "2330台積電 最新收盤：" + str(p[d[-1]]) + "（" + d[-1] + "）｜取得 " + str(len(p)) + " 筆"
+                return True, "2330台積電 最新收盤：" + str(p[d[-1]]) + "（" + d[-1] + "）｜取得 " + str(len(p)) + " 筆（近60天交易日，正常約40~43筆）"
             run_check("Yahoo Finance API（2330）", check_yahoo)
 
             def check_freshness():
