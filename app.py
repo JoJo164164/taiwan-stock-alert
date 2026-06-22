@@ -8,20 +8,38 @@ import json
 
 INDUSTRY_GROUP = {
     "被動ETF": [], "主動ETF": [],
-    "半導體": ["半導體業"],
-    "電腦與週邊": ["電腦及週邊設備業", "電子通路業", "資訊服務業"],
-    "光電與通信": ["光電業", "通信網路業"],
-    "電子零組件": ["電子零組件業", "其他電子業"],
-    "金融保險": ["金融保險業"], "生技醫療": ["生技醫療業"],
-    "水泥": ["水泥工業"], "食品": ["食品工業"], "塑膠": ["塑膠工業"],
-    "紡織": ["紡織纖維"], "電機機械": ["電機機械"], "電器電纜": ["電器電纜"],
-    "化學": ["化學工業"], "玻璃陶瓷": ["玻璃陶瓷"], "造紙": ["造紙工業"],
-    "鋼鐵": ["鋼鐵工業"], "橡膠": ["橡膠工業"], "汽車": ["汽車工業"],
-    "能源": ["油電燃氣業"], "綠能環保": ["綠能環保"],
-    "航運": ["航運業"], "建材營造": ["建材營造"],
-    "觀光餐旅": ["觀光餐旅"], "貿易百貨": ["貿易百貨"],
-    "數位雲端": ["數位雲端"], "運動休閒": ["運動休閒"],
-    "居家生活": ["居家生活"], "綜合": ["綜合"],
+    "半導體": ["半導體業", "半導體"],
+    "電腦與週邊": ["電腦及週邊設備業", "電子通路業", "資訊服務業", "電腦及週邊", "電子通路", "資訊服務"],
+    "光電與通信": ["光電業", "通信網路業", "光電", "通信網路"],
+    "電子零組件": ["電子零組件業", "其他電子業", "電子零組件", "其他電子"],
+    "金融保險": ["金融保險業", "金融保險", "銀行業", "證券業", "保險業", "票券業"],
+    "生技醫療": ["生技醫療業", "生技醫療", "醫療器材", "生物科技"],
+    "水泥": ["水泥工業", "水泥"],
+    "食品": ["食品工業", "食品"],
+    "塑膠": ["塑膠工業", "塑膠"],
+    "紡織": ["紡織纖維", "紡織"],
+    "電機機械": ["電機機械"],
+    "電器電纜": ["電器電纜"],
+    "化學": ["化學工業", "化學", "化工"],
+    "玻璃陶瓷": ["玻璃陶瓷"],
+    "造紙": ["造紙工業", "造紙"],
+    "鋼鐵": ["鋼鐵工業", "鋼鐵"],
+    "橡膠": ["橡膠工業", "橡膠"],
+    "汽車": ["汽車工業", "汽車"],
+    "能源": ["油電燃氣業", "油電燃氣", "能源"],
+    "綠能環保": ["綠能環保"],
+    "航運": ["航運業", "航運"],
+    "建材營造": ["建材營造"],
+    "觀光餐旅": ["觀光餐旅", "觀光"],
+    "貿易百貨": ["貿易百貨", "百貨"],
+    "數位雲端": ["數位雲端"],
+    "運動休閒": ["運動休閒"],
+    "居家生活": ["居家生活"],
+    "電子商務": ["電子商務"],
+    "文化創意": ["文化創意"],
+    "農業科技": ["農業科技"],
+    "管理顧問": ["管理顧問"],
+    "綜合": ["綜合"],
 }
 GROUP_ICONS = {
     "被動ETF": "📊", "主動ETF": "✨", "半導體": "🔵", "電腦與週邊": "🖥️",
@@ -31,7 +49,8 @@ GROUP_ICONS = {
     "造紙": "📄", "鋼鐵": "🔩", "橡膠": "🔄", "汽車": "🚗",
     "能源": "⛽", "綠能環保": "☀️", "航運": "🚢", "建材營造": "🏠",
     "觀光餐旅": "🏨", "貿易百貨": "🛒", "數位雲端": "☁️",
-    "運動休閒": "⛳", "居家生活": "🏡", "綜合": "📌",
+    "運動休閒": "⛳", "居家生活": "🏡", "電子商務": "🛍️",
+    "文化創意": "🎨", "農業科技": "🌱", "管理顧問": "💼", "綜合": "📌",
 }
 THRESHOLDS = [-5, -7, -10, -15, -20]
 HORIZONS = [5, 10, 20, 40, 60, 80, 100, 120, 240]
@@ -44,12 +63,40 @@ st.caption("資料來源：Yahoo Finance 還原後股價 | 回測年限：最長
 def get_industry_group(industry, stock_type):
     if stock_type in ["被動ETF", "主動ETF"]:
         return stock_type
+    if not industry:
+        return "綜合"
+    industry_str = str(industry).strip()
+    # 第一輪：完整字串包含比對
     for group, industries in INDUSTRY_GROUP.items():
         if group in ["被動ETF", "主動ETF"]:
             continue
         for ind in industries:
-            if ind in str(industry):
+            if ind and (ind in industry_str or industry_str in ind):
                 return group
+    # 第二輪：關鍵字部分比對（處理上櫃特殊命名）
+    keyword_map = {
+        "半導": "半導體", "晶片": "半導體", "IC": "半導體",
+        "電腦": "電腦與週邊", "資訊": "電腦與週邊", "通路": "電腦與週邊",
+        "光電": "光電與通信", "通信": "光電與通信", "網路": "光電與通信",
+        "電子零": "電子零組件", "零組件": "電子零組件",
+        "金融": "金融保險", "銀行": "金融保險", "證券": "金融保險", "保險": "金融保險",
+        "生技": "生技醫療", "醫療": "生技醫療", "藥": "生技醫療",
+        "鋼": "鋼鐵", "鐵": "鋼鐵",
+        "航": "航運", "運輸": "航運",
+        "建材": "建材營造", "營造": "建材營造", "建設": "建材營造",
+        "化學": "化學", "化工": "化學",
+        "食品": "食品", "飲料": "食品",
+        "塑膠": "塑膠",
+        "紡織": "紡織", "纖維": "紡織",
+        "能源": "能源", "燃氣": "能源", "電力": "能源",
+        "綠能": "綠能環保", "環保": "綠能環保", "太陽能": "綠能環保",
+        "雲端": "數位雲端", "數位": "數位雲端", "軟體": "數位雲端",
+        "觀光": "觀光餐旅", "餐飲": "觀光餐旅", "旅": "觀光餐旅",
+    }
+    for keyword, group in keyword_map.items():
+        if keyword in industry_str:
+            return group
+    # 最後才歸綜合
     return "綜合"
 
 
@@ -941,15 +988,58 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
 @st.cache_data(ttl=86400)
 def get_industry_lookup():
     lookup = {}
+    # 來源1：TWSE companyInfo（上市，含產業別）
     try:
-        res = requests.get("https://openapi.twse.com.tw/v1/company/companyInfo", timeout=10)
-        for d in res.json():
-            code = d.get("公司代號", "").strip()
-            industry = d.get("產業別", "").strip()
-            if code:
-                lookup[code] = industry
+        res = requests.get("https://openapi.twse.com.tw/v1/company/companyInfo",
+                          timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        if res.status_code == 200:
+            for d in res.json():
+                code = d.get("公司代號", "").strip()
+                industry = d.get("產業別", "").strip()
+                if code and industry:
+                    lookup[code] = industry
     except:
         pass
+
+    # 來源2：TWSE 上市公司基本資料（另一個endpoint，有產業類別）
+    try:
+        res = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+                          timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        if res.status_code == 200:
+            for d in res.json():
+                code = d.get("Code", "").strip()
+                # STOCK_DAY_ALL沒有產業別，跳過
+    except:
+        pass
+
+    # 來源3：TPEX上櫃公司基本資料（有產業類別）
+    try:
+        res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes",
+                          timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        if res.status_code == 200:
+            for d in res.json():
+                code = d.get("SecuritiesCompanyCode", "").strip()
+                industry = d.get("Industry", "").strip()
+                if not industry:
+                    industry = d.get("IndustryName", "").strip()
+                if code and industry and code not in lookup:
+                    lookup[code] = industry
+    except:
+        pass
+
+    # 來源4：TWSE 個股基本資料（備用，有產業別）
+    try:
+        res = requests.get("https://openapi.twse.com.tw/v1/company/basic",
+                          timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        if res.status_code == 200:
+            for d in res.json():
+                code = d.get("公司代號", "").strip()
+                industry = d.get("產業別", "").strip()
+                if code and industry and code not in lookup:
+                    lookup[code] = industry
+    except:
+        pass
+
     return lookup
 
 
@@ -1005,7 +1095,11 @@ def get_all_tw_stocks():
         if not code:
             continue
         t = classify_code(code)
-        industry = industry_lookup.get(code, "")
+        # 嘗試從API直接取產業別，沒有才用lookup
+        industry = (d.get("Industry", "") or
+                   d.get("IndustryName", "") or
+                   d.get("產業別", "") or
+                   industry_lookup.get(code, "")).strip()
         group = get_industry_group(industry, t)
         stocks.append({"code": code, "name": name, "market": "上櫃", "type": t, "industry": industry, "group": group})
     return stocks
@@ -1707,7 +1801,7 @@ def get_twii_heat():
         return None
 
 
-
+with tab6:
     st.subheader("📋 合格標的池")
     st.caption("基本面篩選器：只在通過六個條件的股票中尋找進場機會，排除基本面有問題的標的")
 
