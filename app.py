@@ -1503,15 +1503,21 @@ def get_sox_data():
         dates = sorted(prices.keys())
         current = prices[dates[-1]]
         high_52w = max(prices.values())
+        low_52w = min(prices.values())
         pct_from_high = (current - high_52w) / high_52w * 100
         ma20_prices = [prices[d] for d in dates[-20:]]
         ma20 = sum(ma20_prices) / len(ma20_prices)
         above_ma20 = current > ma20
+        # 近20日漲跌幅
+        ret_20d = (current - prices[dates[-21]]) / prices[dates[-21]] * 100 if len(dates) >= 21 else None
         return {
             "current": current,
             "high_52w": high_52w,
+            "low_52w": low_52w,
             "pct_from_high": round(pct_from_high, 1),
             "above_ma20": above_ma20,
+            "ma20": round(ma20, 1),
+            "ret_20d": round(ret_20d, 1) if ret_20d else None,
             "date": dates[-1],
         }
     except:
@@ -1528,9 +1534,52 @@ def get_us10y_data():
         current = prices[dates[-1]]
         price_90d_ago = prices[dates[0]] if len(dates) > 60 else None
         change_90d = round(current - price_90d_ago, 2) if price_90d_ago else None
+        # 近20日方向
+        price_20d_ago = prices[dates[-21]] if len(dates) >= 21 else None
+        change_20d = round(current - price_20d_ago, 2) if price_20d_ago else None
         return {
             "current": round(current, 2),
             "change_90d": change_90d,
+            "change_20d": change_20d,
+            "date": dates[-1],
+        }
+    except:
+        return None
+
+
+def get_vix_data():
+    """抓VIX恐慌指數"""
+    try:
+        prices = get_yahoo_history_us("^VIX", days=30)
+        if not prices or len(prices) < 3:
+            return None
+        dates = sorted(prices.keys())
+        current = prices[dates[-1]]
+        week_ago = prices[dates[-6]] if len(dates) >= 6 else None
+        change_1w = round(current - week_ago, 1) if week_ago else None
+        return {
+            "current": round(current, 1),
+            "change_1w": change_1w,
+            "date": dates[-1],
+        }
+    except:
+        return None
+
+
+def get_twd_data():
+    """抓台幣匯率（USD/TWD）"""
+    try:
+        prices = get_yahoo_history_us("TWD=X", days=60)
+        if not prices or len(prices) < 10:
+            return None
+        dates = sorted(prices.keys())
+        current = prices[dates[-1]]
+        price_30d_ago = prices[dates[0]] if len(dates) >= 20 else None
+        # 台幣升值 = TWD=X下降（因為是USD/TWD，數字越小代表台幣越強）
+        change_30d = round(current - price_30d_ago, 2) if price_30d_ago else None
+        return {
+            "current": round(current, 2),
+            "change_30d": change_30d,
             "date": dates[-1],
         }
     except:
@@ -1543,55 +1592,283 @@ with tab6:
 
     # ── 市場背景快照 ──
     st.markdown("### 🌐 市場背景快照")
-    st.caption("進場前先看大環境，判斷這次觸發是情緒性超跌還是系統性風險")
+    st.caption("進場前先看大環境，判斷這次觸發是情緒性超跌還是系統性風險。每個指標都附有解讀說明。")
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
+    with st.spinner("載入市場數據中..."):
         sox = get_sox_data()
+        us10y = get_us10y_data()
+        vix = get_vix_data()
+        twd = get_twd_data()
+
+    # ── SOX ──
+    st.markdown("---")
+    col_sox1, col_sox2 = st.columns([1, 2])
+    with col_sox1:
         if sox:
-            status = "🟢 正常" if sox['pct_from_high'] > -30 else "🔴 謹慎"
-            st.metric(
-                "費城半導體SOX",
-                "{:.0f}".format(sox['current']),
-                "{:.1f}% 距52週高點".format(sox['pct_from_high'])
-            )
-            st.caption("均線狀態：" + ("高於20MA ✅" if sox['above_ma20'] else "低於20MA ⚠️"))
-            st.caption("環境判斷：" + status)
+            st.metric("費城半導體指數 SOX",
+                     "{:,.0f}".format(sox["current"]),
+                     "{:.1f}% 距52週高點".format(sox["pct_from_high"]))
+            ma_status = "高於20MA ✅" if sox["above_ma20"] else "低於20MA ⚠️"
+            st.caption("20日均線：{:,.0f}　狀態：{}".format(sox["ma20"], ma_status))
+            if sox["ret_20d"] is not None:
+                st.caption("近20日漲跌：{:+.1f}%".format(sox["ret_20d"]))
+            # 燈號
+            pct = sox["pct_from_high"]
+            if pct > -15:
+                st.success("🟢 SOX強勢（距高點<15%）")
+            elif pct > -30:
+                st.warning("🟡 SOX回落中（距高點15~30%）")
+            else:
+                st.error("🔴 SOX顯著下行（距高點>30%）")
         else:
             st.warning("SOX資料無法取得")
 
-    with col2:
-        us10y = get_us10y_data()
+    with col_sox2:
+        st.markdown("**📖 SOX怎麼讀、為什麼重要**")
+        st.info(
+            "**為什麼看SOX？**\n"
+            "台股市值70%是電子股，半導體佔最大宗。外資操作台股時，"
+            "SOX是最重要的先行指標——SOX下跌時，外資通常同步減少台灣半導體持股，"
+            "不管個別公司基本面好不好。\n\n"
+            "**距52週高點的意義：**\n"
+            "・ 0% ~ -15%：SOX接近高點，半導體景氣良好。此時個股超跌觸發，"
+            "很可能是情緒性超跌，進場勝率較高\n"
+            "・ -15% ~ -30%：SOX明顯回落，需謹慎判斷是修正還是趨勢反轉\n"
+            "・ < -30%：歷史上2000年、2008年、2022年三次大熊市都超過-30%，"
+            "代表可能進入趨勢性下跌，均值回歸策略勝率明顯下降\n\n"
+            "**20MA的意義：**\n"
+            "SOX高於20日均線代表短期趨勢向上，個股觸發進場更有把握；"
+            "低於20MA代表短期趨勢向下，進場需更謹慎"
+        )
+
+    # ── 美債殖利率 ──
+    st.markdown("---")
+    col_10y1, col_10y2 = st.columns([1, 2])
+    with col_10y1:
         if us10y:
-            change_str = ""
-            risk = "🟢"
-            if us10y['change_90d'] is not None:
-                change_str = "{:+.2f}%（近90日）".format(us10y['change_90d'])
-                risk = "🔴 快速上升" if us10y['change_90d'] > 1.0 else "🟢 穩定"
-            st.metric(
-                "美債10年期殖利率",
-                "{:.2f}%".format(us10y['current']),
-                change_str
-            )
-            st.caption("環境判斷：" + risk)
+            change_str = "{:+.2f}%（近90日）".format(us10y["change_90d"]) if us10y["change_90d"] else ""
+            st.metric("美債10年期殖利率", "{:.2f}%".format(us10y["current"]), change_str)
+            if us10y["change_20d"]:
+                st.caption("近20日變化：{:+.2f}%".format(us10y["change_20d"]))
+            # 燈號（看90日速度）
+            chg = us10y.get("change_90d", 0) or 0
+            if chg >= 1.0:
+                st.error("🔴 殖利率快速上升（90日+{:.2f}%）估值壓力大".format(chg))
+            elif chg >= 0.5:
+                st.warning("🟡 殖利率緩慢上升（90日+{:.2f}%）需留意".format(chg))
+            elif chg <= -0.3:
+                st.success("🟢 殖利率下降（90日{:.2f}%）對股市有利".format(chg))
+            else:
+                st.success("🟢 殖利率穩定")
         else:
             st.warning("殖利率資料無法取得")
 
-    with col3:
-        # 整體環境判斷
-        if sox and us10y:
-            sox_ok = sox['pct_from_high'] > -30
-            rate_ok = us10y.get('change_90d', 0) is None or us10y.get('change_90d', 0) < 1.0
-            if sox_ok and rate_ok:
-                st.success("**整體環境：正常**\n\n可按正常倉位執行策略")
-            elif not sox_ok and not rate_ok:
-                st.error("**整體環境：類2022風險**\n\nSOX下行 + 利率快速上升\n建議倉位減半，只進最高品質標的")
+    with col_10y2:
+        st.markdown("**📖 美債殖利率怎麼讀、為什麼重要**")
+        st.info(
+            "**為什麼看10年期而不是Fed利率？**\n"
+            "Fed設定的是短期政策利率，但影響股票估值的是市場自己定的10年期殖利率。"
+            "它反映市場對未來10年利率和通膨的預期，是股票DCF估值的折現率。\n\n"
+            "**估值數學：** 股票合理價值 = 未來現金流 ÷ 折現率\n"
+            "殖利率上升→折現率上升→股票合理價值下降→股價承壓\n\n"
+            "**為什麼看「方向」不看「絕對水位」？**\n"
+            "因為市場已經消化了當前水位。危險的不是「殖利率高」，而是「殖利率快速上升」。\n"
+            "2022年：殖利率從1.5%升到4.3%，不到12個月漲280bp，成長股估值崩潰。\n"
+            "那年我們策略的觸發後勝率是15年回測中最低的年度。\n\n"
+            "**門檻說明：**\n"
+            "・ 90日上升 > 1.0%（100bp）：歷史上只出現在2022年、2013年Taper Tantrum，"
+            "是系統性風險信號，策略勝率大幅下降\n"
+            "・ 90日上升 0.3~1.0%：緩慢上升，市場可消化，正常操作\n"
+            "・ 90日下降：對股票最有利，進場勝率較高\n\n"
+            "**現在4.45%怎麼看？**\n"
+            "這個水位偏高但市場已適應。高殖利率環境下，低PB、高ROE的價值股"
+            "（正是我們篩選條件）反而相對有吸引力，比高本益比成長股更抗跌"
+        )
+
+    # ── VIX ──
+    st.markdown("---")
+    col_vix1, col_vix2 = st.columns([1, 2])
+    with col_vix1:
+        if vix:
+            change_str = "{:+.1f}（近1週）".format(vix["change_1w"]) if vix["change_1w"] else ""
+            st.metric("VIX 恐慌指數", "{:.1f}".format(vix["current"]), change_str)
+            v = vix["current"]
+            if v < 15:
+                st.success("🟢 市場極度平靜（VIX<15）")
+                st.caption("個股觸發可能只是技術性調整，不是恐慌")
+            elif v < 20:
+                st.success("🟢 市場平靜（VIX 15~20）正常環境")
+            elif v < 30:
+                st.warning("🟡 市場緊張（VIX 20~30）觸發後反彈機率中等")
+            elif v < 40:
+                st.error("🔴 市場恐慌（VIX 30~40）歷史上長期回報反而最好")
             else:
-                st.warning("**整體環境：謹慎**\n\n其中一項指標偏弱\n建議適度縮小倉位")
+                st.error("🔴 系統性恐慌（VIX>40）如2020年3月，往往是最佳進場時機")
         else:
-            st.info("資料載入中...")
+            st.warning("VIX資料無法取得")
+
+    with col_vix2:
+        st.markdown("**📖 VIX怎麼讀、為什麼重要**")
+        st.info(
+            "**VIX是什麼？**\n"
+            "VIX是CBOE計算的市場隱含波動率，衡量市場對未來30天S&P500波動幅度的預期。"
+            "俗稱「恐慌指數」。\n\n"
+            "**對我們策略的特殊意義：**\n"
+            "我們的策略是「在恐慌中進場」，VIX正好告訴我們恐慌程度有多深。\n"
+            "Baron Rothschild的名言：「在街上血流成河時買入。」VIX就是衡量血流多深的工具。\n\n"
+            "**各區間的實務意義：**\n"
+            "・ VIX < 15：市場極度平靜，個股觸發可能只是技術調整，"
+            "不代表情緒性超跌，要更謹慎確認基本面\n"
+            "・ VIX 15~20：正常環境，策略照常執行\n"
+            "・ VIX 20~30：市場緊張，但往往也是觸發後反彈機率合理的環境\n"
+            "・ VIX 30~40：市場恐慌，歷史數據顯示這個區間進場的長期回報最高，"
+            "但要有心理準備短期繼續跌\n"
+            "・ VIX > 40：系統性恐慌（2020年3月VIX達85），往往是千載難逢的進場時機，"
+            "但需要極強的心理素質\n\n"
+            "**注意：** VIX高不代表「不要進場」，剛好相反。"
+            "VIX高代表市場已經恐慌，超跌反彈的機率更高。"
+            "真正要小心的是VIX很低時進場，代表沒有足夠的恐慌溢價"
+        )
+
+    # ── 台幣匯率 ──
+    st.markdown("---")
+    col_twd1, col_twd2 = st.columns([1, 2])
+    with col_twd1:
+        if twd:
+            chg = twd.get("change_30d", 0) or 0
+            # TWD=X是USD/TWD，數字越小=台幣越強
+            direction = "台幣升值 ✅" if chg < -0.3 else ("台幣貶值 ⚠️" if chg > 0.3 else "台幣穩定")
+            change_str = "{:+.2f}（近30日，負值=台幣升值）".format(chg)
+            st.metric("台幣匯率 USD/TWD", "{:.2f}".format(twd["current"]), change_str)
+            if chg < -0.5:
+                st.success("🟢 台幣明顯升值（外資傾向持有台股）")
+            elif chg < 0.3:
+                st.success("🟢 台幣穩定或小升")
+            elif chg < 1.0:
+                st.warning("🟡 台幣小幅貶值（外資有輕微賣壓）")
+            else:
+                st.error("🔴 台幣明顯貶值（外資賣壓，不利台股）")
+        else:
+            st.warning("台幣匯率資料無法取得")
+
+    with col_twd2:
+        st.markdown("**📖 台幣匯率怎麼讀、為什麼重要**")
+        st.info(
+            "**這是台股獨有的關鍵指標，很多散戶忽略但法人非常重視。**\n\n"
+            "**為什麼台幣匯率影響台股？**\n"
+            "外資在台股的持股佔比超過40%（半導體股甚至超過60%）。"
+            "外資的投資報酬是以美元計算的，所以台幣匯率直接影響他們的投資成本。\n\n"
+            "**邏輯鏈：**\n"
+            "台幣升值 → 外資持有台股的美元報酬上升（匯兌增益）"
+            " → 外資有動機買入/持有台股 → 資金流入 → 個股超跌後更容易反彈\n\n"
+            "台幣貶值 → 外資持有台股的美元報酬下降（匯兌損失）"
+            " → 外資有動機賣出台股換回美元 → 賣壓持續 → 觸發後可能繼續跌\n\n"
+            "**數字怎麼讀：**\n"
+            "USD/TWD這個數字，越小代表台幣越強（1美元換越少台幣）\n"
+            "例如：從31.5降到30.8，代表台幣升值，對台股有利\n\n"
+            "**30日變化的門檻：**\n"
+            "・ 下降超過0.5：台幣明顯升值，外資有動機加碼台股\n"
+            "・ -0.5 ~ +0.5：匯率穩定，中性\n"
+            "・ 上升超過1.0：台幣明顯貶值，注意外資賣壓是否持續\n\n"
+            "**實例：** 2022年台幣從28貶到32，外資大幅賣超台股，"
+            "那年我們策略的觸發後勝率明顯低於平均，匯率是重要原因之一"
+        )
+
+    # ── 整體環境綜合判斷 ──
+    st.markdown("---")
+    st.markdown("### 🎯 整體環境綜合判斷")
+
+    if sox and us10y and vix and twd:
+        sox_ok = sox["pct_from_high"] > -30
+        sox_strong = sox["pct_from_high"] > -15
+        rate_ok = (us10y.get("change_90d") or 0) < 1.0
+        rate_rising = (us10y.get("change_90d") or 0) > 0.3
+        vix_val = vix["current"]
+        twd_chg = twd.get("change_30d") or 0
+        twd_ok = twd_chg < 0.5
+
+        # 計分
+        score = 0
+        signals = []
+        if sox_strong:
+            score += 2
+            signals.append("✅ SOX強勢（距高點<15%），台灣半導體個股超跌更可能是情緒性")
+        elif sox_ok:
+            score += 1
+            signals.append("🟡 SOX回落中（距高點15~30%），正常操作")
+        else:
+            score -= 2
+            signals.append("❌ SOX顯著下行（距高點>30%），均值回歸策略勝率下降")
+
+        if not rate_rising:
+            score += 2
+            signals.append("✅ 殖利率穩定或下降，股票估值支撐")
+        elif rate_ok:
+            score += 0
+            signals.append("🟡 殖利率緩慢上升，市場可消化，正常操作")
+        else:
+            score -= 2
+            signals.append("❌ 殖利率快速上升（>100bp/季），估值壓力大，類2022風險")
+
+        if vix_val >= 30:
+            score += 2
+            signals.append("✅ VIX高位（≥30），市場恐慌通常是進場好時機")
+        elif vix_val >= 20:
+            score += 1
+            signals.append("🟡 VIX偏高（20~30），觸發後反彈機率合理")
+        else:
+            score += 0
+            signals.append("🔵 VIX平靜（<20），確認是真正超跌而非小幅調整")
+
+        if twd_ok:
+            score += 1
+            signals.append("✅ 台幣穩定或升值，外資無明顯賣壓")
+        else:
+            score -= 1
+            signals.append("⚠️ 台幣貶值，注意外資持續賣壓")
+
+        # 綜合結論
+        for s in signals:
+            st.markdown("　" + s)
+        st.markdown("")
+
+        if score >= 4:
+            st.success(
+                "**🟢 環境：積極進場**\n\n"
+                "多項指標支持，觸發標的在通過基本面篩選後可以正常倉位進場。"
+                "這種環境下我們策略的歷史勝率最高。"
+            )
+        elif score >= 1:
+            st.warning(
+                "**🟡 環境：正常操作，注意風險**\n\n"
+                "整體環境中性，部分指標需留意。觸發標的通過基本面篩選後可以進場，"
+                "但建議控制單筆倉位，不要滿倉。"
+            )
+        elif score >= -1:
+            st.warning(
+                "**🟡 環境：謹慎，縮小倉位**\n\n"
+                "環境偏弱，建議只進入通過所有6個基本面條件且歷史勝率最高的標的，"
+                "倉位減至正常的50~70%。"
+            )
+        else:
+            st.error(
+                "**🔴 環境：高風險，大幅縮減**\n\n"
+                "類2022環境，多項指標顯示系統性風險。建議只操作最高品質標的，"
+                "倉位減至正常的30~50%，或暫停操作等待環境改善。"
+            )
+
+        st.caption(
+            "評分說明：SOX強勢+2、SOX正常+1、SOX下行-2｜"
+            "殖利率穩定+2、殖利率緩升0、殖利率快升-2｜"
+            "VIX>30（恐慌）+2、VIX 20~30+1、VIX<20+0｜"
+            "台幣穩定/升值+1、台幣貶值-1｜"
+            "總分≥4積極、≥1正常、≥-1謹慎、<-1高風險"
+        )
+    else:
+        st.info("部分市場數據無法取得，請稍後重整頁面")
 
     st.divider()
+
 
     # ── 六個條件說明 ──
     with st.expander("📖 六個篩選條件說明"):
@@ -1605,7 +1882,7 @@ with tab6:
 | ⑤ 負債比率 | < 50% | 避開高槓桿公司、財務危機股 |
 | ⑥ PB/ROE複合條件 | < 0.20 | 用PB買ROE，確保估值合理 |
 
-⚠️ 注意：負債比 < 50% 會排除部分金融股（銀行本質高槓桿），PB < 3 在多頭市場可能排除台積電等超級企業，這是刻意的選擇。
+⚠️ 注意：負債比 < 50% 會排除部分金融股，PB < 3 可能排除台積電等超級企業，這是刻意的選擇。
         """)
 
     st.divider()
