@@ -961,19 +961,29 @@ def get_all_tw_stocks():
         industry = industry_lookup.get(code, "")
         group = get_industry_group(industry, t)
         stocks.append({"code": code, "name": name, "market": "上市", "type": t, "industry": industry, "group": group})
-    try:
-        res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=10)
-        for d in res.json():
-            code = d.get("SecuritiesCompanyCode", "").strip()
-            name = d.get("CompanyName", "").strip()
-            if not code:
-                continue
-            t = classify_code(code)
-            industry = industry_lookup.get(code, "")
-            group = get_industry_group(industry, t)
-            stocks.append({"code": code, "name": name, "market": "上櫃", "type": t, "industry": industry, "group": group})
-    except:
-        pass
+
+    # TPEX with retry
+    tpex_data = []
+    for attempt in range(3):
+        try:
+            res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes",
+                             timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+            if res.status_code == 200 and len(res.text) > 100:
+                tpex_data = res.json()
+                break
+        except:
+            pass
+        if attempt < 2:
+            time.sleep(2)
+    for d in tpex_data:
+        code = d.get("SecuritiesCompanyCode", "").strip()
+        name = d.get("CompanyName", "").strip()
+        if not code:
+            continue
+        t = classify_code(code)
+        industry = industry_lookup.get(code, "")
+        group = get_industry_group(industry, t)
+        stocks.append({"code": code, "name": name, "market": "上櫃", "type": t, "industry": industry, "group": group})
     return stocks
 
 
@@ -1108,9 +1118,20 @@ with tab5:
             run_check("證交所TWSE API", check_twse)
 
             def check_tpex():
-                res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=10)
-                data = res.json()
-                return len(data) > 50, "取得 " + str(len(data)) + " 筆上櫃證券"
+                last_err = ""
+                for attempt in range(3):
+                    try:
+                        res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes",
+                                         timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+                        if res.status_code == 200 and len(res.text) > 100:
+                            data = res.json()
+                            if len(data) > 50:
+                                return True, "取得 " + str(len(data)) + " 筆上櫃證券（第" + str(attempt+1) + "次嘗試成功）"
+                    except Exception as e:
+                        last_err = str(e)
+                    if attempt < 2:
+                        time.sleep(2)
+                return False, "連續3次嘗試均失敗（" + last_err[:60] + "）。TPEX API偶發性不穩，非程式問題，稍後再試即可。"
             run_check("櫃買中心TPEX API", check_tpex)
 
             def check_yahoo():
