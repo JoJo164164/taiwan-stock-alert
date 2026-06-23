@@ -55,9 +55,13 @@ GROUP_ICONS = {
 THRESHOLDS = [-5, -7, -10, -15, -20]
 HORIZONS = [5, 10, 20, 40, 60, 80, 100, 120, 240]
 
-st.set_page_config(page_title="台股滾動10日跌幅系統", layout="wide")
-st.title("📉 台股滾動10日跌幅系統")
-st.caption("資料來源：Yahoo Finance 還原後股價 | 回測年限：最長15年 | 更新時間：" + datetime.now().strftime("%Y-%m-%d %H:%M"))
+st.set_page_config(page_title="台股滾動10日跌幅系統 v13", layout="wide")
+st.title("📉 台股滾動10日跌幅系統 v13")
+st.caption(
+    "資料來源：Yahoo Finance 還原後股價 | 回測年限：最長15年 | "
+    "🆕 v13：Coatue體質評分卡（15分制）+ 複合信號強度 + 動態持有建議 | "
+    "更新時間：" + datetime.now().strftime("%Y-%m-%d %H:%M")
+)
 
 
 def get_industry_group(industry, stock_type):
@@ -1198,6 +1202,26 @@ with tab0:
 - **觀察天數**：你想研究跌破門檻後，放多久再看結果？選100天 = 觸發後持有5個月的勝率排行
 - **最低觸發次數**：自動標示 ⚠️，觸發次數 ≤ 5次代表樣本不足，勝率參考性有限
     """)
+    st.divider()
+    st.markdown("### 🆕 v13 新功能（Coatue思維強化）")
+    st.markdown("""
+**1️⃣ 標的體質評分卡（15分制）**
+- 三大維度各5分：A獲利能力、B商業模式護城河、C市值與安全邊際
+- 類Coatue區分「好公司跌」vs「爛公司繼續跌」
+- ⭐⭐⭐ 核心（13+）｜⭐⭐ 可觀察（9-12）｜⭐ 高風險（5-8）｜💀 Broken Model（0-4）
+
+**2️⃣ 複合信號強度（每日警示掃描）**
+- 4條件同時評估：連續觸發天數、體質分數、宏觀環境、跌幅深度
+- 🔥強烈｜✅有效｜🔶觀察｜⚪弱 四個等級，自動排序
+
+**3️⃣ 進場品質評估（個股回測）**
+- 自動計算最佳持有天數建議
+- 動態停損參考（歷史最深回撤+平均回撤發生天數）
+- 綜合進場評分（體質+宏觀+歷史勝率）
+
+**4️⃣ 全市場勝率排行加入體質分數**
+- 高勝率但體質差的標的自動標注，避免買到Broken Model
+    """)
     st.warning("本系統為輔助研究工具，不構成投資建議。歷史回測不代表未來績效。")
 
 # ==============================
@@ -1575,8 +1599,21 @@ def build_qualified_pool(all_stocks, fin_data):
                 grade_reason = "次要條件多項未通過：" + "、".join(quality_fail)
                 grade_short = "C級"
 
+        # 計算15分制體質評分
+        q = calc_quality_score(
+            code, stock_dict, fin_data, bvps_map, price_map,
+            eps_by_code, latest_roe, latest_debt, latest_eps_annual
+        )
+        q_total = q["total"] if q else None
+        q_grade = q["grade"] if q else "N/A"
+        q_detail_a = q["detail_a"] if q else ""
+        q_detail_b = q["detail_b"] if q else ""
+        q_detail_c = q["detail_c"] if q else ""
+
         results.append({
             '等級': grade,
+            '體質分數': q_total,
+            '體質等級': q_grade,
             '代碼': code,
             '名稱': stock.get('name', ''),
             '產業別': stock.get('industry', stock.get('group', '')),
@@ -1592,11 +1629,223 @@ def build_qualified_pool(all_stocks, fin_data):
             '④ROE>15%': '✅' if c4 else ('❌' if c4 is False else '⚠️'),
             '⑤PB<3': '✅' if c5 else ('❌' if c5 is False else '⚠️'),
             '⑥PB/ROE<0.20': '✅' if c6 else ('❌' if c6 is False else '⚠️'),
+            '▶A獲利(0-5)': q["score_a"] if q else None,
+            '▶B護城河(0-5)': q["score_b"] if q else None,
+            '▶C安全邊際(0-5)': q["score_c"] if q else None,
+            'A細節': q_detail_a,
+            'B細節': q_detail_b,
+            'C細節': q_detail_c,
             '_grade_short': grade_short,
             '_hard_pass': hard_pass,
         })
 
     return pd.DataFrame(results)
+
+
+
+# ══════════════════════════════════════════════════════
+# 📊 Coatue體質評分卡（滿分15分，每項5分，共3大項）
+# ══════════════════════════════════════════════════════
+
+def calc_quality_score(code, all_stocks_dict, fin_data, bvps_map, price_map,
+                        eps_by_code, latest_roe, latest_debt, latest_eps_annual):
+    """
+    三大維度×5分 = 滿分15分
+    維度A：獲利能力（5分）
+    維度B：商業模式護城河（5分）
+    維度C：市值與安全邊際（5分）
+    """
+    stock = all_stocks_dict.get(code, {})
+    if stock.get('type') != '個股':
+        return None
+
+    eps_annual = latest_eps_annual.get(code, {})
+    roe = latest_roe.get(code)
+    debt = latest_debt.get(code)
+    bvps = bvps_map.get(code)
+    price = price_map.get(code)
+    pb = round(price / bvps, 2) if price and bvps and bvps > 0 else None
+    now_yr = datetime.now().year - 1911
+    valid_years = sorted([yr for yr in eps_annual.keys() if yr >= now_yr - 5], reverse=True)
+
+    # ── 維度A：獲利能力（0~5分）──
+    score_a = 0
+    detail_a = []
+
+    # A1：近5年EPS皆正（0或2分）
+    if len(valid_years) >= 3:
+        all_pos = all(eps_annual.get(yr, -1) > 0 for yr in valid_years)
+        if all_pos:
+            score_a += 2
+            detail_a.append("✅ 近5年EPS皆正(+2)")
+        else:
+            detail_a.append("❌ 有虧損年度(0)")
+    else:
+        detail_a.append("⚠️ 資料不足")
+
+    # A2：ROE水準（0/1/2/3分）
+    if roe is not None:
+        if roe >= 20:
+            score_a += 3
+            detail_a.append("✅ ROE≥20%(+3)")
+        elif roe >= 15:
+            score_a += 2
+            detail_a.append("✅ ROE≥15%(+2)")
+        elif roe >= 8:
+            score_a += 1
+            detail_a.append("🟡 ROE≥8%(+1)")
+        else:
+            detail_a.append("❌ ROE<8%(0)")
+    else:
+        detail_a.append("⚠️ ROE無資料")
+
+    score_a = min(score_a, 5)
+
+    # ── 維度B：商業模式護城河（0~5分）──
+    score_b = 0
+    detail_b = []
+
+    # B1：近3年EPS成長（0或2分）
+    recent_years = sorted(valid_years, reverse=True)
+    if len(recent_years) >= 2:
+        newest = eps_annual.get(recent_years[0])
+        oldest = eps_annual.get(recent_years[min(2, len(recent_years)-1)])
+        if newest and oldest and oldest != 0 and newest > oldest:
+            score_b += 2
+            detail_b.append("✅ EPS近3年成長(+2)")
+        else:
+            detail_b.append("❌ EPS未成長(0)")
+    else:
+        detail_b.append("⚠️ 資料不足")
+
+    # B2：負債比（0/1/2/3分）
+    if debt is not None:
+        if debt < 30:
+            score_b += 3
+            detail_b.append("✅ 負債比<30%(+3)")
+        elif debt < 50:
+            score_b += 2
+            detail_b.append("✅ 負債比<50%(+2)")
+        elif debt < 65:
+            score_b += 1
+            detail_b.append("🟡 負債比<65%(+1)")
+        else:
+            detail_b.append("❌ 負債比≥65%(0)")
+    else:
+        detail_b.append("⚠️ 負債比無資料")
+
+    score_b = min(score_b, 5)
+
+    # ── 維度C：市值與安全邊際（0~5分）──
+    score_c = 0
+    detail_c = []
+
+    # C1：估值合理性（PB/ROE複合，0~3分）
+    if pb is not None and roe is not None and roe > 0:
+        pb_roe = pb / roe
+        if pb_roe < 0.10:
+            score_c += 3
+            detail_c.append("✅ PB/ROE<0.10極優(+3)")
+        elif pb_roe < 0.20:
+            score_c += 2
+            detail_c.append("✅ PB/ROE<0.20合理(+2)")
+        elif pb_roe < 0.35:
+            score_c += 1
+            detail_c.append("🟡 PB/ROE<0.35尚可(+1)")
+        else:
+            detail_c.append("❌ PB/ROE≥0.35估值偏高(0)")
+    elif pb is not None:
+        if pb < 1.5:
+            score_c += 2
+            detail_c.append("✅ PB<1.5便宜(+2，ROE缺)")
+        elif pb < 3:
+            score_c += 1
+            detail_c.append("🟡 PB<3尚可(+1，ROE缺)")
+        else:
+            detail_c.append("❌ PB≥3估值偏高(0)")
+    else:
+        detail_c.append("⚠️ PB無資料")
+
+    # C2：市值篩選（用股價粗估，>50億代表流動性合格，0或2分）
+    # 用price是否 >5元 且有資料作為最低流動性篩選
+    if price is not None and price > 10:
+        score_c += 2
+        detail_c.append("✅ 股價>10(流動性基本合格)(+2)")
+    elif price is not None and price > 5:
+        score_c += 1
+        detail_c.append("🟡 股價5~10(+1)")
+    else:
+        detail_c.append("❌ 股價≤5或無資料(0)")
+
+    score_c = min(score_c, 5)
+
+    total = score_a + score_b + score_c
+
+    # 等級
+    if total >= 13:
+        grade = "⭐⭐⭐ 核心"
+        grade_label = "核心標的"
+        grade_color = "green"
+    elif total >= 9:
+        grade = "⭐⭐ 可觀察"
+        grade_label = "可觀察"
+        grade_color = "orange"
+    elif total >= 5:
+        grade = "⭐ 高風險"
+        grade_label = "高風險"
+        grade_color = "red"
+    else:
+        grade = "💀 Broken"
+        grade_label = "Broken Model"
+        grade_color = "gray"
+
+    return {
+        "code": code,
+        "total": total,
+        "score_a": score_a,
+        "score_b": score_b,
+        "score_c": score_c,
+        "grade": grade,
+        "grade_label": grade_label,
+        "grade_color": grade_color,
+        "detail_a": "｜".join(detail_a),
+        "detail_b": "｜".join(detail_b),
+        "detail_c": "｜".join(detail_c),
+        "roe": roe,
+        "debt": debt,
+        "pb": pb,
+        "price": price,
+    }
+
+
+@st.cache_data(ttl=3600)
+def get_quality_scores_cached():
+    """快取版品質評分，供每日掃描與全市場排行使用"""
+    return {}
+
+
+def get_score_for_code(code, df_pool_scores):
+    """從df_pool_scores快速查詢某代碼的評分"""
+    if df_pool_scores is None or df_pool_scores.empty:
+        return None
+    row = df_pool_scores[df_pool_scores['代碼'] == code]
+    if row.empty:
+        return None
+    return row.iloc[0]
+
+
+def score_badge(score):
+    """依分數回傳HTML徽章"""
+    if score is None:
+        return '<span style="color:#888">N/A</span>'
+    if score >= 13:
+        return '<span style="background:#2e7d32;color:white;padding:2px 6px;border-radius:4px;font-size:11px;">⭐⭐⭐ {}/15</span>'.format(score)
+    elif score >= 9:
+        return '<span style="background:#e65100;color:white;padding:2px 6px;border-radius:4px;font-size:11px;">⭐⭐ {}/15</span>'.format(score)
+    elif score >= 5:
+        return '<span style="background:#b71c1c;color:white;padding:2px 6px;border-radius:4px;font-size:11px;">⭐ {}/15</span>'.format(score)
+    else:
+        return '<span style="background:#616161;color:white;padding:2px 6px;border-radius:4px;font-size:11px;">💀 {}/15</span>'.format(score)
 
 
 def get_sox_data():
@@ -1805,17 +2054,44 @@ with tab6:
     st.subheader("📋 合格標的池")
     st.caption("基本面篩選器：只在通過六個條件的股票中尋找進場機會，排除基本面有問題的標的")
 
+    # 預設值，確保後面的程式不會因未定義而崩潰
+    sox = None
+    us10y = None
+    vix = None
+    twd = None
+    sp500 = None
+    twii_heat = None
+
     # ── 市場背景快照 ──
     st.markdown("### 🌐 市場背景快照")
     st.caption("進場前先看大環境，判斷這次觸發是情緒性超跌還是系統性風險。每個指標都附有解讀說明。")
 
     with st.spinner("載入市場數據中..."):
-        sox = get_sox_data()
-        us10y = get_us10y_data()
-        vix = get_vix_data()
-        twd = get_twd_data()
-        sp500 = get_sp500_data()
-        twii_heat = get_twii_heat()
+        try:
+            sox = get_sox_data()
+        except Exception as e:
+            sox = None
+            st.warning("SOX載入失敗：" + str(e))
+        try:
+            us10y = get_us10y_data()
+        except Exception as e:
+            us10y = None
+        try:
+            vix = get_vix_data()
+        except Exception as e:
+            vix = None
+        try:
+            twd = get_twd_data()
+        except Exception as e:
+            twd = None
+        try:
+            sp500 = get_sp500_data()
+        except Exception as e:
+            sp500 = None
+        try:
+            twii_heat = get_twii_heat()
+        except Exception as e:
+            twii_heat = None
 
     # ── SOX ──
     st.markdown("---")
@@ -2321,8 +2597,39 @@ with tab6:
     # 顯示合格標的池
     if 'df_pool' in st.session_state:
         df_pool = st.session_state['df_pool']
-        display_cols = ['等級', '代碼', '名稱', '產業別', '降級原因', '股價', 'PB', 'ROE%', '負債比%', 'PB/ROE',
+        display_cols = ['等級', '體質分數', '體質等級', '代碼', '名稱', '產業別', '降級原因',
+                        '股價', 'PB', 'ROE%', '負債比%', 'PB/ROE',
+                        '▶A獲利(0-5)', '▶B護城河(0-5)', '▶C安全邊際(0-5)',
                         '①5年EPS正', '②EPS成長', '③負債比<50%', '④ROE>15%', '⑤PB<3', '⑥PB/ROE<0.20']
+
+        # ── 體質評分說明 ──
+        st.markdown("### 📊 Coatue體質評分卡說明（15分制）")
+        with st.expander("📖 評分邏輯說明（點擊展開）"):
+            st.markdown("""
+| 維度 | 滿分 | 評分項目 | 滿分條件 |
+|------|------|---------|---------|
+| **A 獲利能力** | 5分 | A1近5年EPS皆正（0或2分）＋A2 ROE水準（0~3分） | EPS全正且ROE≥20% |
+| **B 商業模式護城河** | 5分 | B1近3年EPS成長（0或2分）＋B2負債比（0~3分） | EPS成長且負債比<30% |
+| **C 市值與安全邊際** | 5分 | C1 PB/ROE複合估值（0~3分）＋C2股價流動性（0~2分） | PB/ROE<0.10且股價>10 |
+
+**等級對照：**
+- ⭐⭐⭐ **核心標的**（13~15分）：Coatue最愛型，體質優秀，觸發時優先進場
+- ⭐⭐ **可觀察**（9~12分）：體質尚可，可進場但倉位控制
+- ⭐ **高風險**（5~8分）：基本面偏弱，謹慎；市場過熱時不宜進場
+- 💀 **Broken Model**（0~4分）：類Robinhood/Lemonade，跌有原因，不宜進場
+            """)
+
+        # 體質分數排行（前20名）
+        if '體質分數' in df_pool.columns:
+            df_top_quality = df_pool[df_pool['體質分數'].notna()].sort_values('體質分數', ascending=False).head(20)
+            if not df_top_quality.empty:
+                st.markdown("#### 🏅 體質分數排行（前20名）")
+                cols_rank = ['體質分數', '體質等級', '代碼', '名稱', '產業別', 'ROE%', '負債比%',
+                             '▶A獲利(0-5)', '▶B護城河(0-5)', '▶C安全邊際(0-5)']
+                available = [c for c in cols_rank if c in df_top_quality.columns]
+                show_html(df_top_quality[available].reset_index(drop=True))
+
+        st.divider()
 
         # A級
         st.markdown("### 🥇 A級標的（優先進場）")
@@ -2432,7 +2739,6 @@ with tab6:
                 st.warning("請先建立合格標的池，或此代碼不在個股範圍內")
 
 
-
 with tab1:
     threshold1 = st.slider("警示門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t1")
     st.markdown("**篩選範圍（可多選，不選代表全部）**")
@@ -2472,8 +2778,98 @@ with tab1:
         status.empty()
 
         if results:
+            # ── 加入體質分數與信號強度 ──
+            df_pool_now = st.session_state.get('df_pool', None)
+            for r in results:
+                code = r["代碼"]
+                q_score = None
+                q_grade_label = "N/A"
+                if df_pool_now is not None and not df_pool_now.empty:
+                    pool_row = df_pool_now[df_pool_now['代碼'] == code]
+                    if not pool_row.empty:
+                        q_score = pool_row.iloc[0].get('體質分數')
+                        q_grade_label = pool_row.iloc[0].get('體質等級', 'N/A')
+                r['體質分數'] = q_score if q_score is not None else "未評分"
+                r['體質等級'] = q_grade_label if q_grade_label else "未評分"
+
+                # 複合信號強度（4條件）
+                cond_met = 0
+                cond_labels = []
+
+                # 條件1：連續觸發 ≤ 3天（第1天進場歷史最佳）
+                consec = r.get("連續觸發天數", 99)
+                if consec <= 3:
+                    cond_met += 1
+                    cond_labels.append("✅連續≤3天")
+                else:
+                    cond_labels.append("❌連續>3天")
+
+                # 條件2：體質分數 ≥ 9
+                if q_score is not None and isinstance(q_score, (int, float)) and q_score >= 9:
+                    cond_met += 1
+                    cond_labels.append("✅體質≥9")
+                elif q_score is not None and isinstance(q_score, (int, float)):
+                    cond_labels.append("❌體質<9({})".format(int(q_score)))
+                else:
+                    cond_labels.append("⚠️體質未評")
+
+                # 條件3：宏觀環境（用twii_heat，若有）
+                twii_h = get_twii_heat()
+                if twii_h and twii_h["level"] <= 7:
+                    cond_met += 1
+                    cond_labels.append("✅市場≤7級")
+                elif twii_h:
+                    cond_labels.append("❌市場{}級過熱".format(twii_h["level"]))
+                else:
+                    cond_labels.append("⚠️市場未知")
+
+                # 條件4：跌幅足夠深（相對門檻額外-2%以上代表強觸發）
+                ret_val = float(str(r.get("滾動10日報酬率", "0")).replace("%", ""))
+                if ret_val <= (threshold1 - 2):
+                    cond_met += 1
+                    cond_labels.append("✅深度超跌")
+                else:
+                    cond_labels.append("❌僅觸門檻")
+
+                # 信號強度
+                if cond_met == 4:
+                    signal = "🔥 強烈信號"
+                elif cond_met == 3:
+                    signal = "✅ 有效信號"
+                elif cond_met == 2:
+                    signal = "🔶 觀察信號"
+                else:
+                    signal = "⚪ 弱信號"
+                r['信號強度'] = signal
+                r['信號條件'] = "｜".join(cond_labels)
+
             df = pd.DataFrame(results).sort_values("數值").drop(columns=["數值"])
-            st.error("⚠️ 共 " + str(len(results)) + " 檔觸發（門檻：" + str(threshold1) + "%）")
+
+            # 欄位排序，把重要欄放前面
+            col_order = ["信號強度", "體質分數", "體質等級", "產業群組", "產業別",
+                         "代碼", "名稱", "最新收盤價", "滾動10日報酬率", "連續觸發天數", "信號條件"]
+            col_order = [c for c in col_order if c in df.columns] + \
+                        [c for c in df.columns if c not in col_order]
+            df = df[col_order]
+
+            # 強烈信號優先排序
+            signal_order = {"🔥 強烈信號": 0, "✅ 有效信號": 1, "🔶 觀察信號": 2, "⚪ 弱信號": 3}
+            df["_signal_rank"] = df["信號強度"].map(signal_order).fillna(9)
+            df = df.sort_values(["_signal_rank", "連續觸發天數"]).drop(columns=["_signal_rank"])
+
+            st.error("⚠️ 共 " + str(len(df)) + " 檔觸發（門檻：" + str(threshold1) + "%）")
+
+            # 統計摘要
+            strong = len(df[df["信號強度"] == "🔥 強烈信號"])
+            valid = len(df[df["信號強度"] == "✅ 有效信號"])
+            if strong > 0:
+                st.success("🔥 強烈信號：{}檔　✅ 有效信號：{}檔　（優先關注前{}檔）".format(strong, valid, strong+valid))
+            elif valid > 0:
+                st.info("✅ 有效信號：{}檔，體質尚可且宏觀環境合理".format(valid))
+            else:
+                st.warning("本次觸發均為觀察/弱信號，請確認宏觀環境與標的體質後謹慎決策")
+
+            st.caption("💡 信號強度說明：4條件全中=🔥強烈｜3條件=✅有效｜2條件=🔶觀察｜1條件=⚪弱。「體質未評分」請先至【合格標的池】建立池子。")
             show_html(df)
             st.download_button("📥 下載CSV", df.to_csv(index=False).encode("utf-8-sig"), "alert.csv", "text/csv")
         else:
@@ -2571,6 +2967,47 @@ with tab3:
         single_code = st.text_input("輸入股票／ETF代碼", value="0050", key="single")
     with col2:
         ref_threshold = st.selectbox("年度明細與進場時機顯示門檻", [str(t) + "%" for t in THRESHOLDS], index=2, key="ref_thr")
+
+    # ── 體質快查區 ──
+    if single_code:
+        df_pool_bt = st.session_state.get('df_pool', None)
+        if df_pool_bt is not None and not df_pool_bt.empty:
+            pool_r = df_pool_bt[df_pool_bt['代碼'] == single_code.strip()]
+            if not pool_r.empty:
+                pr = pool_r.iloc[0]
+                q_total = pr.get('體質分數')
+                q_grade = pr.get('體質等級', '')
+                score_a = pr.get('▶A獲利(0-5)', '-')
+                score_b = pr.get('▶B護城河(0-5)', '-')
+                score_c = pr.get('▶C安全邊際(0-5)', '-')
+                det_a = pr.get('A細節', '')
+                det_b = pr.get('B細節', '')
+                det_c = pr.get('C細節', '')
+
+                st.markdown("#### 📊 {} 體質評分卡".format(single_code))
+                col_qa, col_qb, col_qc, col_qtotal = st.columns(4)
+                with col_qa:
+                    st.metric("A 獲利能力", "{}/5分".format(score_a))
+                    st.caption(det_a)
+                with col_qb:
+                    st.metric("B 護城河", "{}/5分".format(score_b))
+                    st.caption(det_b)
+                with col_qc:
+                    st.metric("C 安全邊際", "{}/5分".format(score_c))
+                    st.caption(det_c)
+                with col_qtotal:
+                    if q_total is not None and isinstance(q_total, (int, float)):
+                        if q_total >= 13:
+                            st.success("**總分 {}/15**\n\n{}".format(int(q_total), q_grade))
+                        elif q_total >= 9:
+                            st.warning("**總分 {}/15**\n\n{}".format(int(q_total), q_grade))
+                        else:
+                            st.error("**總分 {}/15**\n\n{}".format(int(q_total), q_grade))
+                    else:
+                        st.info("評分中...")
+                st.divider()
+            else:
+                st.info("💡 此代碼尚未在合格標的池中評分，請先至【合格標的池】建立池子以顯示體質評分。")
 
     if st.button("🔬 開始分析", type="primary", key="single_bt"):
         with st.spinner("抓取 " + single_code + " 15年資料中..."):
@@ -2694,6 +3131,132 @@ with tab3:
                 } for t in result["triggers"]])
                 show_html(df_trig)
 
+        # ── 建議持有天數 + 動態停損建議 ──
+        st.markdown("---")
+        st.markdown("### 🎯 進場品質評估與操作建議")
+
+        # 找最佳持有天數（依勝率最高且樣本≥5）
+        best_h_suggestion = None
+        best_wr_val = 0
+        best_avg_ret = 0
+        for h in HORIZONS:
+            rets_h = [x["ret"] for x in result["horizon_rets"][h]] if result else []
+            if len(rets_h) >= 5:
+                wr_h = sum(1 for r in rets_h if r > 0) / len(rets_h) * 100
+                avg_h = sum(rets_h) / len(rets_h)
+                if wr_h > best_wr_val or (wr_h == best_wr_val and avg_h > best_avg_ret):
+                    best_wr_val = wr_h
+                    best_avg_ret = avg_h
+                    best_h_suggestion = h
+
+        # 找平均最大回撤發生天數（風險管理用）
+        dd_ref = build_dd_timing_table(prices, thr_val)
+        avg_dd_day = None
+        worst_dd_val = None
+        if dd_ref is not None and best_h_suggestion:
+            row_dd = dd_ref[dd_ref['觀察天數'] == str(best_h_suggestion) + '天']
+            if not row_dd.empty:
+                try:
+                    avg_dd_day_str = str(row_dd.iloc[0].get('平均回撤發生於第幾天', ''))
+                    avg_dd_day = float(avg_dd_day_str.replace('天', '').replace('無回撤', '0'))
+                except:
+                    pass
+                try:
+                    worst_dd_val = float(str(row_dd.iloc[0].get('最深回撤%', '0')).replace('%', ''))
+                except:
+                    pass
+
+        # 宏觀環境
+        twii_now = get_twii_heat()
+        market_level = twii_now["level"] if twii_now else 6
+        market_label = twii_now["label"] if twii_now else "未知"
+
+        # 體質分數
+        df_pool_now2 = st.session_state.get('df_pool', None)
+        q_score_bt = None
+        if df_pool_now2 is not None:
+            pr2 = df_pool_now2[df_pool_now2['代碼'] == single_code.strip()]
+            if not pr2.empty:
+                q_score_bt = pr2.iloc[0].get('體質分數')
+
+        # 複合信號評估
+        entry_conds = []
+        entry_score = 0
+        if q_score_bt is not None and isinstance(q_score_bt, (int, float)):
+            if q_score_bt >= 13:
+                entry_score += 2
+                entry_conds.append("✅ 體質⭐⭐⭐ ({}/15分)，核心標的".format(int(q_score_bt)))
+            elif q_score_bt >= 9:
+                entry_score += 1
+                entry_conds.append("🟡 體質⭐⭐ ({}/15分)，可觀察".format(int(q_score_bt)))
+            else:
+                entry_conds.append("❌ 體質偏弱 ({}/15分)，需謹慎".format(int(q_score_bt)))
+        else:
+            entry_conds.append("⚠️ 體質未評分，建議先至合格標的池評估")
+
+        if market_level <= 6:
+            entry_score += 2
+            entry_conds.append("✅ 市場第{}級（{}），環境合理".format(market_level, market_label))
+        elif market_level == 7:
+            entry_score += 1
+            entry_conds.append("🟡 市場第7級（微熱），正常但勿追高")
+        elif market_level == 8:
+            entry_conds.append("❌ 市場第8級（過熱），建議提高門檻至-15%")
+        else:
+            entry_conds.append("❌ 市場第{}級（{}），建議暫停策略".format(market_level, market_label))
+
+        if best_wr_val >= 70:
+            entry_score += 2
+            entry_conds.append("✅ 最佳持有{}天勝率{:.1f}%，歷史表現優秀".format(best_h_suggestion, best_wr_val))
+        elif best_wr_val >= 55:
+            entry_score += 1
+            entry_conds.append("🟡 最佳持有{}天勝率{:.1f}%，表現尚可".format(best_h_suggestion, best_wr_val))
+        else:
+            entry_conds.append("❌ 最高勝率{:.1f}%偏低，此標的歷史反彈不穩定".format(best_wr_val))
+
+        for c in entry_conds:
+            st.markdown("　" + c)
+
+        st.markdown("")
+
+        # 綜合建議
+        if best_h_suggestion:
+            col_sug1, col_sug2 = st.columns(2)
+            with col_sug1:
+                st.markdown("**📅 建議持有天數**")
+                st.info(
+                    "最佳持有 **{}天**\n\n"
+                    "歷史勝率：**{:.1f}%**　平均報酬：**{:.2f}%**\n\n"
+                    "{}".format(
+                        best_h_suggestion, best_wr_val, best_avg_ret,
+                        "→ 建議以{}天為參考出場點，定期檢視是否提早出場".format(best_h_suggestion)
+                    )
+                )
+            with col_sug2:
+                st.markdown("**🛡️ 動態停損參考**")
+                if avg_dd_day and worst_dd_val:
+                    st.warning(
+                        "歷史最深回撤：**{:.1f}%**\n\n"
+                        "平均回撤發生於進場後第 **{:.0f}天**\n\n"
+                        "→ 進場後第{:.0f}天若仍虧損超過{:.1f}%，可評估是否停損；\n"
+                        "→ 但歷史數據顯示忍住浮虧通常報酬更佳".format(
+                            worst_dd_val, avg_dd_day, avg_dd_day, abs(worst_dd_val) * 0.8
+                        )
+                    )
+                else:
+                    st.info("停損參考數據計算中...")
+
+        if entry_score >= 5:
+            st.success("**🟢 綜合評估：進場條件充分**（得分{}）→ 可按正常倉位進場".format(entry_score))
+        elif entry_score >= 3:
+            st.success("**🟢 綜合評估：進場條件合理**（得分{}）→ 可進場，控制倉位約80%".format(entry_score))
+        elif entry_score >= 1:
+            st.warning("**🟡 綜合評估：謹慎進場**（得分{}）→ 建議減倉至50%，嚴格執行停損".format(entry_score))
+        else:
+            st.error("**🔴 綜合評估：不建議進場**（得分{}）→ 等待宏觀環境改善或標的體質提升".format(entry_score))
+
+        st.caption("*進場品質評分說明：體質⭐⭐⭐+2、⭐⭐+1、偏弱0｜市場≤6級+2、7級+1、8級0、>8級0｜勝率≥70%+2、≥55%+1｜最高6分*")
+
         # 分析建議（直接render，不存session_state）
         st.markdown("---")
         st.markdown("### 📋 回測分析建議")
@@ -2784,10 +3347,30 @@ with tab4:
                 for c, _ in ranked:
                     top_codes.add(c)
 
+            # 取得體質分數（若有df_pool）
+            df_pool_rank = st.session_state.get('df_pool', None)
+            pool_score_map = {}
+            if df_pool_rank is not None and not df_pool_rank.empty:
+                for _, pr in df_pool_rank.iterrows():
+                    c = pr.get('代碼')
+                    s = pr.get('體質分數')
+                    g = pr.get('體質等級', '')
+                    if c:
+                        pool_score_map[str(c)] = {'score': s, 'grade': g}
+
             rows = []
             for code in top_codes:
                 data = stock_results[code]
-                row = {"代碼": data["代碼"], "名稱": data["名稱"], "產業別": data["產業別"]}
+                q_info = pool_score_map.get(str(code), {})
+                q_s = q_info.get('score')
+                q_g = q_info.get('grade', '未評分')
+                row = {
+                    "代碼": data["代碼"],
+                    "名稱": data["名稱"],
+                    "產業別": data["產業別"],
+                    "體質分數": int(q_s) if q_s is not None and isinstance(q_s, (int, float)) else "未評",
+                    "體質等級": q_g,
+                }
                 for thr in THRESHOLDS:
                     wr = data.get(str(thr) + "%勝率")
                     cnt = data.get(str(thr) + "%次數", 0)
@@ -2802,7 +3385,7 @@ with tab4:
             df_combined = pd.DataFrame(rows)
             df_combined = df_combined.sort_values(
                 "-10%",
-                key=lambda col: col.map(lambda v: float(str(v).replace("%","").replace("⚠️","")) if v not in ["---"] else 0),
+                key=lambda col: col.map(lambda v: float(str(v).replace("%","").replace("⚠️","")) if v not in ["---", "未評"] else 0),
                 ascending=False
             ).reset_index(drop=True)
 
@@ -2832,7 +3415,12 @@ with tab4:
                 "橘色 ≥ 80%　淡黃色 ≥ 70%　紅色 ≥ 60%　⚠️ = 觸發次數 ≤ 5次樣本不足\n"
                 "依 -10% 門檻勝率排序｜橫向看同一檔在各門檻的表現，找在多個門檻都穩定高勝率的股票"
             )
-            show_html(df_combined.style.map(style_winrate_cell, subset=thr_cols))
+            # 體質分數欄：未評分的先顯示
+            display_rank_cols = ["代碼", "名稱", "產業別", "體質分數", "體質等級"] + thr_cols
+            display_rank_cols = [c for c in display_rank_cols if c in df_combined.columns]
+            show_html(df_combined[display_rank_cols].style.map(style_winrate_cell, subset=thr_cols))
+            if not any(isinstance(v, (int, float)) for v in df_combined.get('體質分數', [])):
+                st.caption("💡 體質分數顯示『未評』表示尚未建立合格標的池，請至【合格標的池】頁籤建立後再次查看。")
 
             # 自動分析
             st.markdown("#### 📊 自動分析")
