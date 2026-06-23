@@ -1371,22 +1371,28 @@ with tab5:
 # ==============================
 
 def get_mops_financial(year_roc, season, typek='sii'):
-    """從MOPS抓財務分析彙總表（含ROE、EPS、負債比、每股淨值）"""
+    """從MOPS抓財務分析彙總表（含ROE、EPS、負債比、每股淨值）含retry"""
     url = 'https://mops.twse.com.tw/mops/web/t51sb02'
     form_data = {
         'encodeURIComponent': 1, 'run': 'Y', 'step': 1,
         'TYPEK': typek, 'year': str(year_roc), 'season': str(season),
         'firstin': 1, 'off': 1, 'ifrs': 'Y',
     }
-    try:
-        r = requests.post(url, data=form_data, timeout=30)
-        r.encoding = 'utf8'
-        dfs = pd.read_html(r.text, header=None)
-        if len(dfs) >= 2:
-            df = pd.concat(dfs[1:], axis=0, sort=False).reset_index(drop=True)
-            return df
-    except:
-        pass
+    for attempt in range(3):
+        try:
+            r = requests.post(url, data=form_data, timeout=45,
+                              headers={"User-Agent": "Mozilla/5.0",
+                                       "Referer": "https://mops.twse.com.tw/"})
+            r.encoding = 'utf8'
+            if r.status_code == 200 and len(r.text) > 500:
+                dfs = pd.read_html(r.text, header=None)
+                if len(dfs) >= 2:
+                    df = pd.concat(dfs[1:], axis=0, sort=False).reset_index(drop=True)
+                    return df
+        except Exception:
+            pass
+        if attempt < 2:
+            time.sleep(3 + attempt * 2)  # 3秒、5秒遞增等待
     return None
 
 
@@ -1433,15 +1439,16 @@ def parse_financial_df(df):
 
 @st.cache_data(ttl=3600)
 def get_all_financial_data():
-    """抓近5年所有季度財務資料（上市+上櫃）"""
+    """抓近3年財報資料（縮短為3年，降低MOPS失敗機率）"""
     now = datetime.now()
     current_year_roc = now.year - 1911
     all_data = []
+    fail_count = 0
+    success_count = 0
 
-    for yr_offset in range(5):
+    for yr_offset in range(3):   # 縮短為3年（原5年），減少請求數量
         yr = current_year_roc - yr_offset
         for season in [4, 3, 2, 1]:
-            # 跳過未來的季度
             if yr == current_year_roc:
                 current_q = (now.month - 1) // 3 + 1
                 if season > current_q - 1:
@@ -1454,7 +1461,10 @@ def get_all_financial_data():
                     df['season'] = season
                     df['typek'] = typek
                     all_data.append(df)
-                time.sleep(0.5)
+                    success_count += 1
+                else:
+                    fail_count += 1
+                time.sleep(1)   # 加長間隔，降低被MOPS擋的機率
 
     if not all_data:
         return None
@@ -2569,15 +2579,22 @@ with tab6:
             individual_stocks = [s for s in all_stocks if s['type'] == '個股']
             st.info("取得 " + str(len(individual_stocks)) + " 檔個股")
 
-        with st.spinner("步驟2/3：從MOPS抓取近5年財報資料（上市+上櫃，需要較長時間）..."):
+        fin_data = None
+        with st.spinner("步驟2/3：從MOPS抓取近3年財報資料（需要較長時間，請耐心等候）..."):
+            st.caption("⏳ 每季間隔1秒避免被MOPS限流，共約24個請求，預計需要2~4分鐘...")
             fin_data = get_all_financial_data()
-            if fin_data is not None:
-                st.info("財報資料筆數：" + str(len(fin_data)))
-            else:
-                st.error("財報資料抓取失敗，請稍後再試")
 
-        if fin_data is not None:
-            with st.spinner("步驟3/3：套用六個條件分級..."):
+        if fin_data is None or fin_data.empty:
+            st.error(
+                "❌ 財報資料抓取失敗。可能原因：\n"
+                "1. MOPS伺服器暫時過載（最常見，稍後5~10分鐘再試）\n"
+                "2. 網路連線問題\n\n"
+                "💡 **臨時解決方案**：點「⚡ 快速查詢」可對單一股票做基本面確認；\n"
+                "或直接使用每日警示掃描，體質欄會顯示「未評分」，"
+                "手動對照個股快查補充判斷。"
+            )
+        else:
+            with st.spinner("步驟3/3：套用條件分級與體質評分..."):
                 df_pool = build_qualified_pool(all_stocks, fin_data)
 
             if df_pool is not None:
@@ -2591,7 +2608,8 @@ with tab6:
                     "🥇 A級：" + str(len(grade_a)) + "檔　"
                     "🥈 B級：" + str(len(grade_b)) + "檔　"
                     "🥉 C級：" + str(len(grade_c)) + "檔　"
-                    "❌ 排除：" + str(len(excluded)) + "檔"
+                    "❌ 排除：" + str(len(excluded)) + "檔\n\n"
+                    "✅ 體質分數已建立，現在「每日警示掃描」和「個股回測」會自動帶入評分！"
                 )
 
     # 顯示合格標的池
@@ -2740,6 +2758,20 @@ with tab6:
 
 
 with tab1:
+    # ── 體質評分狀態提示 ──
+    df_pool_exists = 'df_pool' in st.session_state and st.session_state['df_pool'] is not None
+    if df_pool_exists:
+        pool_size = len(st.session_state['df_pool'])
+        st.success("✅ 體質評分庫已載入（{}檔已評分）→ 掃描結果將自動帶入15分制體質評分".format(pool_size))
+    else:
+        st.info(
+            "💡 **體質評分尚未建立**：掃描結果的「體質分數」會顯示「未評分」。\n\n"
+            "建議先至【📋 合格標的池】頁籤點「建立/更新合格標的池」（約需3分鐘），"
+            "建立後本頁掃描會自動帶入15分制體質評分，讓你一眼區分好公司vs爛公司。\n\n"
+            "⚡ **或直接掃描**：觸發結果仍會顯示，體質欄補「未評分」，"
+            "可用下方「個股快評」補充確認。"
+        )
+
     threshold1 = st.slider("警示門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t1")
     st.markdown("**篩選範圍（可多選，不選代表全部）**")
     selected1 = group_selector("tab1")
@@ -2872,6 +2904,54 @@ with tab1:
             st.caption("💡 信號強度說明：4條件全中=🔥強烈｜3條件=✅有效｜2條件=🔶觀察｜1條件=⚪弱。「體質未評分」請先至【合格標的池】建立池子。")
             show_html(df)
             st.download_button("📥 下載CSV", df.to_csv(index=False).encode("utf-8-sig"), "alert.csv", "text/csv")
+
+            # ── 個股快評（內嵌在掃描結果下方）──
+            st.divider()
+            st.markdown("#### 🔎 個股快評（掃描後對觸發標的做基本面確認）")
+            st.caption("輸入上方觸發清單中的代碼，快速確認該股體質等級與六個條件")
+            col_qc1, col_qc2 = st.columns([1, 3])
+            with col_qc1:
+                quick_code = st.text_input("代碼", placeholder="例：2330", key="scan_quick_code")
+                quick_btn2 = st.button("⚡ 快速確認", key="scan_quick_btn")
+            with col_qc2:
+                if quick_btn2 and quick_code.strip():
+                    df_pool_check2 = st.session_state.get('df_pool', None)
+                    if df_pool_check2 is not None and not df_pool_check2.empty:
+                        row_df2 = df_pool_check2[df_pool_check2['代碼'] == quick_code.strip()]
+                        if not row_df2.empty:
+                            row2 = row_df2.iloc[0]
+                            grade2 = row2.get('等級', '')
+                            q_score2 = row2.get('體質分數')
+                            q_grade2 = row2.get('體質等級', '')
+                            sa = row2.get('▶A獲利(0-5)', '-')
+                            sb = row2.get('▶B護城河(0-5)', '-')
+                            sc = row2.get('▶C安全邊際(0-5)', '-')
+                            det_a2 = row2.get('A細節', '')
+                            det_b2 = row2.get('B細節', '')
+                            det_c2 = row2.get('C細節', '')
+
+                            if q_score2 is not None and isinstance(q_score2, (int, float)):
+                                score_int = int(q_score2)
+                                if score_int >= 13:
+                                    st.success("**{} {}**　體質 {}/15分　{}".format(
+                                        quick_code.strip(), row2.get('名稱',''), score_int, q_grade2))
+                                elif score_int >= 9:
+                                    st.warning("**{} {}**　體質 {}/15分　{}".format(
+                                        quick_code.strip(), row2.get('名稱',''), score_int, q_grade2))
+                                else:
+                                    st.error("**{} {}**　體質 {}/15分　{}".format(
+                                        quick_code.strip(), row2.get('名稱',''), score_int, q_grade2))
+                                st.caption("A獲利:{}/5　B護城河:{}/5　C安全邊際:{}/5".format(sa, sb, sc))
+                                st.caption("A：{}".format(det_a2))
+                                st.caption("B：{}".format(det_b2))
+                                st.caption("C：{}".format(det_c2))
+                                st.caption("六條件等級：{}（{}）".format(grade2, row2.get('降級原因','')))
+                            else:
+                                st.info("無評分資料")
+                        else:
+                            st.warning("此代碼不在評分庫中，請先至【合格標的池】建立評分")
+                    else:
+                        st.warning("評分庫尚未建立，請先至【合格標的池】建立")
         else:
             st.success("目前沒有標的觸發 " + str(threshold1) + "% 警示")
 
