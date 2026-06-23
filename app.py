@@ -55,7 +55,38 @@ GROUP_ICONS = {
 THRESHOLDS = [-5, -7, -10, -15, -20]
 HORIZONS = [5, 10, 20, 40, 60, 80, 100, 120, 240]
 
-# ── 啟動時自動從磁碟還原 df_pool（解決重新整理後遺失問題）──
+# ── Pool 磁碟快取：定義在最頂部，確保任何地方都能呼叫 ──
+import os as _os
+POOL_CACHE_PATH = "/tmp/tw_stock_pool_cache.parquet"
+POOL_CACHE_META = "/tmp/tw_stock_pool_cache_meta.json"
+
+def save_pool_to_disk(df_pool):
+    try:
+        df_pool.to_parquet(POOL_CACHE_PATH, index=False)
+        with open(POOL_CACHE_META, "w") as f:
+            json.dump({"saved_at": datetime.now().isoformat(), "rows": len(df_pool)}, f)
+        return True
+    except Exception:
+        return False
+
+def load_pool_from_disk():
+    try:
+        if not _os.path.exists(POOL_CACHE_PATH) or not _os.path.exists(POOL_CACHE_META):
+            return None, None
+        with open(POOL_CACHE_META) as f:
+            meta = json.load(f)
+        if (datetime.now() - datetime.fromisoformat(meta["saved_at"])).total_seconds() / 3600 > 12:
+            return None, meta
+        df = pd.read_parquet(POOL_CACHE_PATH)
+        if '代碼' in df.columns:
+            df['代碼'] = df['代碼'].astype(str).str.strip()
+        return df, meta
+    except Exception:
+        return None, None
+
+st.set_page_config(page_title="台股滾動10日跌幅系統 v13", layout="wide")
+
+# ── 啟動時自動從磁碟還原 df_pool ──
 if 'df_pool' not in st.session_state or st.session_state['df_pool'] is None:
     _cached_pool, _cached_meta = load_pool_from_disk()
     if _cached_pool is not None:
@@ -65,8 +96,6 @@ if 'df_pool' not in st.session_state or st.session_state['df_pool'] is None:
     else:
         st.session_state['df_pool'] = None
         st.session_state['pool_loaded_from_disk'] = False
-
-st.set_page_config(page_title="台股滾動10日跌幅系統 v13", layout="wide")
 st.title("📉 台股滾動10日跌幅系統 v13")
 st.caption(
     "資料來源：Yahoo Finance 還原後股價 | 回測年限：最長15年 | "
@@ -1872,40 +1901,6 @@ def calc_quality_score(code, all_stocks_dict, fin_data, bvps_map, price_map,
         "price": price,
     }
 
-
-POOL_CACHE_PATH = "/tmp/tw_stock_pool_cache.parquet"
-POOL_CACHE_META  = "/tmp/tw_stock_pool_cache_meta.json"
-
-def save_pool_to_disk(df_pool):
-    """把 df_pool 序列化到本地，避免 session 重設後消失"""
-    try:
-        df_pool.to_parquet(POOL_CACHE_PATH, index=False)
-        meta = {"saved_at": datetime.now().isoformat(), "rows": len(df_pool)}
-        with open(POOL_CACHE_META, "w") as f:
-            json.dump(meta, f)
-        return True
-    except Exception:
-        return False
-
-def load_pool_from_disk():
-    """從本地讀取 df_pool，若快取過期（>12小時）回傳 None"""
-    try:
-        import os
-        if not os.path.exists(POOL_CACHE_PATH) or not os.path.exists(POOL_CACHE_META):
-            return None, None
-        with open(POOL_CACHE_META) as f:
-            meta = json.load(f)
-        saved_at = datetime.fromisoformat(meta["saved_at"])
-        age_hours = (datetime.now() - saved_at).total_seconds() / 3600
-        if age_hours > 12:
-            return None, meta  # 過期，提示更新
-        df = pd.read_parquet(POOL_CACHE_PATH)
-        # 確保代碼欄為 string
-        if '代碼' in df.columns:
-            df['代碼'] = df['代碼'].astype(str).str.strip()
-        return df, meta
-    except Exception:
-        return None, None
 
 @st.cache_data(ttl=3600)
 def get_quality_scores_cached():
