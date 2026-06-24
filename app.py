@@ -3649,6 +3649,8 @@ with tab3:
         show_html(df_win.style.map(color_winrate, subset=win_cols))
 
         st.markdown("### 表B：平均單次報酬%（各門檻 × 觀察天數）")
+        st.caption("📐 **計算方式（按股數進場）**：各筆報酬率 = (出場價 - 進場價) / 進場價 × 100；平均報酬 = Σ報酬率 / 筆數。"
+                   "　⚠️ 此為「各筆獨立報酬率算術平均」，假設每筆進場股數相同（非等金額）。等金額進場者，各筆權重因股價不同而略有差異。")
         show_html(heatmap_positive(df_avg, avg_cols))
 
         cum_rows = []
@@ -3672,11 +3674,33 @@ with tab3:
                         row[str(h) + "天累積%"] = "---"
             cum_rows.append(row)
 
-        st.markdown("### 表C：實際累積損益%（等量進場，各筆出場總額減進場總額）")
-        st.caption("計算方式：Σ(出場價) - Σ(進場價) / Σ(進場價)。反映每次觸發都等量參與的真實整體報酬。")
+        st.markdown("### 表C：實際累積損益%（按股價進場）")
+        st.caption("📐 **計算方式（按股價進場／每次買相同股數）**：把所有觸發的進場價加總、出場價加總，再計算整體損益。"
+                   "　例：進場100+50+200=350元，出場110+55+180=345元，累積損益=(345-350)/350=-1.4%。"
+                   "　反映「每次觸發買進相同股數」的整體真實報酬，高價股的影響權重較大。")
         df_cum = pd.DataFrame(cum_rows)
         cum_cols = [str(h) + "天累積%" for h in HORIZONS]
         show_html(heatmap_positive(df_cum, cum_cols))
+
+        # ── 表D：等金額累積損益 ──
+        eq_rows = []
+        for thr in THRESHOLDS:
+            result_d = run_full_backtest(prices, thr)
+            row = {"觸發門檻": str(thr) + "%", "樣本數": 0 if result_d is None else result_d["total"]}
+            for h in HORIZONS:
+                if result_d is None:
+                    row[str(h) + "天累積%"] = "---"
+                else:
+                    rets = [x["ret"] for x in result_d["horizon_rets"][h]]
+                    row[str(h) + "天累積%"] = fmt(round(sum(rets), 2)) if rets else "---"
+            eq_rows.append(row)
+
+        st.markdown("### 表D：等金額累積損益%（每次投入相同金額）")
+        st.caption("📐 **計算方式（等金額進場／每次投入固定金額如10萬）**：直接將各筆報酬率加總。"
+                   "　例：+10%、+10%、-10% → 累積=+10%，意義為「以單次投入金額為基準，15年累積多賺了幾個投入金額的%」。"
+                   "　與表C的差異：本表不受股價高低影響，每次觸發權重相同。")
+        df_eq = pd.DataFrame(eq_rows)
+        show_html(heatmap_positive(df_eq, cum_cols))
 
         st.markdown("### 表D：進場時機比較（門檻 " + ref_threshold_display + "）")
         horizon_choice = st.selectbox("選擇觀察天數", [str(h) + "天" for h in HORIZONS], index=4, key="timing_horizon")
