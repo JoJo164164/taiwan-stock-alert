@@ -3740,25 +3740,52 @@ with tab3:
         df_eq = pd.DataFrame(eq_rows)
         show_html(heatmap_positive(df_eq, cum_cols))
 
-        st.markdown("### 表D：進場時機比較（門檻 " + ref_threshold_display + "）")
-        horizon_choice = st.selectbox("選擇觀察天數", [str(h) + "天" for h in HORIZONS], index=4, key="timing_horizon")
-        h_timing = int(horizon_choice.replace("天", ""))
-        df_timing = build_entry_timing_table(prices, thr_val, h_timing)
-        if df_timing is not None:
-            # 移除「累積報酬%」欄，只留勝率與平均報酬
-            drop_cols = [c for c in ["累積報酬%"] if c in df_timing.columns]
-            df_timing_show = df_timing.drop(columns=drop_cols) if drop_cols else df_timing
-            ret_cols_t = ["平均報酬%"]
-            styled_t = heatmap_positive(df_timing_show, ret_cols_t)
-            styled_t = styled_t.map(color_winrate, subset=["勝率"])
-            show_html(styled_t)
-            st.caption("連續第1天：首次觸發當天進｜連續第2天：等跌第2天再進｜連續第3天以後：等更深跌｜連續結束翌日：止跌後才進")
-        else:
-            st.warning("此門檻無觸發紀錄")
+        st.markdown("### 表E：進場時機完整比較（門檻 " + ref_threshold_display + "）")
+        st.caption("連續第1天：首次觸發當天進｜連續第2天：等跌第2天再進｜連續第3天以後：等更深跌｜連續結束翌日：止跌後才進")
 
-        st.markdown("### 表E：最大回撤分析（門檻 " + ref_threshold_display + "）")
+        # 建立全觀察天數對照表（行=進場時機，列=觀察天數）
+        timing_groups = ["連續第1天進場", "連續第2天進場", "連續第3天以後進場", "連續結束翌日進場"]
+        timing_short  = ["第1天進", "第2天進", "第3天+進", "止跌後進"]
+        timing_matrix_wr  = {"進場時機": timing_short}
+        timing_matrix_ret = {"進場時機": timing_short}
+
+        for h in HORIZONS:
+            df_t = build_entry_timing_table(prices, thr_val, h)
+            wr_col  = []
+            ret_col = []
+            for g in timing_groups:
+                if df_t is not None and g in df_t["進場時機"].values:
+                    row_t = df_t[df_t["進場時機"] == g].iloc[0]
+                    n = int(row_t.get("樣本數", 0))
+                    flag = "⚠️" if n < 5 else ""
+                    wr_col.append(str(row_t.get("勝率","---")) + flag)
+                    ret_col.append(str(row_t.get("平均報酬%","---")) + flag)
+                else:
+                    wr_col.append("---")
+                    ret_col.append("---")
+            timing_matrix_wr[str(h)  + "天"] = wr_col
+            timing_matrix_ret[str(h) + "天"] = ret_col
+
+        df_tw = pd.DataFrame(timing_matrix_wr)
+        df_tr = pd.DataFrame(timing_matrix_ret)
+        h_cols = [str(h) + "天" for h in HORIZONS]
+
+        st.markdown("**勝率對照**")
+        show_html(df_tw.style.map(color_winrate, subset=h_cols))
+        st.markdown("**平均報酬%對照**")
+        show_html(heatmap_positive(df_tr, h_cols))
+        st.caption("⚠️ = 樣本數 < 5筆，數字僅供參考")
+
+        st.markdown("### 表F：最大回撤分析（門檻 " + ref_threshold_display + "）")
+        st.caption("意義：進場後股價會先跌到低點再反彈。「平均回撤發生於第幾天」= 最低點平均在進場後第幾天出現，代表你需要撐過這段浮虧期。")
         df_dd_enhanced = build_dd_timing_table(prices, thr_val)
         if df_dd_enhanced is not None:
+            # 去掉小數位
+            if "平均回撤發生於第幾天" in df_dd_enhanced.columns:
+                df_dd_enhanced["平均回撤發生於第幾天"] = df_dd_enhanced["平均回撤發生於第幾天"].apply(
+                    lambda x: str(int(float(str(x).replace("天","").replace("無回撤","0")))) + "天"
+                    if str(x) not in ["待觀察","---","無回撤"] else x
+                )
             show_html(df_dd_enhanced.style.map(color_dd, subset=["平均最大回撤%", "最深回撤%"]))
 
         st.info(
