@@ -1169,16 +1169,32 @@ def get_all_tw_stocks():
 def group_selector(key_prefix):
     groups = list(INDUSTRY_GROUP.keys())
     selected = []
+
+    # 全選 checkbox：用 on_change callback 同步所有子 checkbox
+    all_key = key_prefix + "_all"
+    if all_key not in st.session_state:
+        st.session_state[all_key] = False
+
+    def on_select_all():
+        val = st.session_state[all_key]
+        for g in groups:
+            st.session_state[key_prefix + "_" + g] = val
+
     col_all, _ = st.columns([1, 5])
     with col_all:
-        select_all = st.checkbox("✅ 全選", key=key_prefix + "_all")
+        st.checkbox("✅ 全選", key=all_key, on_change=on_select_all)
+
     cols = st.columns(6)
     for i, g in enumerate(groups):
         icon = GROUP_ICONS.get(g, "")
+        gkey = key_prefix + "_" + g
+        if gkey not in st.session_state:
+            st.session_state[gkey] = False
         with cols[i % 6]:
-            checked = st.checkbox(icon + " " + g, key=key_prefix + "_" + g, value=select_all)
+            checked = st.checkbox(icon + " " + g, key=gkey)
             if checked:
                 selected.append(g)
+
     return selected
 
 
@@ -2767,7 +2783,12 @@ with tab6:
             "stock_grades.csv", "text/csv"
         )
 
-
+    else:
+        st.info(
+            "📋 尚未建立合格標的池\n\n"
+            "請點上方「🔄 建立/更新合格標的池」按鈕，約需 3～5 分鐘。\n\n"
+            "建立後頁面會自動顯示 A/B/C 級標的與 15 分制體質評分。"
+        )
 
     st.divider()
 
