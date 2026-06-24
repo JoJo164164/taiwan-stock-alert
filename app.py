@@ -552,6 +552,44 @@ def build_yearly_table(prices_dict, threshold):
     return pd.DataFrame(rows), result
 
 
+def build_yearly_cumulative_table(prices_dict, threshold):
+    """年度實際累積損益%（按股價進場）：Σ(出場價-進場價)/Σ進場價 × 100，依年度分組"""
+    result = run_full_backtest(prices_dict, threshold)
+    if not result:
+        return None
+
+    rows = []
+    for year in sorted(result["yearly"].keys()):
+        row = {"年度": year,
+               "觸發次數": len(result["yearly"][year]["trigger_dates"]),
+               "最長連續觸發": result["yearly"][year]["max_consec"]}
+        for h in HORIZONS:
+            items = [x for x in result["horizon_rets"][h] if x["year"] == year]
+            if items:
+                total_entry  = sum(x["entry_price"]  for x in items)
+                total_future = sum(x["future_price"] for x in items)
+                cum = (total_future - total_entry) / total_entry * 100 if total_entry > 0 else None
+                row[str(h) + "天累積%"] = fmt(round(cum, 2)) if cum is not None else "---"
+            else:
+                row[str(h) + "天累積%"] = "待觀察"
+        rows.append(row)
+
+    # 合計列
+    total_row = {"年度": "合計", "觸發次數": result["total"],
+                 "最長連續觸發": result["max_consecutive"]}
+    for h in HORIZONS:
+        items = result["horizon_rets"][h]
+        if items:
+            total_entry  = sum(x["entry_price"]  for x in items)
+            total_future = sum(x["future_price"] for x in items)
+            cum = (total_future - total_entry) / total_entry * 100 if total_entry > 0 else None
+            total_row[str(h) + "天累積%"] = fmt(round(cum, 2)) if cum is not None else "---"
+        else:
+            total_row[str(h) + "天累積%"] = "---"
+    rows.append(total_row)
+    return pd.DataFrame(rows)
+
+
 def build_entry_timing_table(prices_dict, threshold, horizon):
     rolling = calc_all_rolling_returns(prices_dict)
     if not rolling:
@@ -3730,9 +3768,17 @@ with tab3:
 
         df_yearly, result = build_yearly_table(prices, thr_val)
         if df_yearly is not None:
-            st.markdown("### 年度明細（門檻 " + ref_threshold_display + "）")
+            st.markdown("### 年度明細 A：每年平均單次報酬%（門檻 " + ref_threshold_display + "）")
+            st.caption("📐 每年各筆報酬率算術平均。假設每次買相同股數或等金額，兩者結果相同。")
             yr_cols = [str(h) + "天平均%" for h in HORIZONS]
             show_html(heatmap_positive(df_yearly, yr_cols))
+
+            df_yearly_cum = build_yearly_cumulative_table(prices, thr_val)
+            if df_yearly_cum is not None:
+                st.markdown("### 年度明細 B：每年實際累積損益%（門檻 " + ref_threshold_display + "，按股價進場）")
+                st.caption("📐 每年 Σ(出場價-進場價)/Σ進場價 × 100。假設每次買相同股數（1張），高價股權重較大。")
+                yr_cum_cols = [str(h) + "天累積%" for h in HORIZONS]
+                show_html(heatmap_positive(df_yearly_cum, yr_cum_cols))
 
         st.markdown("### 連續觸發分析（門檻 " + ref_threshold_display + "）")
         horizon_consec = st.selectbox("選擇觀察天數", [str(h) + "天" for h in HORIZONS], index=4, key="consec_horizon")
@@ -3786,8 +3832,12 @@ with tab3:
         best_h_suggestion = None
         best_wr_val = 0
         best_avg_ret = 0
+        best_cum_ret_c = None   # 表C：按股價進場累積損益
+        best_cum_ret_d = None   # 表D：等金額累積損益
+
         for h in HORIZONS:
-            rets_h = [x["ret"] for x in result["horizon_rets"][h]] if result else []
+            items_h = result["horizon_rets"][h] if result else []
+            rets_h = [x["ret"] for x in items_h]
             if len(rets_h) >= 5:
                 wr_h = sum(1 for r in rets_h if r > 0) / len(rets_h) * 100
                 avg_h = sum(rets_h) / len(rets_h)
@@ -3795,6 +3845,12 @@ with tab3:
                     best_wr_val = wr_h
                     best_avg_ret = avg_h
                     best_h_suggestion = h
+                    # 表C：按股價進場
+                    total_entry  = sum(x["entry_price"]  for x in items_h)
+                    total_future = sum(x["future_price"] for x in items_h)
+                    best_cum_ret_c = round((total_future - total_entry) / total_entry * 100, 2) if total_entry > 0 else None
+                    # 表D：等金額
+                    best_cum_ret_d = round(sum(rets_h), 2)
 
         # 找平均最大回撤發生天數（風險管理用）
         dd_ref = build_dd_timing_table(prices, thr_val)
@@ -3818,13 +3874,31 @@ with tab3:
         market_level = twii_now["level"] if twii_now else 6
         market_label = twii_now["label"] if twii_now else "未知"
 
-        # 體質分數
-        df_pool_now2 = st.session_state.get('df_pool', None)
+        # 體質分數：優先從 pool 取，fallback 用即時 yfinance 評分
         q_score_bt = None
-        if df_pool_now2 is not None:
+        df_pool_now2 = st.session_state.get('df_pool', None)
+        if df_pool_now2 is not None and not df_pool_now2.empty:
+            df_pool_now2['代碼'] = df_pool_now2['代碼'].astype(str).str.strip()
             pr2 = df_pool_now2[df_pool_now2['代碼'] == single_code.strip()]
             if not pr2.empty:
                 q_score_bt = pr2.iloc[0].get('體質分數')
+
+        # 若 pool 沒有，用即時 yfinance 計算
+        if q_score_bt is None or not isinstance(q_score_bt, (int, float)):
+            try:
+                fin_bt = get_fin_data_yfinance(single_code.strip())
+                eps_h = fin_bt.get('eps_history', {})
+                valid_yrs_bt = sorted([y for y in eps_h if eps_h[y] is not None], reverse=True)
+                q_instant = calc_quality_score_v2(
+                    single_code.strip(), {'type': '個股'},
+                    fin_bt.get('roe'), fin_bt.get('debt_ratio'),
+                    fin_bt.get('bvps'), fin_bt.get('price'), fin_bt.get('pb'),
+                    eps_h, valid_yrs_bt
+                )
+                if q_instant:
+                    q_score_bt = q_instant['total']
+            except Exception:
+                pass
 
         # 複合信號評估
         entry_conds = []
@@ -3839,7 +3913,7 @@ with tab3:
             else:
                 entry_conds.append("❌ 體質偏弱 ({}/15分)，需謹慎".format(int(q_score_bt)))
         else:
-            entry_conds.append("⚠️ 體質未評分，建議先至合格標的池評估")
+            entry_conds.append("⚠️ 體質資料不足，無法評分")
 
         if market_level <= 6:
             entry_score += 2
@@ -3861,6 +3935,65 @@ with tab3:
         else:
             entry_conds.append("❌ 最高勝率{:.1f}%偏低，此標的歷史反彈不穩定".format(best_wr_val))
 
+        # ── 建議觸發門檻（加入次優選項與樣本說明）──
+        def get_thr_label(n):
+            if n >= 30:   return "✅ 統計可靠（≥30筆）"
+            elif n >= 15: return "🟡 尚可參考（15-29筆）"
+            elif n >= 5:  return "🟠 樣本偏少（5-14筆）"
+            else:         return "❌ 不具統計意義（<5筆）"
+
+        thr_ranking = []
+        for _, row in df_win.iterrows():
+            thr_s = row["觸發門檻"]
+            samples = int(row.get("樣本數", 0))
+            try:
+                wr_v = float(str(row.get("100天勝率","0%")).replace("%",""))
+                avg_arr = df_avg[df_avg["觸發門檻"] == thr_s]["100天平均報酬%"].values
+                avg_v = float(str(avg_arr[0]).replace("%","")) if len(avg_arr) > 0 and str(avg_arr[0]) not in ["待觀察","---"] else 0
+                # 評分：樣本不足大幅扣分
+                reliability = 1.0 if samples >= 30 else (0.8 if samples >= 15 else (0.5 if samples >= 5 else 0.0))
+                score_t = (wr_v * 0.6 + avg_v * 0.4) * reliability
+                thr_ranking.append((thr_s, samples, wr_v, avg_v, score_t, get_thr_label(samples)))
+            except Exception:
+                pass
+
+        thr_ranking.sort(key=lambda x: x[4], reverse=True)
+        valid_thrs = [t for t in thr_ranking if t[1] >= 5]
+
+        if valid_thrs:
+            first  = valid_thrs[0]
+            second = valid_thrs[1] if len(valid_thrs) > 1 else None
+            skipped = [t for t in thr_ranking if t[1] < 5 and t[2] > first[2]]
+
+            st.markdown("**📌 建議觸發門檻**")
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                st.success(
+                    "🥇 **首選　{}**\n\n"
+                    "觸發次數：**{}筆**　{}\n\n"
+                    "100天勝率：**{:.1f}%**　平均報酬：**{:.1f}%**".format(
+                        first[0], first[1], first[5], first[2], first[3]))
+            with col_t2:
+                if second:
+                    st.info(
+                        "🥈 **次選　{}**\n\n"
+                        "觸發次數：**{}筆**　{}\n\n"
+                        "100天勝率：**{:.1f}%**　平均報酬：**{:.1f}%**".format(
+                            second[0], second[1], second[5], second[2], second[3]))
+                    if second[2] > first[2]:
+                        st.caption("次選勝率較高（{:.1f}% vs {:.1f}%），但觸發機會較少（{}筆 vs {}筆）".format(
+                            second[2], first[2], second[1], first[1]))
+                else:
+                    st.info("無次選門檻（其餘樣本數不足5筆）")
+
+            if skipped:
+                for sk in skipped:
+                    st.caption("⚠️ {} 理論勝率{:.1f}%最高，但僅{}筆（<5筆不具統計意義），不採用".format(
+                        sk[0], sk[2], sk[1]))
+
+            st.caption("樣本標準：≥30筆可靠　｜　15-29筆尚可　｜　5-14筆偏少　｜　<5筆不採用")
+            st.markdown("")
+
         for c in entry_conds:
             st.markdown("　" + c)
 
@@ -3871,12 +4004,17 @@ with tab3:
             col_sug1, col_sug2 = st.columns(2)
             with col_sug1:
                 st.markdown("**📅 建議持有天數**")
+                cum_c_str = "{:.2f}%".format(best_cum_ret_c) if best_cum_ret_c is not None else "—"
+                cum_d_str = "{:.2f}%".format(best_cum_ret_d) if best_cum_ret_d is not None else "—"
                 st.info(
                     "最佳持有 **{}天**\n\n"
-                    "歷史勝率：**{:.1f}%**　平均報酬：**{:.2f}%**\n\n"
-                    "{}".format(
+                    "歷史勝率：**{:.1f}%**\n\n"
+                    "表B 平均單次報酬：**{:.2f}%**（等金額或等股數皆適用）\n\n"
+                    "表C 累積損益：**{}**（按股價，等股數進場）\n\n"
+                    "表D 累積損益：**{}**（等金額進場）\n\n"
+                    "→ 建議以{}天為參考出場點，定期檢視是否提早出場".format(
                         best_h_suggestion, best_wr_val, best_avg_ret,
-                        "→ 建議以{}天為參考出場點，定期檢視是否提早出場".format(best_h_suggestion)
+                        cum_c_str, cum_d_str, best_h_suggestion
                     )
                 )
             with col_sug2:
