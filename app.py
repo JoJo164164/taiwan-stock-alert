@@ -158,91 +158,79 @@ def classify_code(code):
 
 def get_yahoo_history(code, days=60):
     """
-    從Yahoo Finance抓台股歷史資料。
-    三種失敗情境明確分類：404=代碼不存在/下市、timeout=網路問題、其他=格式異常。
-    全部回傳空dict，呼叫端用 `if not prices` 判斷即可。
+    抓台股歷史股價（adjclose）。
+    使用 yfinance 繞過境外IP的403封鎖。
+    回傳 {日期字串: 收盤價} dict，失敗回傳 {}。
     """
-    end = datetime.today()
-    start = end - timedelta(days=days)
-    url = ("https://query1.finance.yahoo.com/v8/finance/chart/" + code + ".TW"
-           + "?interval=1d&period1=" + str(int(start.timestamp()))
-           + "&period2=" + str(int(end.timestamp())))
-    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code == 404:
-            return {}   # 代碼不存在或已下市
-        data = res.json()
-        chart_result = data.get("chart", {}).get("result")
-        if not chart_result:
-            return {}   # Yahoo 暫無資料
-        result = chart_result[0]
-        timestamps = result.get("timestamp", [])
-        adjclose = result["indicators"].get("adjclose")
-        if adjclose and len(adjclose) > 0 and adjclose[0].get("adjclose"):
-            closes = adjclose[0]["adjclose"]
-        else:
-            closes = result["indicators"]["quote"][0].get("close", [])
+        import yfinance as yf
+        ticker = yf.Ticker(code + ".TW")
+        end = datetime.today()
+        start = end - timedelta(days=days + 10)
+        df = ticker.history(start=start.strftime("%Y-%m-%d"),
+                            end=end.strftime("%Y-%m-%d"),
+                            auto_adjust=True)
+        if df is None or df.empty:
+            return {}
         prices = {}
-        for ts, cl in zip(timestamps, closes):
-            if cl is not None and cl > 0:
-                date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
-                prices[date] = round(cl, 2)
+        for idx, row in df.iterrows():
+            date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, 'strftime') else str(idx)[:10]
+            close = row.get('Close')
+            if close is not None and close > 0:
+                prices[date_str] = round(float(close), 2)
         return prices
-    except requests.Timeout:
-        return {}
     except Exception:
         return {}
 
 
 def get_yahoo_history_us(code, days=365):
-    """抓美國指數/ETF歷史資料（不加.TW後綴），用於SOX、TNX、VIX等"""
-    end = datetime.today()
-    start = end - timedelta(days=days)
-    url = ("https://query1.finance.yahoo.com/v8/finance/chart/" + code
-           + "?interval=1d&period1=" + str(int(start.timestamp()))
-           + "&period2=" + str(int(end.timestamp())))
-    headers = {"User-Agent": "Mozilla/5.0"}
+    """
+    抓美國指數/ETF歷史資料（SOX、TNX、VIX等，不加.TW後綴）。
+    使用 yfinance。
+    """
     try:
-        res = requests.get(url, headers=headers, timeout=10)
-        data = res.json()
-        result = data["chart"]["result"][0]
-        timestamps = result["timestamp"]
-        closes = result["indicators"]["quote"][0]["close"]
+        import yfinance as yf
+        ticker = yf.Ticker(code)
+        end = datetime.today()
+        start = end - timedelta(days=days + 10)
+        df = ticker.history(start=start.strftime("%Y-%m-%d"),
+                            end=end.strftime("%Y-%m-%d"),
+                            auto_adjust=True)
+        if df is None or df.empty:
+            return {}
         prices = {}
-        for ts, cl in zip(timestamps, closes):
-            if cl is not None:
-                date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
-                prices[date] = round(cl, 2)
+        for idx, row in df.iterrows():
+            date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, 'strftime') else str(idx)[:10]
+            close = row.get('Close')
+            if close is not None:
+                prices[date_str] = round(float(close), 2)
         return prices
-    except:
+    except Exception:
         return {}
 
 
 def get_yahoo_history_15y(code):
-    end = datetime.today()
-    start = end - timedelta(days=365 * 15 + 30)
-    url = ("https://query1.finance.yahoo.com/v8/finance/chart/" + code + ".TW"
-           + "?interval=1d&period1=" + str(int(start.timestamp()))
-           + "&period2=" + str(int(end.timestamp())))
-    headers = {"User-Agent": "Mozilla/5.0"}
+    """
+    抓台股最長15年歷史股價（用於回測）。
+    使用 yfinance，period='max' 自動取最長可用資料。
+    """
     try:
-        res = requests.get(url, headers=headers, timeout=15)
-        data = res.json()
-        result = data["chart"]["result"][0]
-        timestamps = result["timestamp"]
-        adjclose = result["indicators"].get("adjclose")
-        if adjclose and len(adjclose) > 0 and adjclose[0].get("adjclose"):
-            closes = adjclose[0]["adjclose"]
-        else:
-            closes = result["indicators"]["quote"][0]["close"]
+        import yfinance as yf
+        ticker = yf.Ticker(code + ".TW")
+        df = ticker.history(period="max", auto_adjust=True)
+        if df is None or df.empty:
+            return {}
         prices = {}
-        for ts, cl in zip(timestamps, closes):
-            if cl is not None:
-                date = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
-                prices[date] = round(cl, 2)
+        cutoff = (datetime.today() - timedelta(days=365 * 15 + 30)).strftime("%Y-%m-%d")
+        for idx, row in df.iterrows():
+            date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, 'strftime') else str(idx)[:10]
+            if date_str < cutoff:
+                continue
+            close = row.get('Close')
+            if close is not None and close > 0:
+                prices[date_str] = round(float(close), 2)
         return prices
-    except:
+    except Exception:
         return {}
 
 
@@ -1060,122 +1048,179 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
 
 @st.cache_data(ttl=86400)
 def get_industry_lookup():
+    """
+    取得台股代碼→產業別 lookup dict。
+    優先嘗試 TWSE/TPEX API；境外IP失敗時回傳內建常用對照表。
+    產業別會在 get_fin_data_yfinance 裡被 yfinance 的 sector/industry 補充。
+    """
     lookup = {}
-    # 來源1：TWSE companyInfo（上市，含產業別）
+
+    # 嘗試 TWSE companyInfo
     try:
         res = requests.get("https://openapi.twse.com.tw/v1/company/companyInfo",
-                          timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+                          timeout=8, headers={"User-Agent": "Mozilla/5.0"})
         if res.status_code == 200:
             for d in res.json():
                 code = d.get("公司代號", "").strip()
                 industry = d.get("產業別", "").strip()
                 if code and industry:
                     lookup[code] = industry
-    except:
+    except Exception:
         pass
 
-    # 來源2：TWSE 上市公司基本資料（另一個endpoint，有產業類別）
-    try:
-        res = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
-                          timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-        if res.status_code == 200:
-            for d in res.json():
-                code = d.get("Code", "").strip()
-                # STOCK_DAY_ALL沒有產業別，跳過
-    except:
-        pass
-
-    # 來源3：TPEX上櫃公司基本資料（有產業類別）
+    # 嘗試 TPEX
     try:
         res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes",
-                          timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+                          timeout=8, headers={"User-Agent": "Mozilla/5.0"})
         if res.status_code == 200:
             for d in res.json():
                 code = d.get("SecuritiesCompanyCode", "").strip()
-                industry = d.get("Industry", "").strip()
-                if not industry:
-                    industry = d.get("IndustryName", "").strip()
+                industry = (d.get("Industry","") or d.get("IndustryName","")).strip()
                 if code and industry and code not in lookup:
                     lookup[code] = industry
-    except:
+    except Exception:
         pass
 
-    # 來源4：TWSE 個股基本資料（備用，有產業別）
-    try:
-        res = requests.get("https://openapi.twse.com.tw/v1/company/basic",
-                          timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-        if res.status_code == 200:
-            for d in res.json():
-                code = d.get("公司代號", "").strip()
-                industry = d.get("產業別", "").strip()
-                if code and industry and code not in lookup:
-                    lookup[code] = industry
-    except:
-        pass
-
+    # 若 API 全失敗，使用內建對照表（主要大型股）
+    if not lookup:
+        lookup = {
+            "2330":"半導體","2317":"電子零組件","2454":"半導體","2308":"電子零組件",
+            "2382":"電腦與週邊","2395":"電腦與週邊","3008":"光電與通信","2357":"電腦與週邊",
+            "2412":"光電與通信","2882":"金融保險","2881":"金融保險","2886":"金融保險",
+            "2884":"金融保險","2885":"金融保險","2891":"金融保險","2892":"金融保險",
+            "2880":"金融保險","2887":"金融保險","2888":"金融保險","5880":"金融保險",
+            "1301":"塑膠","1303":"塑膠","1326":"塑膠","6505":"能源","2002":"鋼鐵",
+            "1216":"食品","2207":"汽車","1101":"水泥","1102":"水泥",
+            "2303":"半導體","2311":"電子零組件","2344":"半導體","2379":"半導體",
+            "2409":"光電與通信","3034":"半導體","3037":"電子零組件","4938":"電子零組件",
+            "2603":"航運","2609":"航運","2615":"航運","2618":"航運",
+            "0050":"被動ETF","0056":"被動ETF","00878":"被動ETF","00919":"被動ETF",
+            "00929":"被動ETF","006208":"被動ETF","6669":"電腦與週邊",
+            "5871":"金融保險","3661":"半導體","5269":"半導體",
+        }
     return lookup
 
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=3600)
 def get_all_tw_stocks():
+    """
+    取得台股全市場股票清單。
+    優先嘗試 TWSE/TPEX openapi；失敗時（境外IP 403）改用 yfinance 取得清單。
+    最後備援：內建常見台股代碼清單。
+    """
+    import yfinance as yf
     stocks = []
     industry_lookup = get_industry_lookup()
 
-    # TWSE API with retry (偶發性503/空白回應，retry最多3次)
-    twse_urls = [
-        "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
-        "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
-        "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+    # ── 方法1：TWSE openapi（本地環境可用，境外通常403）──
+    try:
+        res = requests.get(
+            "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+            timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        if res.status_code == 200 and len(res.text) > 100:
+            for d in res.json():
+                code = d.get("Code", "").strip()
+                name = d.get("Name", "").strip()
+                if not code: continue
+                t = classify_code(code)
+                industry = industry_lookup.get(code, "")
+                group = get_industry_group(industry, t)
+                stocks.append({"code": code, "name": name, "market": "上市",
+                                "type": t, "industry": industry, "group": group})
+    except Exception:
+        pass
+
+    # ── 方法2：TPEX openapi ──
+    try:
+        res = requests.get(
+            "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes",
+            timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        if res.status_code == 200 and len(res.text) > 100:
+            for d in res.json():
+                code = d.get("SecuritiesCompanyCode", "").strip()
+                name = d.get("CompanyName", "").strip()
+                if not code: continue
+                t = classify_code(code)
+                industry = (d.get("Industry","") or d.get("IndustryName","") or
+                            industry_lookup.get(code,"")).strip()
+                group = get_industry_group(industry, t)
+                stocks.append({"code": code, "name": name, "market": "上櫃",
+                                "type": t, "industry": industry, "group": group})
+    except Exception:
+        pass
+
+    # ── 方法3：若以上都失敗，用內建台股主要代碼清單 ──
+    if not stocks:
+        _BUILTIN_STOCKS = _get_builtin_stock_list()
+        for code, name, market in _BUILTIN_STOCKS:
+            t = classify_code(code)
+            industry = industry_lookup.get(code, "")
+            group = get_industry_group(industry, t)
+            stocks.append({"code": code, "name": name, "market": market,
+                            "type": t, "industry": industry, "group": group})
+
+    # 去重（以代碼為主）
+    seen = set()
+    unique = []
+    for s in stocks:
+        if s['code'] not in seen:
+            seen.add(s['code'])
+            unique.append(s)
+    return unique
+
+
+def _get_builtin_stock_list():
+    """
+    內建台股代碼清單（覆蓋上市+上櫃主要個股與ETF）。
+    代碼來源：台灣證交所公開資料，每年人工更新一次。
+    格式：(代碼, 名稱, 市場)
+    """
+    # 主要上市個股（半導體、電子、金融、傳產等）
+    listed = [
+        ("2330","台積電","上市"),("2317","鴻海","上市"),("2454","聯發科","上市"),
+        ("2308","台達電","上市"),("2382","廣達","上市"),("2395","研華","上市"),
+        ("3008","大立光","上市"),("2357","華碩","上市"),("2376","技嘉","上市"),
+        ("2412","中華電","上市"),("2882","國泰金","上市"),("2881","富邦金","上市"),
+        ("2886","兆豐金","上市"),("2884","玉山金","上市"),("2885","元大金","上市"),
+        ("2891","中信金","上市"),("2892","第一金","上市"),("2880","華南金","上市"),
+        ("2883","開發金","上市"),("5880","合庫金","上市"),("2887","台新金","上市"),
+        ("2888","新光金","上市"),("2890","永豐金","上市"),("2801","彰銀","上市"),
+        ("1301","台塑","上市"),("1303","南亞","上市"),("1326","台化","上市"),
+        ("6505","台塑化","上市"),("2002","中鋼","上市"),("1402","遠東新","上市"),
+        ("1216","統一","上市"),("2207","和泰車","上市"),("2105","正新","上市"),
+        ("1101","台泥","上市"),("1102","亞泥","上市"),("1108","幸福","上市"),
+        ("2301","光寶科","上市"),("2303","聯電","上市"),("2311","日月光投控","上市"),
+        ("2325","矽品","上市"),("2344","華邦電","上市"),("2347","聯強","上市"),
+        ("2353","宏碁","上市"),("2354","鴻準","上市"),("2360","致茂","上市"),
+        ("2379","瑞昱","上市"),("2385","群光","上市"),("2388","威盛","上市"),
+        ("2392","正崴","上市"),("2393","億光","上市"),("2401","凌陽","上市"),
+        ("2404","漢唐","上市"),("2408","南亞科","上市"),("2409","友達","上市"),
+        ("2458","義隆","上市"),("2474","可成","上市"),("2492","華新科","上市"),
+        ("2498","宏達電","上市"),("2603","長榮","上市"),("2609","陽明","上市"),
+        ("2615","萬海","上市"),("2618","長榮航","上市"),("2634","漢翔","上市"),
+        ("2801","彰銀","上市"),("3034","聯詠","上市"),("3037","欣興","上市"),
+        ("3045","台灣大","上市"),("3481","群創","上市"),("3711","日月光投控","上市"),
+        ("4904","遠傳","上市"),("4938","和碩","上市"),("5871","中租-KY","上市"),
+        ("5876","上海商銀","上市"),("6415","矽力-KY","上市"),("6669","緯穎","上市"),
+        ("6770","力積電","上市"),("8046","南電","上市"),("9910","豐泰","上市"),
+        # ETF
+        ("0050","元大台灣50","上市"),("0056","元大高股息","上市"),
+        ("00878","國泰永續高股息","上市"),("00919","群益台灣精選高息","上市"),
+        ("00929","復華台灣科技優息","上市"),("006208","富邦台50","上市"),
+        ("00881","國泰台灣5G+","上市"),("00892","富邦台灣半導體","上市"),
+        ("00757","統一FANG+","上市"),("00662","富邦NASDAQ","上市"),
     ]
-    twse_data = []
-    for attempt, url in enumerate(twse_urls):
-        try:
-            res = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-            if res.status_code == 200 and len(res.text) > 100:
-                twse_data = res.json()
-                break
-        except:
-            pass
-        if attempt < len(twse_urls) - 1:
-            time.sleep(2)
-
-    for d in twse_data:
-        code = d.get("Code", "").strip()
-        name = d.get("Name", "").strip()
-        if not code:
-            continue
-        t = classify_code(code)
-        industry = industry_lookup.get(code, "")
-        group = get_industry_group(industry, t)
-        stocks.append({"code": code, "name": name, "market": "上市", "type": t, "industry": industry, "group": group})
-
-    # TPEX with retry
-    tpex_data = []
-    for attempt in range(3):
-        try:
-            res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes",
-                             timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-            if res.status_code == 200 and len(res.text) > 100:
-                tpex_data = res.json()
-                break
-        except:
-            pass
-        if attempt < 2:
-            time.sleep(2)
-    for d in tpex_data:
-        code = d.get("SecuritiesCompanyCode", "").strip()
-        name = d.get("CompanyName", "").strip()
-        if not code:
-            continue
-        t = classify_code(code)
-        # 嘗試從API直接取產業別，沒有才用lookup
-        industry = (d.get("Industry", "") or
-                   d.get("IndustryName", "") or
-                   d.get("產業別", "") or
-                   industry_lookup.get(code, "")).strip()
-        group = get_industry_group(industry, t)
-        stocks.append({"code": code, "name": name, "market": "上櫃", "type": t, "industry": industry, "group": group})
-    return stocks
+    # 主要上櫃個股
+    otc = [
+        ("6669","緯穎","上櫃"),("3529","力旺","上櫃"),("6488","環球晶","上櫃"),
+        ("6592","和潤企業","上櫃"),("3702","大聯大","上櫃"),("6121","新普","上櫃"),
+        ("3028","增你強","上櫃"),("6271","同欣電","上櫃"),("4196","安斯泰來","上櫃"),
+        ("6278","台表科","上櫃"),("5269","祥碩","上櫃"),("6533","晶心科","上櫃"),
+        ("3661","世芯-KY","上櫃"),("6409","旭隼","上櫃"),("6463","互動娛樂","上櫃"),
+        ("4958","臻鼎-KY","上櫃"),("6510","精測","上櫃"),("3通","亞信","上櫃"),
+        ("3057","喬鼎","上櫃"),("6768","誠田","上櫃"),
+    ]
+    return listed + otc
 
 
 def group_selector(key_prefix):
@@ -3019,21 +3064,20 @@ with tab6:
 
 
 with tab1:
+    # ── df_pool_now：全 tab1 共用，必須在最頂部定義 ──
+    df_pool_now = st.session_state.get('df_pool', None)
+
     # ── 體質評分狀態提示 ──
-    df_pool_exists = 'df_pool' in st.session_state and st.session_state['df_pool'] is not None
-    if df_pool_exists:
-        pool_size = len(st.session_state['df_pool'])
+    if df_pool_now is not None and not df_pool_now.empty:
+        pool_size = len(df_pool_now)
         from_disk = st.session_state.get('pool_loaded_from_disk', False)
         saved_at  = st.session_state.get('pool_saved_at', '')
-        src_label = "（從本地快取還原，建立於 {}）".format(saved_at[:16]) if from_disk else "（本次建立）"
-        st.success("✅ 體質評分庫已載入　{}檔已評分　{}　→ 掃描結果將自動帶入15分制體質評分".format(pool_size, src_label))
+        src_label = "（從快取還原，建立於 {}）".format(saved_at[:16]) if from_disk else "（本次建立）"
+        st.success("✅ 體質評分庫已載入　{}檔已評分　{}".format(pool_size, src_label))
     else:
         st.info(
-            "💡 **體質評分尚未建立**：掃描結果的「體質分數」會顯示「未評分」。\n\n"
-            "建議先至【📋 合格標的池】頁籤點「建立/更新合格標的池」（約需3分鐘），"
-            "建立後本頁掃描會自動帶入15分制體質評分，讓你一眼區分好公司vs爛公司。\n\n"
-            "⚡ **或直接掃描**：觸發結果仍會顯示，體質欄補「未評分」，"
-            "可用下方「個股快評」補充確認。"
+            "💡 **體質評分尚未建立**：掃描結果的體質分數會顯示「未建池」。\n\n"
+            "建議先至【📋 合格標的池】頁籤建立評分庫，建立後掃描自動帶入15分制評分。"
         )
 
     threshold1 = st.slider("警示門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t1")
@@ -3342,44 +3386,71 @@ with tab3:
 
     # ── 體質快查區 ──
     if single_code:
+        code_clean = single_code.strip()
         df_pool_bt = st.session_state.get('df_pool', None)
-        if df_pool_bt is not None and not df_pool_bt.empty:
-            pool_r = df_pool_bt[df_pool_bt['代碼'] == single_code.strip()]
-            if not pool_r.empty:
-                pr = pool_r.iloc[0]
-                q_total = pr.get('體質分數')
-                q_grade = pr.get('體質等級', '')
-                score_a = pr.get('▶A獲利(0-5)', '-')
-                score_b = pr.get('▶B護城河(0-5)', '-')
-                score_c = pr.get('▶C安全邊際(0-5)', '-')
-                det_a = pr.get('A細節', '')
-                det_b = pr.get('B細節', '')
-                det_c = pr.get('C細節', '')
+        pool_r = pd.DataFrame()
 
-                st.markdown("#### 📊 {} 體質評分卡".format(single_code))
-                col_qa, col_qb, col_qc, col_qtotal = st.columns(4)
-                with col_qa:
-                    st.metric("A 獲利能力", "{}/5分".format(score_a))
-                    st.caption(det_a)
-                with col_qb:
-                    st.metric("B 護城河", "{}/5分".format(score_b))
-                    st.caption(det_b)
-                with col_qc:
-                    st.metric("C 安全邊際", "{}/5分".format(score_c))
-                    st.caption(det_c)
-                with col_qtotal:
-                    if q_total is not None and isinstance(q_total, (int, float)):
-                        if q_total >= 13:
-                            st.success("**總分 {}/15**\n\n{}".format(int(q_total), q_grade))
-                        elif q_total >= 9:
-                            st.warning("**總分 {}/15**\n\n{}".format(int(q_total), q_grade))
-                        else:
-                            st.error("**總分 {}/15**\n\n{}".format(int(q_total), q_grade))
-                    else:
-                        st.info("評分中...")
-                st.divider()
-            else:
-                st.info("💡 此代碼尚未在合格標的池中評分，請先至【合格標的池】建立池子以顯示體質評分。")
+        if df_pool_bt is not None and not df_pool_bt.empty:
+            # 統一型別比對
+            df_pool_bt['代碼'] = df_pool_bt['代碼'].astype(str).str.strip()
+            pool_r = df_pool_bt[df_pool_bt['代碼'] == code_clean]
+
+        if not pool_r.empty:
+            pr = pool_r.iloc[0]
+            q_total = pr.get('體質分數')
+            q_grade = pr.get('體質等級', '')
+            score_a = pr.get('▶A獲利(0-5)', '-')
+            score_b = pr.get('▶B護城河(0-5)', '-')
+            score_c = pr.get('▶C安全邊際(0-5)', '-')
+            det_a = pr.get('A細節', '')
+            det_b = pr.get('B細節', '')
+            det_c = pr.get('C細節', '')
+
+            st.markdown("#### 📊 {} 體質評分卡".format(code_clean))
+            col_qa, col_qb, col_qc, col_qtotal = st.columns(4)
+            with col_qa:
+                st.metric("A 獲利能力", "{}/5分".format(score_a))
+                st.caption(det_a)
+            with col_qb:
+                st.metric("B 護城河", "{}/5分".format(score_b))
+                st.caption(det_b)
+            with col_qc:
+                st.metric("C 安全邊際", "{}/5分".format(score_c))
+                st.caption(det_c)
+            with col_qtotal:
+                if q_total is not None and isinstance(q_total, (int, float)):
+                    score_int = int(q_total)
+                    fn = st.success if score_int >= 13 else (st.warning if score_int >= 9 else st.error)
+                    fn("**總分 {}/15**\n\n{}".format(score_int, q_grade))
+                else:
+                    st.info("資料不足")
+            st.divider()
+        else:
+            # 沒有 pool 或代碼不在 pool 中：即時用 yfinance 查基本財務
+            st.info("💡 體質評分庫尚未建立或此代碼不在庫中，正在即時查詢基本財務資料...")
+            try:
+                fin_quick = get_fin_data_yfinance(code_clean)
+                roe_q = fin_quick.get('roe')
+                debt_q = fin_quick.get('debt_ratio')
+                pb_q = fin_quick.get('pb')
+                price_q = fin_quick.get('price')
+                eps_q = fin_quick.get('trailing_eps')
+
+                if any(v is not None for v in [roe_q, debt_q, pb_q]):
+                    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+                    col_f1.metric("ROE", "{}%".format(round(roe_q,1)) if roe_q else "N/A",
+                                  help="股東權益報酬率，>15%為佳")
+                    col_f2.metric("負債比", "{}%".format(round(debt_q,1)) if debt_q else "N/A",
+                                  help="負債/總資產，<50%為佳")
+                    col_f3.metric("PB", "{}".format(round(pb_q,2)) if pb_q else "N/A",
+                                  help="股價/每股淨值，<3為佳")
+                    col_f4.metric("EPS(TTM)", "{}".format(round(eps_q,2)) if eps_q else "N/A",
+                                  help="過去12月每股盈餘")
+                    st.caption("⚡ 即時查詢（yfinance），建議至【合格標的池】建立完整15分制評分")
+                else:
+                    st.warning("此代碼財務資料不足（可能是ETF或yfinance尚無資料），請至合格標的池建立評分後再查看。")
+            except Exception as e:
+                st.warning("即時查詢失敗：{}".format(str(e)[:60]))
 
     if st.button("🔬 開始分析", type="primary", key="single_bt"):
         with st.spinner("抓取 " + single_code + " 15年資料中..."):
