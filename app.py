@@ -1506,54 +1506,123 @@ with tab5:
 # yfinance 的 Ticker.info 提供：ROE、負債比、EPS、每股淨值、PB等
 # ══════════════════════════════════════════════════════
 
-@st.cache_data(ttl=43200)  # 12小時快取，財務資料每季才更新
+@st.cache_data(ttl=43200)
 def get_fin_data_yfinance(code):
     """
-    用 yfinance 取單一台股的財務資料。
-    回傳 dict，所有欄位 None 代表無資料，不會 raise。
+    用 yfinance 取台股財務資料。
+    不依賴 .info（yfinance 1.x 台股支援不穩定），
+    改用 .financials / .balance_sheet / .history 直接取數字。
     """
     try:
         import yfinance as yf
         ticker = yf.Ticker(code + ".TW")
-        info = ticker.info
 
-        # ── 基本財務欄位 ──
-        roe_raw = info.get('returnOnEquity')          # 0.xx 格式，需 *100
-        roe = round(roe_raw * 100, 2) if roe_raw is not None else None
+        # ── 現價（最可靠）──
+        hist_now = ticker.history(period="5d")
+        price = float(hist_now['Close'].iloc[-1]) if not hist_now.empty else None
 
-        # 負債比 = 總負債 / 總資產（yfinance 給的是負債/股東權益）
-        total_debt = info.get('totalDebt')
-        total_assets = info.get('totalAssets')
-        if total_debt is not None and total_assets and total_assets > 0:
-            debt_ratio = round(total_debt / total_assets * 100, 2)
-        else:
-            debt_ratio = None
-
-        bvps = info.get('bookValue')                   # 每股淨值
-        price = info.get('currentPrice') or info.get('regularMarketPrice')
-        pb = round(price / bvps, 2) if price and bvps and bvps > 0 else None
-
-        trailing_eps = info.get('trailingEps')         # 過去12月 EPS
-        forward_eps = info.get('forwardEps')           # 預估 EPS
-
-        earnings_growth = info.get('earningsGrowth')   # EPS成長率 (YoY)
-
-        # ── 歷史年度 EPS（financials表格）──
+        # ── 損益表：EPS、淨利 ──
         eps_history = {}
+        net_income_history = {}
         try:
-            fin = ticker.financials  # 欄是日期，列是科目
+            fin = ticker.financials  # index=科目, columns=日期(降序)
             if fin is not None and not fin.empty:
-                eps_keys = ['Basic EPS', 'Diluted EPS', 'EPS']
-                for k in eps_keys:
-                    if k in fin.index:
-                        for col in fin.columns[:4]:  # 最近4年
+                # EPS
+                for eps_key in ['Basic EPS', 'Diluted EPS', 'EPS']:
+                    if eps_key in fin.index:
+                        for col in fin.columns:
                             yr = col.year if hasattr(col, 'year') else int(str(col)[:4])
-                            v = fin.loc[k, col]
+                            v = fin.loc[eps_key, col]
                             if v is not None and not pd.isna(v):
                                 eps_history[yr] = round(float(v), 2)
                         break
+                # 淨利（算ROE用）
+                for ni_key in ['Net Income', 'Net Income Common Stockholders']:
+                    if ni_key in fin.index:
+                        for col in fin.columns:
+                            yr = col.year if hasattr(col, 'year') else int(str(col)[:4])
+                            v = fin.loc[ni_key, col]
+                            if v is not None and not pd.isna(v):
+                                net_income_history[yr] = float(v)
+                        break
         except Exception:
             pass
+
+        # ── 資產負債表：股東權益、負債、資產、每股淨值 ──
+        equity_map = {}
+        total_debt_map = {}
+        total_assets_map = {}
+        bvps = None
+        try:
+            bs = ticker.balance_sheet  # index=科目, columns=日期
+            if bs is not None and not bs.empty:
+                for col in bs.columns:
+                    yr = col.year if hasattr(col, 'year') else int(str(col)[:4])
+                    # 股東權益
+                    for eq_key in ['Stockholders Equity', 'Total Equity Gross Minority Interest',
+                                   'Common Stock Equity']:
+                        if eq_key in bs.index:
+                            v = bs.loc[eq_key, col]
+                            if v is not None and not pd.isna(v):
+                                equity_map[yr] = float(v)
+                            break
+                    # 總負債
+                    for debt_key in ['Total Liabilities Net Minority Interest', 'Total Debt']:
+                        if debt_key in bs.index:
+                            v = bs.loc[debt_key, col]
+                            if v is not None and not pd.isna(v):
+                                total_debt_map[yr] = float(v)
+                            break
+                    # 總資產
+                    for asset_key in ['Total Assets']:
+                        if asset_key in bs.index:
+                            v = bs.loc[asset_key, col]
+                            if v is not None and not pd.isna(v):
+                                total_assets_map[yr] = float(v)
+                            break
+
+                # 每股淨值：最新年度股東權益 / 股數（用市值/股價推算股數）
+                if equity_map and price:
+                    latest_yr = max(equity_map.keys())
+                    eq = equity_map[latest_yr]
+                    # 嘗試用 info 取股數
+                    try:
+                        shares = ticker.info.get('sharesOutstanding')
+                        if shares and shares > 0:
+                            bvps = round(eq / shares, 2)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # ── 計算 ROE（最新年度）──
+        roe = None
+        latest_yr = None
+        if net_income_history and equity_map:
+            common_yrs = set(net_income_history.keys()) & set(equity_map.keys())
+            if common_yrs:
+                latest_yr = max(common_yrs)
+                ni = net_income_history[latest_yr]
+                eq = equity_map[latest_yr]
+                if eq and eq > 0:
+                    roe = round(ni / eq * 100, 2)
+
+        # ── 計算負債比（最新年度）──
+        debt_ratio = None
+        if total_debt_map and total_assets_map:
+            common_yrs = set(total_debt_map.keys()) & set(total_assets_map.keys())
+            if common_yrs:
+                yr = max(common_yrs)
+                debt = total_debt_map[yr]
+                assets = total_assets_map[yr]
+                if assets and assets > 0:
+                    debt_ratio = round(debt / assets * 100, 2)
+
+        # ── PB ──
+        pb = round(price / bvps, 2) if price and bvps and bvps > 0 else None
+
+        # ── trailing EPS（最新年度）──
+        trailing_eps = eps_history.get(max(eps_history.keys())) if eps_history else None
 
         return {
             'code': code,
@@ -1563,20 +1632,16 @@ def get_fin_data_yfinance(code):
             'price': price,
             'pb': pb,
             'trailing_eps': trailing_eps,
-            'forward_eps': forward_eps,
-            'earnings_growth': earnings_growth,
-            'eps_history': eps_history,   # {year: eps}
-            'name': info.get('longName', info.get('shortName', '')),
-            'industry': info.get('industry', ''),
-            'sector': info.get('sector', ''),
+            'eps_history': eps_history,
+            'net_income_history': net_income_history,
+            'equity_map': equity_map,
         }
     except Exception:
         return {
             'code': code, 'roe': None, 'debt_ratio': None,
             'bvps': None, 'price': None, 'pb': None,
-            'trailing_eps': None, 'forward_eps': None,
-            'earnings_growth': None, 'eps_history': {},
-            'name': '', 'industry': '', 'sector': '',
+            'trailing_eps': None, 'eps_history': {},
+            'net_income_history': {}, 'equity_map': {},
         }
 
 
@@ -3426,8 +3491,7 @@ with tab3:
                     st.info("資料不足")
             st.divider()
         else:
-            # 沒有 pool 或代碼不在 pool 中：即時用 yfinance 查基本財務
-            st.info("💡 體質評分庫尚未建立或此代碼不在庫中，正在即時查詢基本財務資料...")
+            # 沒有 pool：即時查基本財務
             try:
                 fin_quick = get_fin_data_yfinance(code_clean)
                 roe_q = fin_quick.get('roe')
@@ -3436,21 +3500,17 @@ with tab3:
                 price_q = fin_quick.get('price')
                 eps_q = fin_quick.get('trailing_eps')
 
-                if any(v is not None for v in [roe_q, debt_q, pb_q]):
+                if any(v is not None for v in [roe_q, debt_q, pb_q, eps_q]):
+                    st.caption("📊 基本財務（yfinance 即時）｜建立合格標的池可取得完整15分評分")
                     col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-                    col_f1.metric("ROE", "{}%".format(round(roe_q,1)) if roe_q else "N/A",
-                                  help="股東權益報酬率，>15%為佳")
-                    col_f2.metric("負債比", "{}%".format(round(debt_q,1)) if debt_q else "N/A",
-                                  help="負債/總資產，<50%為佳")
-                    col_f3.metric("PB", "{}".format(round(pb_q,2)) if pb_q else "N/A",
-                                  help="股價/每股淨值，<3為佳")
-                    col_f4.metric("EPS(TTM)", "{}".format(round(eps_q,2)) if eps_q else "N/A",
-                                  help="過去12月每股盈餘")
-                    st.caption("⚡ 即時查詢（yfinance），建議至【合格標的池】建立完整15分制評分")
+                    col_f1.metric("ROE", "{}%".format(round(roe_q,1)) if roe_q else "—")
+                    col_f2.metric("負債比", "{}%".format(round(debt_q,1)) if debt_q else "—")
+                    col_f3.metric("PB", str(round(pb_q,2)) if pb_q else "—")
+                    col_f4.metric("EPS(年)", str(round(eps_q,2)) if eps_q else "—")
                 else:
-                    st.warning("此代碼財務資料不足（可能是ETF或yfinance尚無資料），請至合格標的池建立評分後再查看。")
-            except Exception as e:
-                st.warning("即時查詢失敗：{}".format(str(e)[:60]))
+                    st.caption("財務資料暫無，請至【合格標的池】建立評分後查看")
+            except Exception:
+                st.caption("財務資料查詢失敗")
 
     if st.button("🔬 開始分析", type="primary", key="single_bt"):
         with st.spinner("抓取 " + single_code + " 15年資料中..."):
