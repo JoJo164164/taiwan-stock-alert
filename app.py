@@ -3740,8 +3740,16 @@ with tab3:
         df_eq = pd.DataFrame(eq_rows)
         show_html(heatmap_positive(df_eq, cum_cols))
 
-        st.markdown("### 表E：進場時機完整比較（門檻 " + ref_threshold_display + "）")
+        st.markdown("### 表E：進場時機完整比較")
         st.caption("連續第1天：首次觸發當天進｜連續第2天：等跌第2天再進｜連續第3天以後：等更深跌｜連續結束翌日：止跌後才進")
+
+        thr_choice_e = st.selectbox(
+            "選擇觸發門檻",
+            [str(t) + "%" for t in THRESHOLDS],
+            index=THRESHOLDS.index(thr_val) if thr_val in THRESHOLDS else 2,
+            key="timing_thr_e"
+        )
+        thr_val_e = int(thr_choice_e.replace("%", ""))
 
         # 建立全觀察天數對照表（行=進場時機，列=觀察天數）
         timing_groups = ["連續第1天進場", "連續第2天進場", "連續第3天以後進場", "連續結束翌日進場"]
@@ -3750,7 +3758,7 @@ with tab3:
         timing_matrix_ret = {"進場時機": timing_short}
 
         for h in HORIZONS:
-            df_t = build_entry_timing_table(prices, thr_val, h)
+            df_t = build_entry_timing_table(prices, thr_val_e, h)
             wr_col  = []
             ret_col = []
             for g in timing_groups:
@@ -3808,14 +3816,41 @@ with tab3:
                 show_html(heatmap_positive(df_yearly_cum, yr_cum_cols))
 
         st.markdown("### 連續觸發分析（門檻 " + ref_threshold_display + "）")
-        horizon_consec = st.selectbox("選擇觀察天數", [str(h) + "天" for h in HORIZONS], index=4, key="consec_horizon")
-        h_consec = int(horizon_consec.replace("天", ""))
-        df_consec = build_consec_analysis(prices, thr_val, h_consec)
-        if df_consec is not None:
-            styled_c = heatmap_positive(df_consec, ["平均報酬%"])
-            styled_c = styled_c.map(color_winrate, subset=["勝率"])
-            styled_c = styled_c.map(color_ret, subset=["最佳報酬%", "最差報酬%"])
-            show_html(styled_c)
+        st.caption("第1天：首次觸發｜第2天：連跌第2天｜第3天：連跌第3天｜第4天以後：持續下跌")
+
+        # 建立全觀察天數矩陣（行=連續觸發天數，列=觀察天數）
+        consec_groups = ["第1天", "第2天", "第3天", "第4天以後"]
+        consec_matrix_wr  = {"連續觸發天數": consec_groups}
+        consec_matrix_ret = {"連續觸發天數": consec_groups}
+        consec_matrix_best = {"連續觸發天數": consec_groups}
+        consec_matrix_worst = {"連續觸發天數": consec_groups}
+
+        for h in HORIZONS:
+            df_c = build_consec_analysis(prices, thr_val, h)
+            wr_col = []; ret_col = []; best_col = []; worst_col = []
+            for g in consec_groups:
+                if df_c is not None and g in df_c["連續觸發天數"].values:
+                    row_c = df_c[df_c["連續觸發天數"] == g].iloc[0]
+                    n = int(row_c.get("樣本數", 0))
+                    flag = "⚠️" if n < 5 else ""
+                    wr_col.append(str(row_c.get("勝率", "---")) + flag)
+                    ret_col.append(str(row_c.get("平均報酬%", "---")) + flag)
+                    best_col.append(str(row_c.get("最佳報酬%", "---")))
+                    worst_col.append(str(row_c.get("最差報酬%", "---")))
+                else:
+                    wr_col.append("---"); ret_col.append("---")
+                    best_col.append("---"); worst_col.append("---")
+            consec_matrix_wr[str(h)   + "天"] = wr_col
+            consec_matrix_ret[str(h)  + "天"] = ret_col
+            consec_matrix_best[str(h) + "天"] = best_col
+            consec_matrix_worst[str(h)+ "天"] = worst_col
+
+        h_cols = [str(h) + "天" for h in HORIZONS]
+        st.markdown("**勝率**")
+        show_html(pd.DataFrame(consec_matrix_wr).style.map(color_winrate, subset=h_cols))
+        st.markdown("**平均報酬%**")
+        show_html(heatmap_positive(pd.DataFrame(consec_matrix_ret), h_cols))
+        st.caption("⚠️ = 樣本數 < 5筆")
 
         if result:
             st.markdown("### 股價走勢 + 各門檻觸發標記")
@@ -3927,47 +3962,84 @@ with tab3:
             except Exception:
                 pass
 
-        # 複合信號評估
-        entry_conds = []
-        entry_score = 0
-        if q_score_bt is not None and isinstance(q_score_bt, (int, float)):
-            if q_score_bt >= 13:
-                entry_score += 2
-                entry_conds.append("✅ 體質⭐⭐⭐ ({}/15分)，核心標的".format(int(q_score_bt)))
-            elif q_score_bt >= 9:
-                entry_score += 1
-                entry_conds.append("🟡 體質⭐⭐ ({}/15分)，可觀察".format(int(q_score_bt)))
-            else:
-                entry_conds.append("❌ 體質偏弱 ({}/15分)，需謹慎".format(int(q_score_bt)))
-        else:
-            entry_conds.append("⚠️ 體質資料不足，無法評分")
+        # ══════════════════════════════════════════════════════
+        # 操作結論
+        # ══════════════════════════════════════════════════════
+        st.markdown("---")
+        st.markdown("## 操作結論")
 
-        if market_level <= 6:
-            entry_score += 2
-            entry_conds.append("✅ 市場第{}級（{}），環境合理".format(market_level, market_label))
-        elif market_level == 7:
-            entry_score += 1
-            entry_conds.append("🟡 市場第7級（微熱），正常但勿追高")
-        elif market_level == 8:
-            entry_conds.append("❌ 市場第8級（過熱），建議提高門檻至-15%")
-        else:
-            entry_conds.append("❌ 市場第{}級（{}），建議暫停策略".format(market_level, market_label))
+        # ── 收集所有需要的數據 ──
+        twii_now = get_twii_heat()
+        market_level = twii_now["level"] if twii_now else 6
+        market_label = twii_now["label"] if twii_now else "未知"
 
-        if best_wr_val >= 70:
-            entry_score += 2
-            entry_conds.append("✅ 最佳持有{}天勝率{:.1f}%，歷史表現優秀".format(best_h_suggestion, best_wr_val))
-        elif best_wr_val >= 55:
-            entry_score += 1
-            entry_conds.append("🟡 最佳持有{}天勝率{:.1f}%，表現尚可".format(best_h_suggestion, best_wr_val))
-        else:
-            entry_conds.append("❌ 最高勝率{:.1f}%偏低，此標的歷史反彈不穩定".format(best_wr_val))
+        q_score_bt = None
+        q_grade_bt = ""
+        df_pool_now2 = st.session_state.get('df_pool', None)
+        if df_pool_now2 is not None and not df_pool_now2.empty:
+            df_pool_now2['代碼'] = df_pool_now2['代碼'].astype(str).str.strip()
+            pr2 = df_pool_now2[df_pool_now2['代碼'] == single_code.strip()]
+            if not pr2.empty:
+                q_score_bt = pr2.iloc[0].get('體質分數')
+                q_grade_bt = pr2.iloc[0].get('體質等級', '')
 
-        # ── 建議觸發門檻（加入次優選項與樣本說明）──
+        if q_score_bt is None or not isinstance(q_score_bt, (int, float)):
+            try:
+                fin_bt = get_fin_data_yfinance(single_code.strip())
+                eps_h = fin_bt.get('eps_history', {})
+                valid_yrs_bt = sorted([y for y in eps_h if eps_h[y] is not None], reverse=True)
+                q_inst = calc_quality_score_v2(
+                    single_code.strip(), {'type': '個股'},
+                    fin_bt.get('roe'), fin_bt.get('debt_ratio'),
+                    fin_bt.get('bvps'), fin_bt.get('price'), fin_bt.get('pb'),
+                    eps_h, valid_yrs_bt
+                )
+                if q_inst:
+                    q_score_bt = q_inst['total']
+                    q_grade_bt = q_inst['grade']
+            except Exception:
+                pass
+
+        best_h_suggestion = None
+        best_wr_val = 0
+        best_avg_ret = 0
+        best_cum_ret_c = None
+        best_cum_ret_d = None
+        for h in HORIZONS:
+            items_h = result["horizon_rets"][h] if result else []
+            rets_h = [x["ret"] for x in items_h]
+            if len(rets_h) >= 5:
+                wr_h = sum(1 for r in rets_h if r > 0) / len(rets_h) * 100
+                avg_h = sum(rets_h) / len(rets_h)
+                if wr_h > best_wr_val or (wr_h == best_wr_val and avg_h > best_avg_ret):
+                    best_wr_val = wr_h
+                    best_avg_ret = avg_h
+                    best_h_suggestion = h
+                    total_entry  = sum(x["entry_price"]  for x in items_h)
+                    total_future = sum(x["future_price"] for x in items_h)
+                    best_cum_ret_c = round((total_future - total_entry) / total_entry * 100, 2) if total_entry > 0 else None
+                    best_cum_ret_d = round(sum(rets_h), 2)
+
+        dd_ref = build_dd_timing_table(prices, thr_val)
+        avg_dd_day = None
+        worst_dd_val = None
+        if dd_ref is not None and best_h_suggestion:
+            row_dd = dd_ref[dd_ref['觀察天數'] == str(best_h_suggestion) + '天']
+            if not row_dd.empty:
+                try:
+                    avg_dd_day = float(str(row_dd.iloc[0].get('平均回撤發生於第幾天','')).replace('天','').replace('無回撤','0'))
+                except Exception:
+                    pass
+                try:
+                    worst_dd_val = float(str(row_dd.iloc[0].get('最深回撤%','0')).replace('%',''))
+                except Exception:
+                    pass
+
         def get_thr_label(n):
-            if n >= 30:   return "✅ 統計可靠（≥30筆）"
-            elif n >= 15: return "🟡 尚可參考（15-29筆）"
-            elif n >= 5:  return "🟠 樣本偏少（5-14筆）"
-            else:         return "❌ 不具統計意義（<5筆）"
+            if n >= 30:   return "統計可靠（≥30筆）"
+            elif n >= 15: return "尚可參考（15-29筆）"
+            elif n >= 5:  return "樣本偏少（5-14筆）"
+            else:         return "不具統計意義（<5筆）"
 
         thr_ranking = []
         for _, row in df_win.iterrows():
@@ -3977,103 +4049,162 @@ with tab3:
                 wr_v = float(str(row.get("100天勝率","0%")).replace("%",""))
                 avg_arr = df_avg[df_avg["觸發門檻"] == thr_s]["100天平均報酬%"].values
                 avg_v = float(str(avg_arr[0]).replace("%","")) if len(avg_arr) > 0 and str(avg_arr[0]) not in ["待觀察","---"] else 0
-                # 評分：樣本不足大幅扣分
                 reliability = 1.0 if samples >= 30 else (0.8 if samples >= 15 else (0.5 if samples >= 5 else 0.0))
                 score_t = (wr_v * 0.6 + avg_v * 0.4) * reliability
                 thr_ranking.append((thr_s, samples, wr_v, avg_v, score_t, get_thr_label(samples)))
             except Exception:
                 pass
-
         thr_ranking.sort(key=lambda x: x[4], reverse=True)
         valid_thrs = [t for t in thr_ranking if t[1] >= 5]
+        first_thr  = valid_thrs[0] if valid_thrs else None
+        second_thr = valid_thrs[1] if len(valid_thrs) > 1 else None
+        skipped_thrs = [t for t in thr_ranking if t[1] < 5 and first_thr and t[2] > first_thr[2]]
 
-        if valid_thrs:
-            first  = valid_thrs[0]
-            second = valid_thrs[1] if len(valid_thrs) > 1 else None
-            skipped = [t for t in thr_ranking if t[1] < 5 and t[2] > first[2]]
+        # ── 結論 1：市場環境 ──
+        st.markdown("### 結論 1　市場環境")
+        if market_level >= 9:
+            bg1 = st.error
+            market_verdict = "目前台股市場熱度第 {} 級（{}）。歷史上此熱度觸發往往是趨勢性下跌的開始，而非短暫超跌。建議暫停進場，等熱度降至 7 級以下再評估。".format(market_level, market_label)
+        elif market_level >= 8:
+            bg1 = st.warning
+            market_verdict = "目前台股市場熱度第 {} 級（偏熱）。可進場但需提高門檻至 -15% 以上，等更深超跌再進。".format(market_level)
+        elif market_level >= 6:
+            bg1 = st.info
+            market_verdict = "目前台股市場熱度第 {} 級（{}）。市場偏熱但尚未極端，觸發信號可正常參考。".format(market_level, market_label)
+        else:
+            bg1 = st.success
+            market_verdict = "目前台股市場熱度第 {} 級（{}）。市場環境正常，歷史上此時進場的長期報酬較佳。".format(market_level, market_label)
+        bg1(market_verdict)
 
-            st.markdown("**📌 建議觸發門檻**")
+        # ── 結論 2：個股體質 ──
+        st.markdown("### 結論 2　個股體質（{}）".format(single_code))
+        if q_score_bt is not None and isinstance(q_score_bt, (int, float)):
+            score_int = int(q_score_bt)
+            if score_int >= 13:
+                bg2 = st.success
+                q_verdict = "體質評分 {}/15 分（{}）。ROE、獲利穩定性、安全邊際均表現優秀，屬於「好公司短暫跌」的進場機會。".format(score_int, q_grade_bt)
+            elif score_int >= 9:
+                bg2 = st.info
+                q_verdict = "體質評分 {}/15 分（{}）。基本面尚可，非核心持股型，進場後需更嚴格監控。".format(score_int, q_grade_bt)
+            else:
+                bg2 = st.warning
+                q_verdict = "體質評分 {}/15 分（{}）。基本面偏弱，需確認是短暫超跌而非基本面惡化導致的下跌。".format(score_int, q_grade_bt)
+            bg2(q_verdict)
+        else:
+            st.info("體質資料不足，建議至合格標的池建立完整評分後再參考。")
+
+        # ── 結論 3：建議觸發門檻 ──
+        st.markdown("### 結論 3　建議觸發門檻")
+        if first_thr:
             col_t1, col_t2 = st.columns(2)
             with col_t1:
                 st.success(
-                    "🥇 **首選　{}**\n\n"
-                    "觸發次數：**{}筆**　{}\n\n"
-                    "100天勝率：**{:.1f}%**　平均報酬：**{:.1f}%**".format(
-                        first[0], first[1], first[5], first[2], first[3]))
+                    "首選　**{}**\n\n"
+                    "15年觸發 {} 筆　{}\n\n"
+                    "100天勝率 **{:.1f}%**　平均報酬 **{:.1f}%**".format(
+                        first_thr[0], first_thr[1], first_thr[5], first_thr[2], first_thr[3]))
             with col_t2:
-                if second:
+                if second_thr:
                     st.info(
-                        "🥈 **次選　{}**\n\n"
-                        "觸發次數：**{}筆**　{}\n\n"
-                        "100天勝率：**{:.1f}%**　平均報酬：**{:.1f}%**".format(
-                            second[0], second[1], second[5], second[2], second[3]))
-                    if second[2] > first[2]:
-                        st.caption("次選勝率較高（{:.1f}% vs {:.1f}%），但觸發機會較少（{}筆 vs {}筆）".format(
-                            second[2], first[2], second[1], first[1]))
+                        "次選　**{}**\n\n"
+                        "15年觸發 {} 筆　{}\n\n"
+                        "100天勝率 **{:.1f}%**　平均報酬 **{:.1f}%**".format(
+                            second_thr[0], second_thr[1], second_thr[5], second_thr[2], second_thr[3]))
+                    if second_thr[2] > first_thr[2]:
+                        st.caption("次選勝率較高（{:.1f}% vs {:.1f}%），但觸發機會較少（{}筆 vs {}筆），可作為加碼時機".format(
+                            second_thr[2], first_thr[2], second_thr[1], first_thr[1]))
                 else:
-                    st.info("無次選門檻（其餘樣本數不足5筆）")
+                    st.info("無次選門檻（其餘樣本不足 5 筆）")
+            for sk in skipped_thrs:
+                st.caption("{} 理論勝率 {:.1f}% 最高，但僅 {} 筆（< 5 筆不具統計意義），不採用".format(
+                    sk[0], sk[2], sk[1]))
+            st.caption("樣本標準：≥30筆可靠　15–29筆尚可　5–14筆偏少　<5筆不採用")
 
-            if skipped:
-                for sk in skipped:
-                    st.caption("⚠️ {} 理論勝率{:.1f}%最高，但僅{}筆（<5筆不具統計意義），不採用".format(
-                        sk[0], sk[2], sk[1]))
-
-            st.caption("樣本標準：≥30筆可靠　｜　15-29筆尚可　｜　5-14筆偏少　｜　<5筆不採用")
-            st.markdown("")
-
-        for c in entry_conds:
-            st.markdown("　" + c)
-
-        st.markdown("")
-
-        # 綜合建議
+        # ── 結論 4：建議持有天數 ──
+        st.markdown("### 結論 4　建議持有天數")
         if best_h_suggestion:
-            col_sug1, col_sug2 = st.columns(2)
-            with col_sug1:
-                st.markdown("**📅 建議持有天數**")
-                cum_c_str = "{:.2f}%".format(best_cum_ret_c) if best_cum_ret_c is not None else "—"
-                cum_d_str = "{:.2f}%".format(best_cum_ret_d) if best_cum_ret_d is not None else "—"
-                st.info(
-                    "最佳持有 **{}天**\n\n"
-                    "歷史勝率：**{:.1f}%**\n\n"
-                    "表B 平均單次報酬：**{:.2f}%**（等金額或等股數皆適用）\n\n"
-                    "表C 累積損益：**{}**（按股價，等股數進場）\n\n"
-                    "表D 累積損益：**{}**（等金額進場）\n\n"
-                    "→ 建議以{}天為參考出場點，定期檢視是否提早出場".format(
-                        best_h_suggestion, best_wr_val, best_avg_ret,
-                        cum_c_str, cum_d_str, best_h_suggestion
-                    )
-                )
-            with col_sug2:
-                st.markdown("**🛡️ 動態停損參考**")
+            col_h1, col_h2 = st.columns(2)
+            with col_h1:
+                cum_c_str = "{:.1f}%".format(best_cum_ret_c) if best_cum_ret_c is not None else "—"
+                cum_d_str = "{:.1f}%".format(best_cum_ret_d) if best_cum_ret_d is not None else "—"
+                st.success(
+                    "建議持有　**{} 天**\n\n"
+                    "歷史勝率　**{:.1f}%**\n\n"
+                    "平均單次報酬　**{:.1f}%**\n\n"
+                    "15年累積損益（按股數進場）　**{}**\n\n"
+                    "15年累積損益（等金額進場）　**{}**".format(
+                        best_h_suggestion, best_wr_val, best_avg_ret, cum_c_str, cum_d_str))
+            with col_h2:
                 if avg_dd_day and worst_dd_val:
                     st.warning(
-                        "歷史最深回撤：**{:.1f}%**\n\n"
-                        "平均回撤發生於進場後第 **{:.0f}天**\n\n"
-                        "→ 進場後第{:.0f}天若仍虧損超過{:.1f}%，可評估是否停損；\n"
-                        "→ 但歷史數據顯示忍住浮虧通常報酬更佳".format(
-                            worst_dd_val, avg_dd_day, avg_dd_day, abs(worst_dd_val) * 0.8
-                        )
-                    )
-                else:
-                    st.info("停損參考數據計算中...")
+                        "最大回撤參考\n\n"
+                        "歷史最深單筆回撤　**{:.1f}%**\n\n"
+                        "平均最低點出現於進場後第　**{:.0f} 天**\n\n"
+                        "進場後第 {:.0f} 天若浮虧仍超過 {:.1f}%，可評估是否停損\n\n"
+                        "注意：歷史數據顯示忍住浮虧的整體報酬通常優於停損".format(
+                            worst_dd_val, avg_dd_day, avg_dd_day, abs(worst_dd_val) * 0.8))
 
-        if entry_score >= 5:
-            st.success("**🟢 綜合評估：進場條件充分**（得分{}）→ 可按正常倉位進場".format(entry_score))
-        elif entry_score >= 3:
-            st.success("**🟢 綜合評估：進場條件合理**（得分{}）→ 可進場，控制倉位約80%".format(entry_score))
-        elif entry_score >= 1:
-            st.warning("**🟡 綜合評估：謹慎進場**（得分{}）→ 建議減倉至50%，嚴格執行停損".format(entry_score))
+        # ── 綜合決策 ──
+        st.markdown("### 綜合決策")
+
+        # 計算評分（透明說明）
+        score_market = 2 if market_level <= 6 else (1 if market_level <= 7 else 0)
+        score_quality = 2 if (q_score_bt and q_score_bt >= 13) else (1 if (q_score_bt and q_score_bt >= 9) else 0)
+        score_history = 2 if best_wr_val >= 70 else (1 if best_wr_val >= 55 else 0)
+        total_score = score_market + score_quality + score_history
+        max_score = 6
+
+        # 倉位建議邏輯
+        if market_level >= 9:
+            position_pct = 0
+            decision_text = "不建議進場。市場熱度過高，等熱度降至 7 級以下再評估。"
+            decision_fn = st.error
+        elif total_score >= 5:
+            position_pct = 100
+            decision_text = "條件充分，可全倉進場（依個人風控調整）。"
+            decision_fn = st.success
+        elif total_score >= 4:
+            position_pct = 75
+            decision_text = "條件合理，建議以 75% 倉位進場，保留 25% 若繼續跌可加碼。"
+            decision_fn = st.success
+        elif total_score >= 2:
+            position_pct = 50
+            decision_text = "條件偏弱，建議以 50% 倉位試水溫，嚴格設停損。"
+            decision_fn = st.warning
         else:
-            st.error("**🔴 綜合評估：不建議進場**（得分{}）→ 等待宏觀環境改善或標的體質提升".format(entry_score))
+            position_pct = 0
+            decision_text = "條件不足，建議觀望。等市場環境或個股體質改善後再評估。"
+            decision_fn = st.error
 
-        st.caption("*進場品質評分說明：體質⭐⭐⭐+2、⭐⭐+1、偏弱0｜市場≤6級+2、7級+1、8級0、>8級0｜勝率≥70%+2、≥55%+1｜最高6分*")
+        decision_fn(decision_text)
 
-        # 分析建議（直接render，不存session_state）
+        # 評分說明表格
+        score_rows = [
+            {"評估項目": "市場環境（熱度第{}級）".format(market_level),
+             "結果": market_label,
+             "得分": "{} / 2".format(score_market),
+             "說明": "≤6級得2分，7級得1分，≥8級得0分"},
+            {"評估項目": "個股體質（{}/15分）".format(int(q_score_bt) if q_score_bt else "—"),
+             "結果": q_grade_bt if q_grade_bt else "未評分",
+             "得分": "{} / 2".format(score_quality),
+             "說明": "≥13分得2分，≥9分得1分，其餘得0分"},
+            {"評估項目": "歷史勝率（持有{}天）".format(best_h_suggestion or "—"),
+             "結果": "{:.1f}%".format(best_wr_val),
+             "得分": "{} / 2".format(score_history),
+             "說明": "≥70%得2分，≥55%得1分，其餘得0分"},
+            {"評估項目": "總分",
+             "結果": "",
+             "得分": "{} / {}".format(total_score, max_score),
+             "說明": "5-6分全倉｜4分75%倉｜2-3分50%倉｜0-1分觀望"},
+        ]
+        show_html(pd.DataFrame(score_rows))
+        st.caption("本分析基於歷史回測數據自動生成，不構成投資建議。歷史績效不代表未來報酬。")
+
+        # 分析建議
         st.markdown("---")
-        st.markdown("### 📋 回測分析建議")
+        st.markdown("### 回測分析報告（詳細）")
         st.caption("根據上方回測數據自動生成，不構成投資建議")
-        if st.button("📋 生成分析建議", key="ai_analysis"):
+        if st.button("生成詳細分析報告", key="ai_analysis"):
             render_analysis(single_code, df_win, df_avg, df_dd, df_yearly, thr_val, prices_dict=prices)
 
 # ==============================
