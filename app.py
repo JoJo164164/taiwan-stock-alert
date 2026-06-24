@@ -3491,24 +3491,91 @@ with tab3:
                     st.info("資料不足")
             st.divider()
         else:
-            # 沒有 pool：即時查基本財務
             try:
                 fin_quick = get_fin_data_yfinance(code_clean)
-                roe_q = fin_quick.get('roe')
-                debt_q = fin_quick.get('debt_ratio')
-                pb_q = fin_quick.get('pb')
-                price_q = fin_quick.get('price')
-                eps_q = fin_quick.get('trailing_eps')
+                roe_q    = fin_quick.get('roe')
+                debt_q   = fin_quick.get('debt_ratio')
+                pb_q     = fin_quick.get('pb')
+                eps_q    = fin_quick.get('trailing_eps')
+                eps_hist = fin_quick.get('eps_history', {})
+                valid_yrs = sorted([y for y in eps_hist if eps_hist[y] is not None], reverse=True)
 
                 if any(v is not None for v in [roe_q, debt_q, pb_q, eps_q]):
-                    st.caption("📊 基本財務（yfinance 即時）｜建立合格標的池可取得完整15分評分")
+                    # ── 即時體質評分（用 calc_quality_score_v2）──
+                    q_quick = calc_quality_score_v2(
+                        code_clean,
+                        {'type': '個股'},
+                        roe_q, debt_q,
+                        fin_quick.get('bvps'),
+                        fin_quick.get('price'),
+                        pb_q,
+                        eps_hist, valid_yrs
+                    )
+
+                    # ── 財務數字 + 評分判斷一起顯示 ──
                     col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-                    col_f1.metric("ROE", "{}%".format(round(roe_q,1)) if roe_q else "—")
-                    col_f2.metric("負債比", "{}%".format(round(debt_q,1)) if debt_q else "—")
-                    col_f3.metric("PB", str(round(pb_q,2)) if pb_q else "—")
-                    col_f4.metric("EPS(年)", str(round(eps_q,2)) if eps_q else "—")
+
+                    # ROE
+                    roe_str = "{}%".format(round(roe_q, 1)) if roe_q else "—"
+                    roe_hint = ("✅ 優秀(≥20%)" if roe_q and roe_q >= 20 else
+                                "✅ 良好(≥15%)" if roe_q and roe_q >= 15 else
+                                "🟡 普通(≥8%)"  if roe_q and roe_q >= 8  else
+                                "❌ 偏弱(<8%)"  if roe_q else "—")
+                    col_f1.metric("ROE", roe_str)
+                    col_f1.caption(roe_hint)
+
+                    # 負債比
+                    debt_str = "{}%".format(round(debt_q, 1)) if debt_q else "—"
+                    debt_hint = ("✅ 健康(<30%)" if debt_q and debt_q < 30 else
+                                 "✅ 合格(<50%)" if debt_q and debt_q < 50 else
+                                 "🟡 偏高(<65%)" if debt_q and debt_q < 65 else
+                                 "❌ 過高(≥65%)" if debt_q else "—")
+                    col_f2.metric("負債比", debt_str)
+                    col_f2.caption(debt_hint)
+
+                    # PB
+                    pb_str = str(round(pb_q, 2)) if pb_q else "—"
+                    pb_hint = ("✅ 便宜(<1.5)" if pb_q and pb_q < 1.5 else
+                               "✅ 合理(<3)"   if pb_q and pb_q < 3   else
+                               "🟡 偏貴(<5)"   if pb_q and pb_q < 5   else
+                               "❌ 高估(≥5)"   if pb_q else "—")
+                    col_f3.metric("PB", pb_str)
+                    col_f3.caption(pb_hint)
+
+                    # EPS
+                    eps_str = str(round(eps_q, 2)) if eps_q else "—"
+                    eps_hint = ("✅ 獲利穩定" if eps_q and eps_q > 0 else
+                                "❌ 虧損"     if eps_q and eps_q <= 0 else "—")
+                    col_f4.metric("EPS(年)", eps_str)
+                    col_f4.caption(eps_hint)
+
+                    # ── 15分評分卡（若 calc_quality_score_v2 有結果）──
+                    if q_quick:
+                        total_q = q_quick['total']
+                        grade_q = q_quick['grade']
+                        warn_q  = q_quick.get('data_warning', '')
+                        sa, sb, sc = q_quick['score_a'], q_quick['score_b'], q_quick['score_c']
+
+                        st.markdown("---")
+                        col_qa, col_qb, col_qc, col_qtotal = st.columns(4)
+                        col_qa.metric("A 獲利能力", "{}/5".format(sa))
+                        col_qa.caption(q_quick.get('detail_a', ''))
+                        col_qb.metric("B 護城河",   "{}/5".format(sb))
+                        col_qb.caption(q_quick.get('detail_b', ''))
+                        col_qc.metric("C 安全邊際", "{}/5".format(sc))
+                        col_qc.caption(q_quick.get('detail_c', ''))
+
+                        with col_qtotal:
+                            fn = (st.success if total_q >= 13 else
+                                  st.warning if total_q >= 9  else st.error)
+                            fn("**{}/15分**\n\n{}".format(total_q, grade_q))
+
+                        if warn_q:
+                            st.caption(warn_q)
+
+                    st.caption("📊 即時財務（yfinance）｜建立合格標的池可取得含EPS歷史的完整評分")
                 else:
-                    st.caption("財務資料暫無，請至【合格標的池】建立評分後查看")
+                    st.caption("財務資料暫無（ETF或新掛牌股票）")
             except Exception:
                 st.caption("財務資料查詢失敗")
 
