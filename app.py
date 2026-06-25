@@ -4077,16 +4077,16 @@ with tab3:
         st.markdown("### 結論 1　市場環境")
         if market_level >= 9:
             bg1 = st.error
-            market_verdict = "目前台股市場熱度第 {} 級（{}）。歷史上此熱度觸發往往是趨勢性下跌的開始，而非短暫超跌。建議暫停進場，等熱度降至 7 級以下再評估。".format(market_level, market_label)
+            market_verdict = "台股市場熱度 **第 {} 級**（**{}**）。歷史上此熱度觸發往往是趨勢性下跌的開始，而非短暫超跌。**建議暫停進場**，等熱度降至 **7 級**以下再評估。".format(market_level, market_label)
         elif market_level >= 8:
             bg1 = st.warning
-            market_verdict = "目前台股市場熱度第 {} 級（偏熱）。可進場但需提高門檻至 -15% 以上，等更深超跌再進。".format(market_level)
+            market_verdict = "台股市場熱度 **第 {} 級**（偏熱）。可進場但需提高門檻至 **-15%** 以上，等更深超跌再進。".format(market_level)
         elif market_level >= 6:
             bg1 = st.info
-            market_verdict = "目前台股市場熱度第 {} 級（{}）。市場偏熱但尚未極端，觸發信號可正常參考。".format(market_level, market_label)
+            market_verdict = "台股市場熱度 **第 {} 級**（{}）。市場偏熱但尚未極端，觸發信號可正常參考。".format(market_level, market_label)
         else:
             bg1 = st.success
-            market_verdict = "目前台股市場熱度第 {} 級（{}）。市場環境正常，歷史上此時進場的長期報酬較佳。".format(market_level, market_label)
+            market_verdict = "台股市場熱度 **第 {} 級**（{}）。市場環境正常，策略可正常執行。".format(market_level, market_label)
         bg1(market_verdict)
 
         # ── 結論 2：個股體質 ──
@@ -4095,13 +4095,13 @@ with tab3:
             score_int = int(q_score_bt)
             if score_int >= 13:
                 bg2 = st.success
-                q_verdict = "體質評分 {}/15 分（{}）。ROE、獲利穩定性、安全邊際均表現優秀，屬於「好公司短暫跌」的進場機會。".format(score_int, q_grade_bt)
+                q_verdict = "體質評分 **{}/15 分**（**{}**）。ROE、獲利穩定性、安全邊際均表現優秀，屬於「好公司短暫跌」的進場機會。".format(score_int, q_grade_bt)
             elif score_int >= 9:
                 bg2 = st.info
-                q_verdict = "體質評分 {}/15 分（{}）。基本面尚可，非核心持股型，進場後需更嚴格監控。".format(score_int, q_grade_bt)
+                q_verdict = "體質評分 **{}/15 分**（**{}**）。基本面尚可，非核心持股型，進場後需更嚴格監控。".format(score_int, q_grade_bt)
             else:
                 bg2 = st.warning
-                q_verdict = "體質評分 {}/15 分（{}）。基本面偏弱，需確認是短暫超跌而非基本面惡化導致的下跌。".format(score_int, q_grade_bt)
+                q_verdict = "體質評分 **{}/15 分**（**{}**）。基本面偏弱，需確認是短暫超跌而非基本面惡化導致的下跌。".format(score_int, q_grade_bt)
             bg2(q_verdict)
         else:
             st.info("體質資料不足，建議至合格標的池建立完整評分後再參考。")
@@ -4113,24 +4113,23 @@ with tab3:
             with col_t1:
                 st.success(
                     "首選　**{}**\n\n"
-                    "15年觸發 {} 筆　{}\n\n"
+                    "15年觸發 **{}筆**　{}\n\n"
                     "100天勝率 **{:.1f}%**　平均報酬 **{:.1f}%**".format(
                         first_thr[0], first_thr[1], first_thr[5], first_thr[2], first_thr[3]))
             with col_t2:
                 if second_thr:
                     st.info(
                         "次選　**{}**\n\n"
-                        "15年觸發 {} 筆　{}\n\n"
+                        "15年觸發 **{}筆**　{}\n\n"
                         "100天勝率 **{:.1f}%**　平均報酬 **{:.1f}%**".format(
                             second_thr[0], second_thr[1], second_thr[5], second_thr[2], second_thr[3]))
                     if second_thr[2] > first_thr[2]:
-                        st.caption("次選勝率較高（{:.1f}% vs {:.1f}%），但觸發機會較少（{}筆 vs {}筆），可作為加碼時機".format(
+                        st.caption("次選勝率較高（**{:.1f}%** vs **{:.1f}%**），但觸發機會較少（{}筆 vs {}筆）".format(
                             second_thr[2], first_thr[2], second_thr[1], first_thr[1]))
                 else:
                     st.info("無次選門檻（其餘樣本不足 5 筆）")
             for sk in skipped_thrs:
-                st.caption("{} 理論勝率 {:.1f}% 最高，但僅 {} 筆（< 5 筆不具統計意義），不採用".format(
-                    sk[0], sk[2], sk[1]))
+                st.caption("{} 理論勝率 **{:.1f}%** 最高，但僅 **{}筆**（< 5 筆不採用）".format(sk[0], sk[2], sk[1]))
             st.caption("樣本標準：≥30筆可靠　15–29筆尚可　5–14筆偏少　<5筆不採用")
 
         # ── 結論 4：建議持有天數 ──
@@ -4144,8 +4143,8 @@ with tab3:
                     "建議持有　**{} 天**\n\n"
                     "歷史勝率　**{:.1f}%**\n\n"
                     "平均單次報酬　**{:.1f}%**\n\n"
-                    "15年累積損益（按股數進場）　**{}**\n\n"
-                    "15年累積損益（等金額進場）　**{}**".format(
+                    "15年累積損益（按股數）　**{}**\n\n"
+                    "15年累積損益（等金額）　**{}**".format(
                         best_h_suggestion, best_wr_val, best_avg_ret, cum_c_str, cum_d_str))
             with col_h2:
                 if avg_dd_day and worst_dd_val:
@@ -4153,16 +4152,13 @@ with tab3:
                         "最大回撤參考\n\n"
                         "歷史最深單筆回撤　**{:.1f}%**\n\n"
                         "平均最低點出現於進場後第　**{:.0f} 天**\n\n"
-                        "進場後第 {:.0f} 天若浮虧仍超過 {:.1f}%，可評估是否停損\n\n"
+                        "進場後第 **{:.0f} 天**若浮虧仍超過 **{:.1f}%**，可評估是否停損\n\n"
                         "注意：歷史數據顯示忍住浮虧的整體報酬通常優於停損".format(
                             worst_dd_val, avg_dd_day, avg_dd_day, abs(worst_dd_val) * 0.8))
 
-        # ══════════════════════════════════════════════════════
-        # 綜合決策
-        # ══════════════════════════════════════════════════════
+        # ── 綜合決策：市場熱度燈號 + 體質/勝率 + 最終建議 ──
         st.markdown("### 綜合決策")
 
-        # ── 市場環境：燈號顯示，不納入評分 ──
         level = market_level
         heat_bars = ""
         for i in range(1, 11):
@@ -4175,17 +4171,13 @@ with tab3:
                 heat_bars += "⬜"
 
         if level >= 9:
-            market_color = "#b71c1c"
-            market_advice = "建議暫停進場，等熱度降至7級以下"
+            market_color = "#b71c1c"; market_advice = "建議暫停進場，等熱度降至7級以下"
         elif level >= 8:
-            market_color = "#e65100"
-            market_advice = "偏熱，建議提高觸發門檻至-15%"
+            market_color = "#e65100"; market_advice = "偏熱，建議提高觸發門檻至-15%"
         elif level >= 6:
-            market_color = "#f57f17"
-            market_advice = "輕微偏熱，正常操作但勿追高"
+            market_color = "#f57f17"; market_advice = "輕微偏熱，正常操作但勿追高"
         else:
-            market_color = "#1b5e20"
-            market_advice = "環境合理，策略可正常執行"
+            market_color = "#1b5e20"; market_advice = "環境合理，策略可正常執行"
 
         st.markdown("""
 <div style="background:#f8f9fa;border-left:5px solid {color};padding:14px 18px;border-radius:6px;margin-bottom:16px">
@@ -4193,115 +4185,62 @@ with tab3:
 <div style="font-size:22px;letter-spacing:2px;margin-bottom:6px">{bars}</div>
 <div style="font-size:15px;font-weight:600;color:{color}">第 {level} 級／10　{label}</div>
 <div style="font-size:13px;color:#444;margin-top:4px">{advice}</div>
-</div>
-""".format(
-            color=market_color,
-            bars=heat_bars,
-            level=level,
-            label=market_label,
-            advice=market_advice
-        ), unsafe_allow_html=True)
+</div>""".format(color=market_color, bars=heat_bars, level=level,
+                 label=market_label, advice=market_advice), unsafe_allow_html=True)
 
-        # ── 評分：體質50分 + 勝率50分 = 100分 ──
-        # 體質50分（15分制換算）
-        if q_score_bt is not None and isinstance(q_score_bt, (int, float)):
-            score_quality_100 = round(float(q_score_bt) / 15 * 50)
+        q_val2 = int(q_score_bt) if q_score_bt is not None and isinstance(q_score_bt, (int, float)) else None
+        q_pct2 = round(q_val2 / 15 * 100) if q_val2 is not None else 0
+        q_color2 = "#1b5e20" if (q_val2 and q_val2 >= 13) else ("#e65100" if (q_val2 and q_val2 >= 9) else "#b71c1c")
+        w_color2 = "#1b5e20" if best_wr_val >= 80 else ("#e65100" if best_wr_val >= 65 else "#b71c1c")
+        wr_label2 = "優秀" if best_wr_val >= 80 else ("良好" if best_wr_val >= 65 else "偏低")
+
+        if level >= 9:
+            f_color = "#b71c1c"; f_advice = "暫停進場"; f_reason = "市場第{}級過熱".format(level)
+        elif q_val2 and q_val2 >= 9 and best_wr_val >= 75:
+            f_color = "#1b5e20"; f_advice = "可以進場"; f_reason = "體質合格且勝率優秀"
+        elif q_val2 and q_val2 >= 9 and best_wr_val >= 60:
+            f_color = "#2e7d32"; f_advice = "謹慎進場"; f_reason = "體質合格，勝率尚可"
+        elif best_wr_val >= 75:
+            f_color = "#e65100"; f_advice = "留意體質"; f_reason = "勝率高但體質偏弱"
         else:
-            score_quality_100 = None
+            f_color = "#b71c1c"; f_advice = "建議觀望"; f_reason = "條件不足"
 
-        # 勝率50分（用建議持有天數的勝率）
-        if best_wr_val >= 85:   score_wr_100 = 50
-        elif best_wr_val >= 75: score_wr_100 = 40
-        elif best_wr_val >= 65: score_wr_100 = 30
-        elif best_wr_val >= 55: score_wr_100 = 20
-        else:                   score_wr_100 = 10
-
-        if score_quality_100 is not None:
-            total_100 = score_quality_100 + score_wr_100
-        else:
-            total_100 = None
-
-        # ── 評分卡 ──
-        col_q, col_w, col_t = st.columns(3)
-
-        with col_q:
-            q_color = "#1b5e20" if (q_score_bt and q_score_bt >= 13) else ("#e65100" if (q_score_bt and q_score_bt >= 9) else "#b71c1c")
-            q_val = int(q_score_bt) if q_score_bt is not None and isinstance(q_score_bt, (int, float)) else None
-            q_pct = round(q_val / 15 * 100) if q_val is not None else 0
+        col_q2, col_w2, col_final2 = st.columns(3)
+        with col_q2:
             st.markdown("""
-<div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;text-align:center">
-<div style="font-size:12px;color:#888;margin-bottom:8px">個股體質</div>
-<div style="background:#f0f0f0;border-radius:4px;height:8px;margin-bottom:8px">
-  <div style="background:{color};border-radius:4px;height:8px;width:{pct}%"></div>
+<div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;text-align:center;height:150px">
+<div style="font-size:12px;color:#888;margin-bottom:6px">個股體質</div>
+<div style="background:#f0f0f0;border-radius:4px;height:6px;margin-bottom:10px">
+  <div style="background:{c};border-radius:4px;height:6px;width:{p}%"></div>
 </div>
-<div style="font-size:28px;font-weight:700;color:{color}">{score}</div>
-<div style="font-size:12px;color:#888">／ 15分</div>
-<div style="font-size:12px;color:{color};margin-top:4px">{grade}</div>
-</div>
-""".format(
-                color=q_color,
-                pct=q_pct,
-                score=q_val if q_val is not None else "—",
-                grade=q_grade_bt if q_grade_bt else "未評分"
-            ), unsafe_allow_html=True)
+<div style="font-size:32px;font-weight:700;color:{c}">{s}<span style="font-size:14px;color:#888"> / 15分</span></div>
+<div style="font-size:12px;color:{c};margin-top:6px">{g}</div>
+</div>""".format(c=q_color2, p=q_pct2, s=q_val2 if q_val2 else "—",
+                g=q_grade_bt if q_grade_bt else "未評分"), unsafe_allow_html=True)
 
-        with col_w:
-            w_color = "#1b5e20" if score_wr_100 >= 40 else ("#e65100" if score_wr_100 >= 25 else "#b71c1c")
+        with col_w2:
             st.markdown("""
-<div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;text-align:center">
-<div style="font-size:12px;color:#888;margin-bottom:8px">歷史勝率</div>
-<div style="font-size:11px;color:#aaa;margin-bottom:8px">持有{days}天　勝率{wr:.1f}%</div>
-<div style="background:#f0f0f0;border-radius:4px;height:8px;margin-bottom:8px">
-  <div style="background:{color};border-radius:4px;height:8px;width:{pct}%"></div>
+<div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;text-align:center;height:150px">
+<div style="font-size:12px;color:#888;margin-bottom:6px">歷史勝率（持有{d}天）</div>
+<div style="background:#f0f0f0;border-radius:4px;height:6px;margin-bottom:10px">
+  <div style="background:{c};border-radius:4px;height:6px;width:{p}%"></div>
 </div>
-<div style="font-size:28px;font-weight:700;color:{color}">{score}</div>
-<div style="font-size:12px;color:#888">／ 50分</div>
-<div style="font-size:12px;color:{color};margin-top:4px">{label}</div>
-</div>
-""".format(
-                days=best_h_suggestion or "—",
-                wr=best_wr_val,
-                color=w_color,
-                pct=score_wr_100*2,
-                score=score_wr_100,
-                label="優秀" if score_wr_100 >= 40 else ("良好" if score_wr_100 >= 30 else ("普通" if score_wr_100 >= 20 else "偏低"))
-            ), unsafe_allow_html=True)
+<div style="font-size:32px;font-weight:700;color:{c}">{w}<span style="font-size:14px;color:#888">%</span></div>
+<div style="font-size:12px;color:{c};margin-top:6px">{lb}</div>
+</div>""".format(c=w_color2, p=min(best_wr_val, 100), d=best_h_suggestion or "—",
+                w="{:.1f}".format(best_wr_val), lb=wr_label2), unsafe_allow_html=True)
 
-        with col_t:
-            t_color = "#1b5e20" if score_wr_100 >= 40 else ("#e65100" if score_wr_100 >= 25 else "#b71c1c")
-            if level >= 9:
-                t_advice = "暫停進場"
-                t_color_adv = "#b71c1c"
-            elif score_wr_100 >= 40 and (q_score_bt and q_score_bt >= 9):
-                t_advice = "可進場"
-                t_color_adv = "#1b5e20"
-            elif score_wr_100 >= 30:
-                t_advice = "謹慎進場"
-                t_color_adv = "#e65100"
-            else:
-                t_advice = "建議觀望"
-                t_color_adv = "#b71c1c"
-
+        with col_final2:
             st.markdown("""
-<div style="background:#fff;border:2px solid {color};border-radius:8px;padding:16px;text-align:center">
-<div style="font-size:12px;color:#888;margin-bottom:8px">歷史勝率得分</div>
-<div style="background:#f0f0f0;border-radius:4px;height:8px;margin-bottom:8px">
-  <div style="background:{color};border-radius:4px;height:8px;width:{pct}%"></div>
-</div>
-<div style="font-size:36px;font-weight:700;color:{color}">{score}</div>
-<div style="font-size:12px;color:#888">／ 50分</div>
-<div style="font-size:14px;font-weight:600;color:{color_adv};margin-top:8px;padding:4px 8px;background:#f8f8f8;border-radius:4px">{advice}</div>
-</div>
-""".format(
-                color=t_color,
-                pct=score_wr_100 * 2,
-                score=score_wr_100,
-                color_adv=t_color_adv,
-                advice=t_advice
-            ), unsafe_allow_html=True)
+<div style="background:#fff;border:2px solid {c};border-radius:8px;padding:16px;text-align:center;height:150px">
+<div style="font-size:12px;color:#888;margin-bottom:16px">綜合建議</div>
+<div style="font-size:26px;font-weight:700;color:{c};margin-bottom:8px">{a}</div>
+<div style="font-size:12px;color:#666">{r}</div>
+</div>""".format(c=f_color, a=f_advice, r=f_reason), unsafe_allow_html=True)
 
-        st.caption("個股體質：15分制直接顯示　｜　歷史勝率：建議持有{}天勝率，85%+得50分、75%+得40分、65%+得30分、55%+得20分、其餘10分　｜　市場熱度為獨立警示，不納入評分".format(best_h_suggestion or "—"))
-        st.caption("本分析基於歷史回測數據自動生成，不構成投資建議。歷史績效不代表未來報酬。")
+        st.caption("市場熱度為獨立警示，不納入評分　｜　本分析基於歷史回測數據自動生成，不構成投資建議")
+
+        # 分析建議
 
         # 分析建議
         st.markdown("---")
