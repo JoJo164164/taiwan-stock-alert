@@ -6259,455 +6259,321 @@ def _brief_get_foreign_net():
 @st.cache_data(ttl=43200)  # 12小時快取
 def _brief_get_news():
     """
-    第二區：重大財經新聞（免費資料源）
-    資料源優先順序：
-      1. Reuters RSS（英文，免費公開）
-      2. Yahoo Finance ticker.news（英文，yfinance免費）
-      3. TWSE MoPS 重大訊息（中文台股，官方免費API）
-    翻譯：deep_translator（免費）→ 備援 googletrans
-    關鍵字分類：正面/負面/中性
+    第二區：重大財經新聞
+    yfinance 1.4.x 的 news 格式改為 contentType/thumbnail 結構，
+    title 可能在 n["content"]["title"] 或 n["title"]，需同時兼容舊新格式。
     """
     import yfinance as yf
-    import feedparser
-    from datetime import datetime, timedelta
-    import re
+    import re as _re
+    import html as _html_mod
 
-    POSITIVE_KW = [
-        "beat", "surge", "soar", "record", "upgrade", "raise", "raised guidance",
-        "strong demand", "record revenue", "outperform", "beat estimates",
-        "raises forecast", "strong quarter", "better than expected",
-        "優於預期", "上調", "創新高", "強勁需求", "獲利超預期", "調升目標價",
-    ]
-    NEGATIVE_KW = [
-        "miss", "slump", "plunge", "downgrade", "cut", "lower guidance",
-        "weak demand", "below estimates", "disappoints", "lowers forecast",
-        "warning", "recall", "layoffs", "tariff", "investigation",
-        "低於預期", "下調", "獲利警告", "需求疲弱", "裁員", "調降目標價",
-    ]
+    POSITIVE_KW = ["beat","surge","soar","record","upgrade","raise","raised guidance",
+                   "strong demand","outperform","better than expected","bullish",
+                   "優於預期","上調","創新高","強勁需求","獲利超預期"]
+    NEGATIVE_KW = ["miss","slump","plunge","downgrade","cut","lower guidance",
+                   "weak demand","below estimates","disappoints","warning",
+                   "recall","layoffs","tariff","investigation","bearish",
+                   "低於預期","下調","獲利警告","需求疲弱","裁員"]
 
     def classify(text):
         t = text.lower()
         pos = sum(1 for kw in POSITIVE_KW if kw.lower() in t)
         neg = sum(1 for kw in NEGATIVE_KW if kw.lower() in t)
-        if pos > neg:
-            return "正面", "#E1F5EE", "#085041"
-        elif neg > pos:
-            return "負面", "#FEE0CC", "#993C1D"
-        else:
-            return "中性", "#f0f0f0", "#414141"
+        if pos > neg:   return "正面", "#E1F5EE", "#085041"
+        elif neg > pos: return "負面", "#FEE0CC", "#993C1D"
+        else:           return "中性", "#f0f0f0", "#555555"
 
     def try_translate(text):
-        """免費翻譯：deep_translator → googletrans → 原文"""
-        if not text or _is_mostly_chinese(text):
+        if not text: return text
+        chinese = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+        if chinese / max(len(text), 1) > 0.3:
             return text
         try:
             from deep_translator import GoogleTranslator
-            translated = GoogleTranslator(source='auto', target='zh-TW').translate(text[:500])
-            return translated if translated else text
+            r = GoogleTranslator(source='auto', target='zh-TW').translate(text[:400])
+            return r if r else text
         except Exception:
             pass
         try:
             from googletrans import Translator
-            tr = Translator()
-            result = tr.translate(text[:500], dest='zh-TW')
-            return result.text if result and result.text else text
+            r = Translator().translate(text[:400], dest='zh-TW')
+            return r.text if r and r.text else text
         except Exception:
             pass
-        return text  # 翻譯失敗→原文
+        return text  # fallback：保留英文
 
-    def _is_mostly_chinese(text):
-        chinese = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
-        return chinese / max(len(text), 1) > 0.3
+    def strip_html(text):
+        if not text: return ""
+        text = _html_mod.unescape(str(text))
+        text = _re.sub(r'<[^>]+>', '', text)
+        return ' '.join(text.split()).strip()
+
+    def extract_news_item(n):
+        """
+        兼容 yfinance 新舊格式：
+        舊格式：{"title": ..., "link": ...}
+        新格式：{"content": {"title": ..., "canonicalUrl": {"url": ...}}}
+        """
+        # 新格式（yfinance 1.4.x）
+        content = n.get("content") or {}
+        if isinstance(content, dict):
+            title = content.get("title", "")
+            url_obj = content.get("canonicalUrl") or content.get("clickThroughUrl") or {}
+            url = url_obj.get("url", "") if isinstance(url_obj, dict) else ""
+            if not url:
+                url = content.get("url", "")
+        else:
+            title = ""
+            url = ""
+
+        # 舊格式 fallback
+        if not title:
+            title = n.get("title", "")
+        if not url:
+            url = n.get("link", n.get("url", ""))
+
+        return strip_html(title), url
 
     news_items = []
-    seen_titles = set()
-    cutoff = datetime.now() - timedelta(hours=72)
+    seen = set()
 
-    def _strip_html(text):
-        """把 HTML 標籤全部剝掉，只保留純文字"""
-        import re as _re2
-        import html as _html2
-        if not text:
-            return ""
-        # 先解碼 HTML entities（&amp; &lt; 等）
-        text = _html2.unescape(str(text))
-        # 再剃掉所有 HTML 標籤
-        text = _re2.sub(r'<[^>]+>', '', text)
-        # 清理多餘空白
-        text = ' '.join(text.split())
-        return text.strip()
-
-    # ── 資料源1：Reuters Business RSS（免費）──
-    RSS_FEEDS = [
-        ("https://feeds.reuters.com/reuters/businessNews", "Reuters 商業"),
-        ("https://feeds.reuters.com/reuters/technology", "Reuters 科技"),
-        ("https://www.wsj.com/xml/rss/3_7085.xml", "WSJ 科技"),
+    TICKERS_NEWS = [
+        ("TSM",  "台積電 ADR"),
+        ("NVDA", "輝達 NVDA"),
+        ("MU",   "美光 MU"),
+        ("AVGO", "博通 AVGO"),
+        ("AMD",  "超微 AMD"),
+        ("AAPL", "蘋果 AAPL"),
+        ("MSFT", "微軟 MSFT"),
     ]
-    KEY_TOPICS = [
-        "nvidia", "tsmc", "micron", "taiwan semiconductor",
-        "fed", "fomc", "interest rate", "cpi", "inflation",
-        "apple", "microsoft", "broadcom", "amd",
-        "semiconductor", "ai chip", "hbm", "cowos",
-        "台積電", "輝達", "聯發科", "美光", "聯準會",
-    ]
+    EXCLUDE_KW = ["nba", "nfl", "soccer", "football", "celebrity",
+                  "music", "movie", "film", "oscar", "grammy",
+                  "recipe", "weather", "horoscope"]
 
-    for rss_url, src_name in RSS_FEEDS:
+    for sym, sym_name in TICKERS_NEWS:
+        if len(news_items) >= 14:
+            break
         try:
-            feed = feedparser.parse(rss_url)
-            for entry in feed.entries[:30]:
-                title = _strip_html(entry.get("title", "").strip())
-                summary = _strip_html(entry.get("summary", entry.get("description", "")).strip())
-                # 過濾相關主題
-                combined = (title + " " + summary).lower()
-                if not any(kw.lower() in combined for kw in KEY_TOPICS):
+            t = yf.Ticker(sym)
+            raw_news = t.news or []
+            for n in raw_news[:8]:
+                title_raw, url = extract_news_item(n)
+                if not title_raw or len(title_raw) < 8:
                     continue
-                # 去重
-                title_key = title[:60].lower()
-                if title_key in seen_titles:
+                title_key = title_raw[:50].lower()
+                if title_key in seen:
                     continue
-                seen_titles.add(title_key)
-                # 翻譯
-                title_zh = try_translate(title)
-                summary_zh = try_translate(summary[:200]) if summary else ""
-                impact, bg, fg = classify(title + " " + summary)
+                if any(kw in title_key for kw in EXCLUDE_KW):
+                    continue
+                seen.add(title_key)
+                title_zh = try_translate(title_raw)
+                impact, bg, fg = classify(title_raw)
+                impact_zh = {"正面": "→ 台股供應鏈偏多",
+                             "負面": "→ 台股供應鏈偏空",
+                             "中性": "→ 影響方向待觀察"}.get(impact, "")
                 news_items.append({
-                    "title": title_zh,
-                    "summary": summary_zh,
-                    "impact": impact, "bg": bg, "fg": fg,
-                    "source": src_name,
-                    "url": entry.get("link", ""),
+                    "title":   title_zh or title_raw,
+                    "summary": "【{}】{}".format(sym_name, impact_zh),
+                    "impact":  impact, "bg": bg, "fg": fg,
+                    "source":  "Yahoo Finance / {}".format(sym_name),
+                    "url":     url,
                 })
-                if len(news_items) >= 12:
-                    break
         except Exception:
             continue
-        if len(news_items) >= 12:
-            break
 
-    # ── 資料源2：Yahoo Finance ticker news（備援）──
-    if len(news_items) < 5:
-        for ticker_sym in ["TSM", "NVDA", "MU", "AVGO"]:
-            try:
-                t = yf.Ticker(ticker_sym)
-                for n in (t.news or [])[:5]:
-                    title = n.get("title", "").strip()
-                    title_key = title[:60].lower()
-                    if title_key in seen_titles:
-                        continue
-                    seen_titles.add(title_key)
-                    title_zh = try_translate(title)
-                    impact, bg, fg = classify(title)
-                    news_items.append({
-                        "title": title_zh,
-                        "summary": "",
-                        "impact": impact, "bg": bg, "fg": fg,
-                        "source": "Yahoo Finance",
-                        "url": n.get("link", ""),
-                    })
-                    if len(news_items) >= 12:
-                        break
-            except Exception:
-                continue
+    # ── 備援：feedparser RSS ──
+    if len(news_items) < 4:
+        try:
+            import feedparser
+            RSS_BACKUP = [
+                ("https://finance.yahoo.com/rss/headline?s=TSM",  "Yahoo Finance TSM"),
+                ("https://finance.yahoo.com/rss/headline?s=NVDA", "Yahoo Finance NVDA"),
+                ("https://finance.yahoo.com/rss/headline?s=MU",   "Yahoo Finance MU"),
+            ]
+            KEY_TOPICS = ["tsmc","nvidia","micron","semiconductor","fed","fomc",
+                          "cpi","ai chip","broadcom","amd","hbm","cowos"]
+            for rss_url, src_name in RSS_BACKUP:
+                if len(news_items) >= 12:
+                    break
+                try:
+                    feed = feedparser.parse(rss_url)
+                    for entry in (feed.entries or [])[:10]:
+                        title_raw = strip_html(entry.get("title",""))
+                        if not title_raw: continue
+                        if not any(kw in title_raw.lower() for kw in KEY_TOPICS): continue
+                        title_key = title_raw[:50].lower()
+                        if title_key in seen: continue
+                        seen.add(title_key)
+                        title_zh   = try_translate(title_raw)
+                        summary_zh = try_translate(strip_html(entry.get("summary",""))[:200])
+                        impact, bg, fg = classify(title_raw)
+                        news_items.append({
+                            "title": title_zh or title_raw,
+                            "summary": summary_zh,
+                            "impact": impact, "bg": bg, "fg": fg,
+                            "source": src_name, "url": entry.get("link",""),
+                        })
+                except Exception:
+                    continue
+        except ImportError:
+            pass
 
-    # ── 資料源3：TWSE MoPS 重大訊息（台股官方）──
-    try:
-        today_str = datetime.now().strftime("%Y%m%d")
-        mops_url = (
-            "https://mops.twse.com.tw/mops/web/ajax_t05st03"
-            "?encodeURIComponent=1&step=1&firstin=1&off=1"
-            "&TYPEK=sii&year={}&month={}&day={}&b_date={}&e_date={}".format(
-                datetime.now().year - 1911,
-                datetime.now().month,
-                datetime.now().day,
-                today_str, today_str
-            )
-        )
-        res = requests.get(mops_url, timeout=6,
-                           headers={"User-Agent": "Mozilla/5.0",
-                                    "Referer": "https://mops.twse.com.tw"})
-        if res.status_code == 200 and len(res.text) > 100:
-            import re as _re
-            # 簡單抓取重大訊息標題
-            matches = _re.findall(r'<td[^>]*>([^<]{10,80}重大[^<]{0,60})</td>', res.text)
-            for m in matches[:3]:
-                m = m.strip()
-                if m and m not in seen_titles:
-                    seen_titles.add(m)
-                    impact, bg, fg = classify(m)
-                    news_items.append({
-                        "title": m, "summary": "台灣證交所公開資訊觀測站重大訊息",
-                        "impact": impact, "bg": bg, "fg": fg,
-                        "source": "TWSE MoPS", "url": "",
-                    })
-    except Exception:
-        pass
+    # ── 最終 fallback：若完全抓不到，顯示提示訊息 ──
+    if not news_items:
+        news_items.append({
+            "title":   "目前無法取得即時財經新聞（網路連線或 yfinance 暫時無回應）",
+            "summary": "請稍後點「重新整理」按鈕，或直接前往 Yahoo Finance 查看最新資訊。",
+            "impact":  "中性", "bg": "#f0f0f0", "fg": "#555",
+            "source":  "系統提示", "url": "https://finance.yahoo.com",
+        })
 
-    return news_items[:10]  # 最多10條
+    return news_items[:14]
 
 
-@st.cache_data(ttl=86400)  # 24小時快取（日曆不常變）
+@st.cache_data(ttl=86400)
 def _brief_get_calendar():
     """
-    第三區：未來30天重大事件日曆
-    資料源：
-      - Fed官方 (federalreserve.gov) → FOMC日期
-      - BLS官方 (bls.gov) → CPI/PPI/非農日期
-      - Yahoo Finance earnings_dates → 重大企業財報
-      - 內建規則 → TWSE MSCI調整（每季）
-    回傳 list of dict sorted by date
+    第三區：未來180天重大事件日曆
+    策略：
+      1. 內建硬編碼的已知固定事件（最可靠，不依賴外部API）
+      2. Yahoo Finance earnings_dates 補充企業財報
     """
     import yfinance as yf
-    from datetime import datetime, timedelta
-    import re
+    from datetime import datetime, timedelta, date
 
     today = datetime.now().date()
-    horizon = today + timedelta(days=35)
+    horizon = today + timedelta(days=180)  # 半年
     events = []
 
-    # ── FOMC 日期（Fed官方 HTML，穩定可靠）──
-    try:
-        res = requests.get(
-            "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
-            timeout=8, headers={"User-Agent": "Mozilla/5.0"}
-        )
-        if res.status_code == 200:
-            # 抓取年份+月份+日期
-            matches = re.findall(
-                r'(\w+)\s+(\d{1,2})(?:[-–](\d{1,2}))?,?\s*(\d{4})',
-                res.text
-            )
-            month_map = {
-                "January":1,"February":2,"March":3,"April":4,"May":5,"June":6,
-                "July":7,"August":8,"September":9,"October":10,"November":11,"December":12
-            }
-            for m in matches:
-                month_name, day_start, day_end, year = m
-                month_num = month_map.get(month_name.capitalize())
-                if not month_num:
-                    continue
-                try:
-                    end_day = int(day_end) if day_end else int(day_start)
-                    dt = datetime(int(year), month_num, end_day).date()
-                    if today <= dt <= horizon:
-                        events.append({
-                            "date": dt,
-                            "title": "FOMC 利率決策會議",
-                            "sub": "聯準會利率決策＋聲明發布，直接影響全球資金成本",
-                            "category": "美國總經",
-                            "cat_color": "#185FA5",
-                        })
-                except Exception:
-                    pass
-    except Exception:
-        pass
+    HARDCODED = [
+        # FOMC 會議
+        (2025,  7, 30, "FOMC 利率決策會議", "聯準會利率決策＋聲明，直接影響全球資金成本與風險偏好", "美國總經", "#185FA5"),
+        (2025,  9, 17, "FOMC 利率決策會議", "聯準會利率決策＋聲明，直接影響全球資金成本與風險偏好", "美國總經", "#185FA5"),
+        (2025, 10, 29, "FOMC 利率決策會議", "聯準會利率決策＋聲明，直接影響全球資金成本與風險偏好", "美國總經", "#185FA5"),
+        (2025, 12, 10, "FOMC 利率決策會議", "聯準會利率決策＋聲明，直接影響全球資金成本與風險偏好", "美國總經", "#185FA5"),
+        (2026,  1, 28, "FOMC 利率決策會議", "聯準會利率決策＋聲明，直接影響全球資金成本與風險偏好", "美國總經", "#185FA5"),
+        (2026,  3, 18, "FOMC 利率決策會議", "聯準會利率決策＋聲明，直接影響全球資金成本與風險偏好", "美國總經", "#185FA5"),
+        (2026,  4, 29, "FOMC 利率決策會議", "聯準會利率決策＋聲明，直接影響全球資金成本與風險偏好", "美國總經", "#185FA5"),
+        (2026,  6, 10, "FOMC 利率決策會議", "聯準會利率決策＋聲明，直接影響全球資金成本與風險偏好", "美國總經", "#185FA5"),
+        (2026,  7, 29, "FOMC 利率決策會議", "聯準會利率決策＋聲明，直接影響全球資金成本與風險偏好", "美國總經", "#185FA5"),
+        (2026,  9, 16, "FOMC 利率決策會議", "聯準會利率決策＋聲明，直接影響全球資金成本與風險偏好", "美國總經", "#185FA5"),
+        (2026, 10, 28, "FOMC 利率決策會議", "聯準會利率決策＋聲明，直接影響全球資金成本與風險偏好", "美國總經", "#185FA5"),
+        (2026, 12,  9, "FOMC 利率決策會議", "聯準會利率決策＋聲明，直接影響全球資金成本與風險偏好", "美國總經", "#185FA5"),
+        # CPI
+        (2025,  7, 15, "美國 CPI 通膨數據（6月）",  "Fed最關鍵通膨指標，影響降息預期與科技股估值", "美國總經", "#185FA5"),
+        (2025,  8, 13, "美國 CPI 通膨數據（7月）",  "Fed最關鍵通膨指標，影響降息預期與科技股估值", "美國總經", "#185FA5"),
+        (2025,  9, 11, "美國 CPI 通膨數據（8月）",  "Fed最關鍵通膨指標，影響降息預期與科技股估值", "美國總經", "#185FA5"),
+        (2025, 10,  9, "美國 CPI 通膨數據（9月）",  "Fed最關鍵通膨指標，影響降息預期與科技股估值", "美國總經", "#185FA5"),
+        (2025, 11, 13, "美國 CPI 通膨數據（10月）", "Fed最關鍵通膨指標，影響降息預期與科技股估值", "美國總經", "#185FA5"),
+        (2025, 12, 11, "美國 CPI 通膨數據（11月）", "Fed最關鍵通膨指標，影響降息預期與科技股估值", "美國總經", "#185FA5"),
+        (2026,  1, 15, "美國 CPI 通膨數據（12月）", "Fed最關鍵通膨指標，影響降息預期與科技股估值", "美國總經", "#185FA5"),
+        (2026,  2, 12, "美國 CPI 通膨數據（1月）",  "Fed最關鍵通膨指標，影響降息預期與科技股估值", "美國總經", "#185FA5"),
+        (2026,  3, 12, "美國 CPI 通膨數據（2月）",  "Fed最關鍵通膨指標，影響降息預期與科技股估值", "美國總經", "#185FA5"),
+        (2026,  4,  9, "美國 CPI 通膨數據（3月）",  "Fed最關鍵通膨指標，影響降息預期與科技股估值", "美國總經", "#185FA5"),
+        (2026,  5, 13, "美國 CPI 通膨數據（4月）",  "Fed最關鍵通膨指標，影響降息預期與科技股估值", "美國總經", "#185FA5"),
+        (2026,  6, 11, "美國 CPI 通膨數據（5月）",  "Fed最關鍵通膨指標，影響降息預期與科技股估值", "美國總經", "#185FA5"),
+        (2026,  7,  9, "美國 CPI 通膨數據（6月）",  "Fed最關鍵通膨指標，影響降息預期與科技股估值", "美國總經", "#185FA5"),
+        (2026,  8, 12, "美國 CPI 通膨數據（7月）",  "Fed最關鍵通膨指標，影響降息預期與科技股估值", "美國總經", "#185FA5"),
+        # 非農就業
+        (2025,  8,  1, "美國非農就業報告（7月）",   "就業強弱影響Fed降息時程，波動大", "美國總經", "#185FA5"),
+        (2025,  9,  5, "美國非農就業報告（8月）",   "就業強弱影響Fed降息時程，波動大", "美國總經", "#185FA5"),
+        (2025, 10,  3, "美國非農就業報告（9月）",   "就業強弱影響Fed降息時程，波動大", "美國總經", "#185FA5"),
+        (2025, 11,  7, "美國非農就業報告（10月）",  "就業強弱影響Fed降息時程，波動大", "美國總經", "#185FA5"),
+        (2025, 12,  5, "美國非農就業報告（11月）",  "就業強弱影響Fed降息時程，波動大", "美國總經", "#185FA5"),
+        (2026,  1,  9, "美國非農就業報告（12月）",  "就業強弱影響Fed降息時程，波動大", "美國總經", "#185FA5"),
+        (2026,  2,  6, "美國非農就業報告（1月）",   "就業強弱影響Fed降息時程，波動大", "美國總經", "#185FA5"),
+        (2026,  3,  6, "美國非農就業報告（2月）",   "就業強弱影響Fed降息時程，波動大", "美國總經", "#185FA5"),
+        (2026,  4,  3, "美國非農就業報告（3月）",   "就業強弱影響Fed降息時程，波動大", "美國總經", "#185FA5"),
+        (2026,  5,  8, "美國非農就業報告（4月）",   "就業強弱影響Fed降息時程，波動大", "美國總經", "#185FA5"),
+        (2026,  6,  5, "美國非農就業報告（5月）",   "就業強弱影響Fed降息時程，波動大", "美國總經", "#185FA5"),
+        # MSCI 季度調整
+        (2025,  8, 15, "MSCI 季度調整生效",         "被動基金強制進出，成分股當日波動放大，留意流動性", "台股事件", "#534AB7"),
+        (2025, 11, 21, "MSCI 季度調整生效",         "被動基金強制進出，成分股當日波動放大，留意流動性", "台股事件", "#534AB7"),
+        (2026,  2, 27, "MSCI 季度調整生效",         "被動基金強制進出，成分股當日波動放大，留意流動性", "台股事件", "#534AB7"),
+        (2026,  5, 29, "MSCI 季度調整生效",         "被動基金強制進出，成分股當日波動放大，留意流動性", "台股事件", "#534AB7"),
+        # 台積電月營收
+        (2025,  7, 10, "台積電月營收公告（6月）",   "每月10日前公布，是外資當日買賣超的重要參考", "台股事件", "#534AB7"),
+        (2025,  8, 11, "台積電月營收公告（7月）",   "每月10日前公布，是外資當日買賣超的重要參考", "台股事件", "#534AB7"),
+        (2025,  9, 10, "台積電月營收公告（8月）",   "每月10日前公布，是外資當日買賣超的重要參考", "台股事件", "#534AB7"),
+        (2025, 10, 10, "台積電月營收公告（9月）",   "每月10日前公布，是外資當日買賣超的重要參考", "台股事件", "#534AB7"),
+        (2025, 11, 10, "台積電月營收公告（10月）",  "每月10日前公布，是外資當日買賣超的重要參考", "台股事件", "#534AB7"),
+        (2025, 12, 10, "台積電月營收公告（11月）",  "每月10日前公布，是外資當日買賣超的重要參考", "台股事件", "#534AB7"),
+        (2026,  1, 10, "台積電月營收公告（12月）",  "每月10日前公布，是外資當日買賣超的重要參考", "台股事件", "#534AB7"),
+        (2026,  2, 10, "台積電月營收公告（1月）",   "每月10日前公布，是外資當日買賣超的重要參考", "台股事件", "#534AB7"),
+        (2026,  3, 10, "台積電月營收公告（2月）",   "每月10日前公布，是外資當日買賣超的重要參考", "台股事件", "#534AB7"),
+        (2026,  4, 10, "台積電月營收公告（3月）",   "每月10日前公布，是外資當日買賣超的重要參考", "台股事件", "#534AB7"),
+        (2026,  5, 11, "台積電月營收公告（4月）",   "每月10日前公布，是外資當日買賣超的重要參考", "台股事件", "#534AB7"),
+        (2026,  6, 10, "台積電月營收公告（5月）",   "每月10日前公布，是外資當日買賣超的重要參考", "台股事件", "#534AB7"),
+        # 台積電法說（每季）
+        (2025,  7, 17, "台積電 Q2 法說會",          "CoWoS/3nm/2nm產能與ASP展望，台股最重要單一事件", "企業財報/法說", "#F86200"),
+        (2025, 10, 16, "台積電 Q3 法說會",          "CoWoS/3nm/2nm產能與ASP展望，台股最重要單一事件", "企業財報/法說", "#F86200"),
+        (2026,  1, 15, "台積電 Q4 法說會",          "CoWoS/3nm/2nm產能與ASP展望，台股最重要單一事件", "企業財報/法說", "#F86200"),
+        (2026,  4, 16, "台積電 Q1 法說會",          "CoWoS/3nm/2nm產能與ASP展望，台股最重要單一事件", "企業財報/法說", "#F86200"),
+        (2026,  7, 16, "台積電 Q2 法說會",          "CoWoS/3nm/2nm產能與ASP展望，台股最重要單一事件", "企業財報/法說", "#F86200"),
+        # 輝達財報
+        (2025,  8, 27, "輝達 NVDA 財報（預估）",    "GPU供給/AI需求能見度，直接影響台積電/廣達/鴻海訂單", "企業財報/法說", "#F86200"),
+        (2025, 11, 20, "輝達 NVDA 財報（預估）",    "GPU供給/AI需求能見度，直接影響台積電/廣達/鴻海訂單", "企業財報/法說", "#F86200"),
+        (2026,  2, 25, "輝達 NVDA 財報（預估）",    "GPU供給/AI需求能見度，直接影響台積電/廣達/鴻海訂單", "企業財報/法說", "#F86200"),
+        (2026,  5, 27, "輝達 NVDA 財報（預估）",    "GPU供給/AI需求能見度，直接影響台積電/廣達/鴻海訂單", "企業財報/法說", "#F86200"),
+        # 美光財報
+        (2025,  9, 24, "美光 MU 財報（預估）",      "HBM/DRAM展望，影響南亞科/旺宏/台灣記憶體族群", "企業財報/法說", "#F86200"),
+        (2025, 12, 17, "美光 MU 財報（預估）",      "HBM/DRAM展望，影響南亞科/旺宏/台灣記憶體族群", "企業財報/法說", "#F86200"),
+        (2026,  3, 25, "美光 MU 財報（預估）",      "HBM/DRAM展望，影響南亞科/旺宏/台灣記憶體族群", "企業財報/法說", "#F86200"),
+        (2026,  6, 24, "美光 MU 財報（預估）",      "HBM/DRAM展望，影響南亞科/旺宏/台灣記憶體族群", "企業財報/法說", "#F86200"),
+        # 台股除息旺季
+        (2025,  7,  1, "台股除息旺季開始",          "大量個股進入除息，股價除息前後波動加大，留意填息強度", "台股事件", "#534AB7"),
+        (2025,  8,  1, "台股除息旺季（8月）",       "除息個股眾多，需關注填息速度與外資動向", "台股事件", "#534AB7"),
+        # 聯準會 Jackson Hole 年會（每年8月）
+        (2025,  8, 21, "Fed Jackson Hole 年會",     "Fed主席演講，往往釋放重大政策方向信號，市場波動大", "美國總經", "#185FA5"),
+        (2026,  8, 20, "Fed Jackson Hole 年會",     "Fed主席演講，往往釋放重大政策方向信號，市場波動大", "美國總經", "#185FA5"),
+    ]
 
-    # ── BLS 重要數據發布日曆 ──
-    try:
-        res = requests.get(
-            "https://www.bls.gov/schedule/news_release/cpi.htm",
-            timeout=8, headers={"User-Agent": "Mozilla/5.0"}
-        )
-        if res.status_code == 200:
-            matches = re.findall(r'(\w+)\s+(\d{1,2}),?\s*(\d{4})', res.text)
-            month_map = {
-                "January":1,"February":2,"March":3,"April":4,"May":5,"June":6,
-                "July":7,"August":8,"September":9,"October":10,"November":11,"December":12
-            }
-            for month_name, day, year in matches:
-                month_num = month_map.get(month_name.capitalize())
-                if not month_num:
-                    continue
-                try:
-                    dt = datetime(int(year), month_num, int(day)).date()
-                    if today <= dt <= horizon:
-                        events.append({
-                            "date": dt,
-                            "title": "美國 CPI 通膨數據",
-                            "sub": "Fed最關鍵通膨指標，影響降息預期與科技股估值",
-                            "category": "美國總經",
-                            "cat_color": "#185FA5",
-                        })
-                except Exception:
-                    pass
-    except Exception:
-        pass
+    seen_ev = set()
+    for yr, mo, dy, title, sub, cat, color in HARDCODED:
+        try:
+            dt = date(yr, mo, dy)
+            if today <= dt <= horizon:
+                key = "{}_{}".format(dt, title[:15])
+                if key not in seen_ev:
+                    seen_ev.add(key)
+                    events.append({"date": dt, "title": title, "sub": sub,
+                                   "category": cat, "cat_color": color})
+        except Exception:
+            pass
 
-    # ── 重大企業財報（Yahoo Finance earnings_dates）──
+    # Yahoo Finance earnings_dates 補充實際財報日
     KEY_STOCKS = {
-        "NVDA": ("輝達 NVDA 財報", "GPU供給/AI需求能見度，直接影響台積電/廣達/鴻海訂單"),
-        "MU":   ("美光 MU 財報",   "HBM/DRAM展望，影響南亞科/旺宏/台灣記憶體族群"),
-        "AVGO": ("博通 AVGO 財報", "ASIC/網路晶片展望，影響台積電先進封裝需求"),
-        "TSM":  ("台積電法說會",   "CoWoS/3nm/2nm產能展望，是台股最重要單一事件"),
-        "AAPL": ("蘋果 AAPL 財報", "iPhone組裝需求，影響鴻海/和碩/台達電"),
-        "MSFT": ("微軟 MSFT 財報", "AI雲端支出展望，間接影響AI伺服器供應鏈"),
+        "NVDA": ("輝達 NVDA 財報（確認日）", "GPU/AI需求能見度", "企業財報/法說", "#F86200"),
+        "MU":   ("美光 MU 財報（確認日）",   "HBM/DRAM展望",   "企業財報/法說", "#F86200"),
+        "AVGO": ("博通 AVGO 財報（確認日）", "ASIC/網路晶片",   "企業財報/法說", "#F86200"),
+        "TSM":  ("台積電法說（確認日）",     "CoWoS/3nm產能展望","企業財報/法說", "#F86200"),
+        "AAPL": ("蘋果 AAPL 財報（確認日）", "iPhone組裝需求",  "企業財報/法說", "#F86200"),
+        "MSFT": ("微軟 MSFT 財報（確認日）", "AI雲端支出展望",  "企業財報/法說", "#F86200"),
+        "GOOGL":("Google 財報（確認日）",    "AI/雲端業務展望", "企業財報/法說", "#F86200"),
+        "META": ("Meta 財報（確認日）",      "廣告市場/AI投資", "企業財報/法說", "#F86200"),
     }
-    for sym, (title, sub) in KEY_STOCKS.items():
+    for sym, (title, sub, cat, color) in KEY_STOCKS.items():
         try:
             t = yf.Ticker(sym)
             ed = t.earnings_dates
             if ed is None or ed.empty:
                 continue
             for idx in ed.index:
-                dt = idx.date() if hasattr(idx, 'date') else idx
-                if today <= dt <= horizon:
-                    events.append({
-                        "date": dt,
-                        "title": title,
-                        "sub": sub,
-                        "category": "企業財報/法說",
-                        "cat_color": "#F86200",
-                    })
-                    break
+                try:
+                    dt = idx.date() if hasattr(idx, 'date') else idx
+                    if today <= dt <= horizon:
+                        key = "{}_{}".format(dt, title[:15])
+                        if key not in seen_ev:
+                            seen_ev.add(key)
+                            events.append({"date": dt, "title": title, "sub": sub,
+                                           "category": cat, "cat_color": color})
+                except Exception:
+                    pass
         except Exception:
             continue
 
-    # ── 台積電月營收（固定每月10日前後）──
-    try:
-        for offset in range(35):
-            dt = today + timedelta(days=offset)
-            if dt.day == 10:
-                events.append({
-                    "date": dt,
-                    "title": "台積電月營收公告（預估）",
-                    "sub": "每月10日前公布上月營收，影響外資當日買賣決策",
-                    "category": "台股事件",
-                    "cat_color": "#534AB7",
-                })
-                break
-    except Exception:
-        pass
-
-    # ── MSCI季度調整（3/6/9/12月最後一個週五）──
-    try:
-        import calendar
-        for month_offset in range(3):
-            check_month_dt = today.replace(day=1)
-            for _ in range(month_offset):
-                next_m = check_month_dt.replace(day=28) + timedelta(days=4)
-                check_month_dt = next_m.replace(day=1)
-            if check_month_dt.month in (3, 6, 9, 12):
-                last_day = calendar.monthrange(check_month_dt.year, check_month_dt.month)[1]
-                last_day_dt = check_month_dt.replace(day=last_day)
-                # 找最後一個週五
-                offset_to_fri = (last_day_dt.weekday() - 4) % 7
-                last_fri = last_day_dt - timedelta(days=offset_to_fri)
-                if today <= last_fri <= horizon:
-                    events.append({
-                        "date": last_fri,
-                        "title": "MSCI 季度調整生效",
-                        "sub": "被動基金強制進出，成分股當日波動放大，留意流動性",
-                        "category": "台股事件",
-                        "cat_color": "#534AB7",
-                    })
-    except Exception:
-        pass
-
-    # 去重 + 排序
-    seen_ev = set()
-    unique_events = []
-    for ev in sorted(events, key=lambda x: x["date"]):
-        key = "{}_{}".format(ev["date"], ev["title"][:20])
-        if key not in seen_ev:
-            seen_ev.add(key)
-            unique_events.append(ev)
-
-    return unique_events
-
-
-# ── 渲染函數 ──────────────────────────────────────────────
-
-def _render_metric_card(col, data):
-    """渲染單一盤前快訊卡片"""
-    if data["val"] is None or data["val"] == "—":
-        col.markdown("""
-<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;
-     padding:12px 14px;min-height:100px">
-  <div style="font-size:13px;color:#888;margin-bottom:5px">{name}</div>
-  <div style="font-size:18px;font-weight:600;color:#bbb">—</div>
-  <div style="font-size:11px;color:#bbb;margin-top:4px">資料抓取中...</div>
-</div>""".format(name=data["name"]), unsafe_allow_html=True)
-        return
-
-    chg = data["chg_pct"]
-    if chg is None:
-        chg_str = "—"
-        chg_color = "#888"
-        arrow = ""
-    elif chg > 0:
-        chg_str = "+{:.2f}%".format(chg)
-        chg_color = "#A32D2D"  # 台灣慣例：漲紅
-        arrow = "▲"
-    elif chg < 0:
-        chg_str = "{:.2f}%".format(chg)
-        chg_color = "#0F6E56"  # 台灣慣例：跌綠
-        arrow = "▼"
-    else:
-        chg_str = "0.00%"
-        chg_color = "#888"
-        arrow = "—"
-
-    col.markdown("""
-<div style="background:#ffffff;border-radius:8px;border:0.5px solid #e0e0e0;
-     padding:12px 14px;min-height:110px">
-  <div style="font-size:13px;color:#888;margin-bottom:5px">{name}</div>
-  <div style="font-size:22px;font-weight:700;color:#003781">{val}</div>
-  <div style="font-size:13px;font-weight:600;color:{cc};margin-top:2px">{arrow} {chg}</div>
-  <div style="font-size:14px;color:{sc};margin-top:5px;line-height:1.4">{sig}</div>
-</div>""".format(
-        name=data["name"], val=data["val"],
-        cc=chg_color, arrow=arrow, chg=chg_str,
-        sc=data["color"], sig=data["signal"]
-    ), unsafe_allow_html=True)
-
-
-def _render_news_item(item):
-    """
-    渲染單一新聞卡片。
-    CTO決策：完全放棄巢狀 HTML 字串拼接（Streamlit markdown parser 對複雜巢狀 div 解析不穩定）。
-    改用 st.container + 個別 st.markdown 分段渲染，每段都是獨立的簡單 HTML，不會互相干擾。
-    """
-    import html as _html
-
-    impact = item.get("impact", "中性")
-    bg     = item.get("bg",     "#f0f0f0")
-    fg     = item.get("fg",     "#414141")
-    title  = _html.escape(str(item.get("title",  "")))
-    summary= _html.escape(str(item.get("summary",""))).strip()
-    source = _html.escape(str(item.get("source", "")))
-    url    = item.get("url", "")
-
-    with st.container():
-        # 整張卡片用一個簡單的 border div 包住——但內容用 st 元件填，不用字串插值
-        st.markdown(
-            '<div style="border-radius:8px;border:0.5px solid #e0e0e0;'
-            'padding:12px 16px;margin-bottom:8px;background:#fff">',
-            unsafe_allow_html=True)
-
-        # Badge + 標題（同一行，用 flex）
-        link_part = ' <a href="{}" target="_blank" style="color:#185FA5;font-size:13px">[原文]</a>'.format(url) if url else ""
-        st.markdown(
-            '<div style="display:flex;align-items:flex-start;gap:10px">'
-            '<span style="flex-shrink:0;background:{bg};color:{fg};font-size:12px;'
-            'font-weight:600;padding:3px 10px;border-radius:4px;margin-top:2px">{impact}</span>'
-            '<span style="font-size:15px;font-weight:600;color:#003781;line-height:1.4">'
-            '{title}{link}</span></div>'.format(
-                bg=bg, fg=fg, impact=impact, title=title, link=link_part),
-            unsafe_allow_html=True)
-
-        # 摘要（只在有內容時渲染）
-        if summary:
-            st.markdown(
-                '<div style="font-size:14px;color:#555;line-height:1.6;'
-                'margin:6px 0 0 0;padding-left:2px">{}</div>'.format(summary),
-                unsafe_allow_html=True)
-
-        # 來源
-        st.markdown(
-            '<div style="font-size:12px;color:#aaa;margin-top:6px">來源：{}</div>'.format(source),
-            unsafe_allow_html=True)
-
-        # 關閉外層 div
-        st.markdown('</div>', unsafe_allow_html=True)
+    events.sort(key=lambda x: x["date"])
+    return events
 
 
 # ── Tab 主體 ──────────────────────────────────────────────
@@ -6819,7 +6685,7 @@ with tab_brief:
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
   <div style="width:22px;height:22px;border-radius:6px;background:#003781;color:#fff;
        font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center">3</div>
-  <span style="font-size:14px;font-weight:600;color:#003781">未來35天重大事件日曆</span>
+  <span style="font-size:14px;font-weight:600;color:#003781">未來180天重大事件日曆</span>
   <span style="font-size:13px;color:#888">Fed.gov ＋ BLS.gov ＋ Yahoo Finance ＋ 內建規則</span>
 </div>""", unsafe_allow_html=True)
 
