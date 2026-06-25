@@ -1342,23 +1342,29 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
     level_color = "#A32D2D" if (level_val and level_val >= 9) else ("#F86200" if (level_val and level_val >= 8) else "#003781")
     level_hint = twii_now.get("label", "") if twii_now else ""
 
+    def _is_valid_num(v):
+        if v is None: return False
+        try:
+            import math; return not math.isnan(float(v))
+        except Exception: return False
+
     col_bg1, col_bg2, col_bg3, col_bg4, col_bg5 = st.columns(5)
     _mini_card(col_bg1, "市場熱度", level_str, level_hint, level_color)
     _mini_card(col_bg2, "ROE",
-               "{}%".format(round(roe_now, 1)) if roe_now else "—",
-               "優秀(≥15%)" if roe_now and roe_now >= 15 else ("普通(≥8%)" if roe_now and roe_now >= 8 else "偏弱"),
-               "#0F6E56" if roe_now and roe_now >= 15 else ("#F86200" if roe_now and roe_now >= 8 else "#A32D2D") if roe_now else "#888")
+               "{}%".format(round(float(roe_now), 1)) if _is_valid_num(roe_now) else "—",
+               "優秀(≥15%)" if _is_valid_num(roe_now) and float(roe_now) >= 15 else ("普通(≥8%)" if _is_valid_num(roe_now) and float(roe_now) >= 8 else "偏弱") if _is_valid_num(roe_now) else "無資料",
+               "#0F6E56" if _is_valid_num(roe_now) and float(roe_now) >= 15 else ("#F86200" if _is_valid_num(roe_now) and float(roe_now) >= 8 else "#A32D2D") if _is_valid_num(roe_now) else "#888")
     _mini_card(col_bg3, "負債比",
-               "{}%".format(round(debt_now, 1)) if debt_now else "—",
-               "健康(<50%)" if debt_now and debt_now < 50 else ("偏高(<65%)" if debt_now and debt_now < 65 else "過高"),
-               "#0F6E56" if debt_now and debt_now < 50 else ("#F86200" if debt_now and debt_now < 65 else "#A32D2D") if debt_now else "#888")
+               "{}%".format(round(float(debt_now), 1)) if _is_valid_num(debt_now) else "—",
+               "健康(<50%)" if _is_valid_num(debt_now) and float(debt_now) < 50 else ("偏高(<65%)" if _is_valid_num(debt_now) and float(debt_now) < 65 else "過高") if _is_valid_num(debt_now) else "無資料",
+               "#0F6E56" if _is_valid_num(debt_now) and float(debt_now) < 50 else ("#F86200" if _is_valid_num(debt_now) and float(debt_now) < 65 else "#A32D2D") if _is_valid_num(debt_now) else "#888")
     _mini_card(col_bg4, "PB",
-               str(round(pb_now, 2)) if pb_now else "—",
-               "合理(<3)" if pb_now and pb_now < 3 else ("偏貴(<5)" if pb_now and pb_now < 5 else "高估") if pb_now else "")
+               str(round(float(pb_now), 2)) if _is_valid_num(pb_now) else "—",
+               "合理(<3)" if _is_valid_num(pb_now) and float(pb_now) < 3 else ("偏貴(<5)" if _is_valid_num(pb_now) and float(pb_now) < 5 else "高估") if _is_valid_num(pb_now) else "無資料")
     _mini_card(col_bg5, "EPS(年)",
-               str(round(eps_now, 2)) if eps_now else "—",
-               "獲利穩定" if eps_now and eps_now > 0 else "虧損" if eps_now else "",
-               "#0F6E56" if eps_now and eps_now > 0 else "#A32D2D" if eps_now else "#888")
+               str(round(float(eps_now), 2)) if _is_valid_num(eps_now) else "—",
+               "獲利穩定" if _is_valid_num(eps_now) and float(eps_now) > 0 else "虧損" if _is_valid_num(eps_now) else "無資料",
+               "#0F6E56" if _is_valid_num(eps_now) and float(eps_now) > 0 else "#A32D2D" if _is_valid_num(eps_now) else "#888")
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
     worst_dd = None
@@ -4192,6 +4198,15 @@ with tab3:
                     # ── 財務數字卡片 ──
                     col_f1, col_f2, col_f3, col_f4 = st.columns(4)
 
+                    def _is_valid(v):
+                        """None 和 NaN 都視為無效"""
+                        if v is None: return False
+                        try:
+                            import math
+                            return not math.isnan(float(v))
+                        except Exception:
+                            return False
+
                     def _fin_card(col, label, val_str, hint, val_color="#003781"):
                         col.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
@@ -4200,24 +4215,30 @@ with tab3:
   <div style="font-size:13px;color:#888;margin-top:5px">{ht}</div>
 </div>""".format(lb=label, vc=val_color, vl=val_str, ht=hint), unsafe_allow_html=True)
 
-                    roe_str  = "{}%".format(round(roe_q,  1)) if roe_q  else "—"
-                    debt_str = "{}%".format(round(debt_q, 1)) if debt_q else "—"
-                    pb_str   = str(round(pb_q,  2)) if pb_q  else "—"
-                    eps_str  = str(round(eps_q,  2)) if eps_q else "—"
+                    roe_ok  = _is_valid(roe_q)
+                    debt_ok = _is_valid(debt_q)
+                    pb_ok   = _is_valid(pb_q)
+                    eps_ok  = _is_valid(eps_q)
 
-                    roe_hint  = ("優秀(≥20%)" if roe_q  and roe_q  >= 20 else "良好(≥15%)" if roe_q  and roe_q  >= 15 else "普通(≥8%)"  if roe_q  and roe_q  >= 8  else "偏弱(<8%)")  if roe_q  else "—"
-                    debt_hint = ("健康(<30%)" if debt_q and debt_q < 30 else "合格(<50%)" if debt_q and debt_q < 50 else "偏高(<65%)" if debt_q and debt_q < 65 else "過高(≥65%)") if debt_q else "—"
-                    pb_hint   = ("便宜(<1.5)" if pb_q   and pb_q   < 1.5 else "合理(<3)"  if pb_q   and pb_q   < 3   else "偏貴(<5)"  if pb_q   and pb_q   < 5   else "高估(≥5)")  if pb_q   else "—"
-                    eps_hint  = ("獲利穩定" if eps_q and eps_q > 0 else "虧損") if eps_q else "—"
+                    roe_str  = "{}%".format(round(float(roe_q),  1)) if roe_ok  else "—"
+                    debt_str = "{}%".format(round(float(debt_q), 1)) if debt_ok else "—"
+                    pb_str   = str(round(float(pb_q),  2))           if pb_ok   else "—"
+                    eps_str  = str(round(float(eps_q), 2))           if eps_ok  else "—"
 
-                    roe_c  = "#0F6E56" if roe_q  and roe_q  >= 15 else "#F86200" if roe_q  and roe_q  >= 8  else "#A32D2D" if roe_q  else "#888"
-                    debt_c = "#0F6E56" if debt_q and debt_q < 50  else "#F86200" if debt_q and debt_q < 65  else "#A32D2D" if debt_q else "#888"
+                    roe_hint  = ("優秀(≥20%)" if roe_ok  and float(roe_q)  >= 20 else "良好(≥15%)" if roe_ok  and float(roe_q)  >= 15 else "普通(≥8%)"  if roe_ok  and float(roe_q)  >= 8  else "偏弱(<8%)")  if roe_ok  else "無資料"
+                    debt_hint = ("健康(<30%)" if debt_ok and float(debt_q) < 30 else "合格(<50%)" if debt_ok and float(debt_q) < 50 else "偏高(<65%)" if debt_ok and float(debt_q) < 65 else "過高(≥65%)") if debt_ok else "無資料"
+                    pb_hint   = ("便宜(<1.5)" if pb_ok   and float(pb_q)   < 1.5 else "合理(<3)"  if pb_ok   and float(pb_q)   < 3   else "偏貴(<5)"  if pb_ok   and float(pb_q)   < 5   else "高估(≥5)")  if pb_ok   else "無資料"
+                    eps_hint  = ("獲利穩定" if eps_ok and float(eps_q) > 0 else "虧損") if eps_ok else "無資料"
+
+                    roe_c  = "#0F6E56" if roe_ok  and float(roe_q)  >= 15 else "#F86200" if roe_ok  and float(roe_q)  >= 8  else "#A32D2D" if roe_ok  else "#888"
+                    debt_c = "#0F6E56" if debt_ok and float(debt_q) < 50  else "#F86200" if debt_ok and float(debt_q) < 65  else "#A32D2D" if debt_ok else "#888"
+                    pb_c   = "#0F6E56" if pb_ok   and float(pb_q)   < 3   else "#F86200" if pb_ok   and float(pb_q)   < 5   else "#A32D2D" if pb_ok   else "#888"
+                    eps_c  = "#0F6E56" if eps_ok  and float(eps_q)  > 0   else "#A32D2D" if eps_ok  else "#888"
 
                     _fin_card(col_f1, "ROE",     roe_str,  roe_hint,  roe_c)
                     _fin_card(col_f2, "負債比",  debt_str, debt_hint, debt_c)
-                    _fin_card(col_f3, "PB",      pb_str,   pb_hint)
-                    _fin_card(col_f4, "EPS(年)", eps_str,  eps_hint,
-                              "#0F6E56" if eps_q and eps_q > 0 else "#A32D2D" if eps_q else "#888")
+                    _fin_card(col_f3, "PB",      pb_str,   pb_hint,   pb_c)
+                    _fin_card(col_f4, "EPS(年)", eps_str,  eps_hint,  eps_c)
 
                     # ── 即時體質評分（用 calc_quality_score_v2）──
                     q_quick = calc_quality_score_v2(
@@ -5666,38 +5687,53 @@ def _render_metric_card(col, data):
 
 
 def _render_news_item(item):
-    """渲染單一新聞解讀卡片"""
+    """
+    渲染單一新聞卡片。
+    CTO決策：完全放棄巢狀 HTML 字串拼接（Streamlit markdown parser 對複雜巢狀 div 解析不穩定）。
+    改用 st.container + 個別 st.markdown 分段渲染，每段都是獨立的簡單 HTML，不會互相干擾。
+    """
     import html as _html
-    impact, bg, fg = item["impact"], item["bg"], item["fg"]
-    url = item.get("url", "")
-    link_html = ' <a href="{u}" target="_blank" style="color:#185FA5;font-size:13px;font-weight:400">[原文]</a>'.format(u=url) if url else ""
 
-    # 安全跳脫：避免 summary 內含 HTML 標籤破壞卡片結構
-    title_safe   = _html.escape(str(item.get("title",   "")))
-    summary_safe = _html.escape(str(item.get("summary", ""))) if item.get("summary") else ""
-    source_safe  = _html.escape(str(item.get("source",  "")))
+    impact = item.get("impact", "中性")
+    bg     = item.get("bg",     "#f0f0f0")
+    fg     = item.get("fg",     "#414141")
+    title  = _html.escape(str(item.get("title",  "")))
+    summary= _html.escape(str(item.get("summary",""))).strip()
+    source = _html.escape(str(item.get("source", "")))
+    url    = item.get("url", "")
 
-    summary_block = '<div style="font-size:14px;color:#414141;line-height:1.6;margin-top:4px">{}</div>'.format(
-        summary_safe) if summary_safe else ""
+    with st.container():
+        # 整張卡片用一個簡單的 border div 包住——但內容用 st 元件填，不用字串插值
+        st.markdown(
+            '<div style="border-radius:8px;border:0.5px solid #e0e0e0;'
+            'padding:12px 16px;margin-bottom:8px;background:#fff">',
+            unsafe_allow_html=True)
 
-    st.markdown("""
-<div style="border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 16px;
-     display:flex;align-items:flex-start;gap:14px;margin-bottom:8px;background:#fff">
-  <div style="flex-shrink:0;background:{bg};color:{fg};font-size:12px;font-weight:600;
-       padding:4px 10px;border-radius:4px;white-space:nowrap;margin-top:2px;min-width:48px;text-align:center">{impact}</div>
-  <div style="flex:1;min-width:0">
-    <div style="font-size:15px;font-weight:600;color:#003781;margin-bottom:4px;line-height:1.4">
-      {title}{link}
-    </div>
-    {summary}
-    <div style="font-size:12px;color:#aaa;margin-top:6px">來源：{src}</div>
-  </div>
-</div>""".format(
-        bg=bg, fg=fg, impact=impact,
-        title=title_safe, link=link_html,
-        summary=summary_block,
-        src=source_safe,
-    ), unsafe_allow_html=True)
+        # Badge + 標題（同一行，用 flex）
+        link_part = ' <a href="{}" target="_blank" style="color:#185FA5;font-size:13px">[原文]</a>'.format(url) if url else ""
+        st.markdown(
+            '<div style="display:flex;align-items:flex-start;gap:10px">'
+            '<span style="flex-shrink:0;background:{bg};color:{fg};font-size:12px;'
+            'font-weight:600;padding:3px 10px;border-radius:4px;margin-top:2px">{impact}</span>'
+            '<span style="font-size:15px;font-weight:600;color:#003781;line-height:1.4">'
+            '{title}{link}</span></div>'.format(
+                bg=bg, fg=fg, impact=impact, title=title, link=link_part),
+            unsafe_allow_html=True)
+
+        # 摘要（只在有內容時渲染）
+        if summary:
+            st.markdown(
+                '<div style="font-size:14px;color:#555;line-height:1.6;'
+                'margin:6px 0 0 0;padding-left:2px">{}</div>'.format(summary),
+                unsafe_allow_html=True)
+
+        # 來源
+        st.markdown(
+            '<div style="font-size:12px;color:#aaa;margin-top:6px">來源：{}</div>'.format(source),
+            unsafe_allow_html=True)
+
+        # 關閉外層 div
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ── Tab 主體 ──────────────────────────────────────────────
