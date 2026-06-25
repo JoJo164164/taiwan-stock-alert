@@ -1678,6 +1678,284 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
     if prices_dict and best_thr and best_h:
         _render_exit_strategy_v14(prices_dict, best_thr, best_h, code)
 
+    # ══════════════════════════════
+    # 8. 智能操作解讀（分析師＋交易員＋經理人三方觀點）
+    # ══════════════════════════════
+    if prices_dict and df_win is not None:
+        _render_smart_analysis(code, prices_dict, df_win, df_avg)
+
+
+def _render_smart_analysis(code, prices_dict, df_win, df_avg):
+    """
+    智能操作解讀引擎：從回測數據自動生成三層分析
+    ① 分析師：門檻特性解讀（哪個門檻才值得進）
+    ② 交易員：趨勢位置判斷（現在在哪個位置）
+    ③ 基金經理人：三情境操作劇本
+    """
+    _section_title("8", "智能操作解讀",
+                   "分析師 · 交易員 · 基金經理人三方觀點")
+
+    dates = sorted(prices_dict.keys())
+    price_list = [prices_dict[d] for d in dates]
+    curr_price = price_list[-1]
+
+    # ── 計算各門檻的「可靠勝率」（樣本≥10次的最高勝率門檻）──
+    thr_analysis = []
+    for _, row in df_win.iterrows():
+        thr_str = row["觸發門檻"]
+        samples = int(row.get("樣本數", 0))
+        try:
+            thr_int = int(thr_str.replace("%", ""))
+        except Exception:
+            continue
+
+        # 找最高勝率的持有天數（樣本≥5）
+        best_wr, best_h_for_thr, best_horizon_wr = 0, None, 0
+        for h in HORIZONS:
+            col = "{}天勝率".format(h)
+            try:
+                wr = float(str(row.get(col, "0")).replace("%", ""))
+                if wr > best_wr:
+                    best_wr = wr
+                    best_h_for_thr = h
+            except Exception:
+                pass
+
+        # 平均報酬（對應最佳持有天數）
+        avg_ret = None
+        try:
+            avg_row = df_avg[df_avg["觸發門檻"] == thr_str]
+            if not avg_row.empty and best_h_for_thr:
+                avg_ret = float(str(avg_row.iloc[0].get(
+                    "{}天平均報酬%".format(best_h_for_thr), "0")
+                ).replace("%", ""))
+        except Exception:
+            pass
+
+        thr_analysis.append({
+            "thr": thr_str, "thr_int": thr_int,
+            "samples": samples, "best_wr": best_wr,
+            "best_h": best_h_for_thr, "avg_ret": avg_ret,
+            "reliable": samples >= 10,
+        })
+
+    thr_analysis.sort(key=lambda x: x["thr_int"])  # 由淺到深
+
+    # 找主推門檻（可靠且勝率最高）
+    reliable = [t for t in thr_analysis if t["reliable"]]
+    if not reliable:
+        reliable = thr_analysis
+    main_thr   = max(reliable, key=lambda x: x["best_wr"]) if reliable else None
+    # 找積極加碼門檻（比主推更深且有樣本）
+    aggressive = None
+    if main_thr:
+        deeper = [t for t in thr_analysis if t["thr_int"] < main_thr["thr_int"] and t["samples"] >= 5]
+        if deeper:
+            aggressive = max(deeper, key=lambda x: x["best_wr"])
+
+    # ── 趨勢位置計算 ──
+    ma60  = sum(price_list[-60:])  / min(60,  len(price_list))
+    ma120 = sum(price_list[-120:]) / min(120, len(price_list))
+    ma240 = sum(price_list[-240:]) / min(240, len(price_list))
+
+    # 52週高低點
+    w52_high = max(price_list[-252:]) if len(price_list) >= 252 else max(price_list)
+    w52_low  = min(price_list[-252:]) if len(price_list) >= 252 else min(price_list)
+    pct_from_high = (curr_price - w52_high) / w52_high * 100
+    pct_from_low  = (curr_price - w52_low)  / w52_low  * 100
+
+    # 均線多空判斷
+    ma60_prev  = sum(price_list[-80:-20])  / 60  if len(price_list) >= 80  else ma60
+    ma120_prev = sum(price_list[-140:-20]) / 120 if len(price_list) >= 140 else ma120
+    ma60_rising  = ma60  > ma60_prev  * 1.005
+    ma120_rising = ma120 > ma120_prev * 1.003
+
+    if curr_price > ma60 > ma120 and ma60_rising and ma120_rising:
+        trend_label = "多頭格局"
+        trend_color = "#0F6E56"
+        trend_desc  = "股價站穩60日與120日均線之上，且均線方向向上，屬於多頭趨勢中的超跌機會。"
+    elif curr_price > ma120 and ma120_rising:
+        trend_label = "偏多格局"
+        trend_color = "#185FA5"
+        trend_desc  = "股價在120日均線之上，中期趨勢仍偏多，但短期均線已走平，需確認方向。"
+    elif curr_price < ma120 and not ma120_rising:
+        trend_label = "空頭格局"
+        trend_color = "#A32D2D"
+        trend_desc  = "股價跌破120日均線且均線方向向下，屬中期下跌趨勢，超跌反彈力道可能有限。"
+    else:
+        trend_label = "盤整格局"
+        trend_color = "#F86200"
+        trend_desc  = "股價在均線附近震盪，方向不明確，需等待明確突破方向再評估。"
+
+    # 股價位階判斷
+    if pct_from_high > -10:
+        pos_label = "歷史相對高位"
+        pos_color = "#A32D2D"
+        pos_desc  = "目前股價接近52週高點（距高點 {:.1f}%），估值相對偏高，超跌後的反彈空間可能有限。建議等待更深的修正再考慮進場。".format(pct_from_high)
+    elif pct_from_high > -25:
+        pos_label = "中間位置"
+        pos_color = "#F86200"
+        pos_desc  = "目前股價已從52週高點修正 {:.1f}%，進入中間位置。若業績無重大惡化，屬合理的進場觀察區。".format(abs(pct_from_high))
+    else:
+        pos_label = "歷史相對低位"
+        pos_color = "#0F6E56"
+        pos_desc  = "目前股價已從52週高點大幅修正 {:.1f}%，接近歷史低估區。若基本面未惡化，是系統設計最能發揮威力的進場時機。".format(abs(pct_from_high))
+
+    # ── 分析師觀點 ──
+    st.markdown("""
+<div style="background:#f8f9fa;border-radius:10px;border:0.5px solid #e0e0e0;padding:18px 22px;margin-bottom:12px">
+  <div style="font-size:13px;font-weight:600;color:#888;margin-bottom:10px;letter-spacing:1px">📊 分析師觀點：哪個門檻才值得進？</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px">""",
+        unsafe_allow_html=True)
+
+    # 各門檻概覽卡片
+    cards_html = ""
+    for t in thr_analysis:
+        is_main = (main_thr and t["thr"] == main_thr["thr"])
+        is_agg  = (aggressive and t["thr"] == aggressive["thr"])
+        border  = "2px solid #0F6E56" if is_main else ("2px solid #F86200" if is_agg else "0.5px solid #e0e0e0")
+        badge   = '<div style="font-size:11px;background:#0F6E56;color:#fff;padding:2px 8px;border-radius:3px;margin-bottom:6px;display:inline-block">★ 主推</div>' if is_main else (
+                  '<div style="font-size:11px;background:#F86200;color:#fff;padding:2px 8px;border-radius:3px;margin-bottom:6px;display:inline-block">▲ 積極</div>' if is_agg else "")
+        wr_color = "#0F6E56" if t["best_wr"] >= 80 else ("#F86200" if t["best_wr"] >= 65 else "#888")
+        reliable_tag = "" if t["reliable"] else '<div style="font-size:11px;color:#A32D2D;margin-top:4px">⚠ 樣本僅{}次</div>'.format(t["samples"])
+        cards_html += """
+<div style="background:#fff;border-radius:8px;border:{bd};padding:12px 14px">
+  {badge}
+  <div style="font-size:15px;font-weight:700;color:#003781">{thr}</div>
+  <div style="font-size:12px;color:#888;margin-top:3px">樣本 {n} 次</div>
+  <div style="font-size:18px;font-weight:700;color:{wrc};margin-top:6px">{wr:.1f}%</div>
+  <div style="font-size:12px;color:#888">最高勝率（持有{h}天）</div>
+  {rtag}
+</div>""".format(bd=border, badge=badge, thr=t["thr"], n=t["samples"],
+                 wrc=wr_color, wr=t["best_wr"], h=t["best_h"] or "—", rtag=reliable_tag)
+
+    st.markdown(cards_html + "</div>", unsafe_allow_html=True)
+
+    # 分析師文字解讀
+    analyst_text = ""
+    if main_thr:
+        analyst_text = "主推門檻 <strong>{}</strong>（{}次樣本，{:.0f}天勝率最高達 <strong>{:.1f}%</strong>）。".format(
+            main_thr["thr"], main_thr["samples"], main_thr["best_h"] or 0, main_thr["best_wr"])
+        if aggressive:
+            analyst_text += " 若市場恐慌性大跌觸及 <strong>{}</strong>（{}次樣本，勝率 {:.1f}%），則屬罕見的積極加碼機會。".format(
+                aggressive["thr"], aggressive["samples"], aggressive["best_wr"])
+        # 判斷「要等更深才進」
+        shallow = [t for t in thr_analysis if t["thr_int"] >= -10 and t["reliable"]]
+        if shallow and main_thr["thr_int"] < -10:
+            max_shallow_wr = max(t["best_wr"] for t in shallow)
+            analyst_text += " 注意：{} 門檻的勝率僅 {:.0f}%，遠低於主推門檻，<strong>代表這檔股票要等夠深的跌幅才值得進場，不宜在第一波下跌就追進。</strong>".format(
+                shallow[-1]["thr"], max_shallow_wr)
+
+    st.markdown('<div style="font-size:14px;color:#414141;line-height:1.8">{}</div></div>'.format(analyst_text),
+                unsafe_allow_html=True)
+
+    # ── 交易員觀點 ──
+    st.markdown("""
+<div style="background:#f8f9fa;border-radius:10px;border:0.5px solid #e0e0e0;padding:18px 22px;margin-bottom:12px">
+  <div style="font-size:13px;font-weight:600;color:#888;margin-bottom:12px;letter-spacing:1px">📉 交易員觀點：現在在哪個位置？</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">""",
+        unsafe_allow_html=True)
+
+    def _pos_card(label, value, sub, color="#003781"):
+        return """<div style="background:#fff;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
+  <div style="font-size:12px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:18px;font-weight:700;color:{c}">{vl}</div>
+  <div style="font-size:12px;color:#888;margin-top:3px">{sb}</div>
+</div>""".format(lb=label, c=color, vl=value, sb=sub)
+
+    pos_cards = (
+        _pos_card("現價", "{:.1f}".format(curr_price), "今日收盤")
+        + _pos_card("距52週高點", "{:.1f}%".format(pct_from_high),
+                    "{:.1f}元".format(w52_high),
+                    "#A32D2D" if pct_from_high > -10 else ("#F86200" if pct_from_high > -25 else "#0F6E56"))
+        + _pos_card("均線格局", trend_label, "60日/120日均線判斷", trend_color)
+    )
+    st.markdown(pos_cards + "</div>", unsafe_allow_html=True)
+
+    st.markdown("""
+<div style="background:#fff;border-radius:8px;border-left:4px solid {tc};padding:12px 16px;margin-bottom:4px">
+  <div style="font-size:13px;font-weight:600;color:{tc};margin-bottom:4px">{pl}</div>
+  <div style="font-size:14px;color:#414141;line-height:1.7">{pd}</div>
+</div>
+<div style="background:#fff;border-radius:8px;border-left:4px solid {tc2};padding:12px 16px">
+  <div style="font-size:13px;font-weight:600;color:{tc2};margin-bottom:4px">{tl}</div>
+  <div style="font-size:14px;color:#414141;line-height:1.7">{td}</div>
+</div></div>""".format(
+        tc=pos_color, pl=pos_label, pd=pos_desc,
+        tc2=trend_color, tl=trend_label, td=trend_desc),
+        unsafe_allow_html=True)
+
+    # ── 基金經理人觀點：三情境操作劇本 ──
+    st.markdown("""
+<div style="background:#f8f9fa;border-radius:10px;border:0.5px solid #e0e0e0;padding:18px 22px">
+  <div style="font-size:13px;font-weight:600;color:#888;margin-bottom:14px;letter-spacing:1px">💼 基金經理人觀點：三情境操作劇本</div>""",
+        unsafe_allow_html=True)
+
+    # 劇本一：等待
+    observe_thr = thr_analysis[1]["thr"] if len(thr_analysis) > 1 else (thr_analysis[0]["thr"] if thr_analysis else "-5%")
+    # 劇本二：建倉（主推門檻）
+    build_thr = main_thr["thr"] if main_thr else "-10%"
+    build_wr  = main_thr["best_wr"] if main_thr else 0
+    build_h   = main_thr["best_h"] if main_thr else 120
+    build_ret = main_thr["avg_ret"] if main_thr and main_thr["avg_ret"] else 0
+    # 劇本三：積極加碼（更深門檻）
+    agg_thr = aggressive["thr"] if aggressive else build_thr
+    agg_wr  = aggressive["best_wr"] if aggressive else build_wr
+    agg_h   = aggressive["best_h"] if aggressive else build_h
+
+    scenarios = [
+        {
+            "no": "情境一", "action": "持續觀察，不進場",
+            "trigger": "觸發門檻僅達 {} 以內".format(observe_thr),
+            "reason": "淺跌信號的歷史勝率不穩定，進場後容易承受更大浮虧。此時應耐心等待更深的修正。",
+            "position": "0%",
+            "color": "#888",
+        },
+        {
+            "no": "情境二", "action": "開始建倉",
+            "trigger": "觸發門檻達 {}".format(build_thr),
+            "reason": "歷史{}次樣本，最高勝率 {:.0f}%（持有{}天），平均報酬 {:.1f}%。這是系統驗證過的主要進場信號。".format(
+                main_thr["samples"] if main_thr else "—",
+                build_wr, build_h, build_ret),
+            "position": "50-70%",
+            "color": "#185FA5",
+        },
+        {
+            "no": "情境三", "action": "積極加碼",
+            "trigger": "觸發門檻達 {}（恐慌性大跌）".format(agg_thr),
+            "reason": "{}次樣本，勝率 {:.0f}%（持有{}天）。市場恐慌往往是最好的進場點，此時全力加碼。".format(
+                aggressive["samples"] if aggressive else "—",
+                agg_wr, agg_h),
+            "position": "100%",
+            "color": "#0F6E56",
+        },
+    ]
+
+    for s in scenarios:
+        st.markdown("""
+<div style="background:#fff;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px;margin-bottom:8px;
+     display:grid;grid-template-columns:90px 1fr 80px;gap:14px;align-items:start">
+  <div>
+    <div style="font-size:12px;color:#888">{no}</div>
+    <div style="font-size:15px;font-weight:700;color:{c};margin-top:3px">{action}</div>
+  </div>
+  <div>
+    <div style="font-size:13px;font-weight:600;color:#003781;margin-bottom:4px">📍 {trigger}</div>
+    <div style="font-size:13px;color:#414141;line-height:1.7">{reason}</div>
+  </div>
+  <div style="text-align:center;background:#f8f9fa;border-radius:6px;padding:8px">
+    <div style="font-size:11px;color:#888">建議倉位</div>
+    <div style="font-size:18px;font-weight:700;color:{c}">{pos}</div>
+  </div>
+</div>""".format(no=s["no"], c=s["color"], action=s["action"],
+                trigger=s["trigger"], reason=s["reason"], pos=s["position"]),
+            unsafe_allow_html=True)
+
+    st.markdown("""
+<div style="font-size:12px;color:#888;margin-top:8px;padding:8px 4px;border-top:0.5px solid #e0e0e0">
+本解讀由系統根據15年回測數據自動生成，不構成投資建議。實際操作請結合基本面與市場環境判斷。
+</div></div>""", unsafe_allow_html=True)
+
 @st.cache_data(ttl=86400)
 def get_industry_lookup():
     """
@@ -2616,17 +2894,17 @@ def calc_quality_score_v2(code, stock, roe, debt, bvps, price, pb, eps_hist, val
     if len(valid_years) >= 2:
         all_pos = all(eps_hist.get(yr, -1) > 0 for yr in valid_years[:3])
         if all_pos:
-            score_a += 2; detail_a.append("✅ 近3年EPS皆正(+2)")
+            score_a += 2; detail_a.append("✅ 近3年EPS皆正 +2")
         else:
-            detail_a.append("❌ 有虧損年度(0)")
+            detail_a.append("❌ 有虧損年度")
     else:
         detail_a.append("⚠️ EPS年度資料不足")
 
     if roe is not None:
-        if roe >= 20:   score_a += 3; detail_a.append("✅ ROE≥20%(+3)")
-        elif roe >= 15: score_a += 2; detail_a.append("✅ ROE≥15%(+2)")
-        elif roe >= 8:  score_a += 1; detail_a.append("🟡 ROE≥8%(+1)")
-        else:           detail_a.append("❌ ROE<8%(0)")
+        if roe >= 20:   score_a += 3; detail_a.append("✅ ROE≥20% +3")
+        elif roe >= 15: score_a += 2; detail_a.append("✅ ROE≥15% +2")
+        elif roe >= 8:  score_a += 1; detail_a.append("🟡 ROE≥8% +1")
+        else:           detail_a.append("❌ ROE<8%")
     else:
         detail_a.append("⚠️ ROE無資料")
     score_a = min(score_a, 5)
@@ -2638,17 +2916,17 @@ def calc_quality_score_v2(code, stock, roe, debt, bvps, price, pb, eps_hist, val
         newest = eps_hist.get(valid_years[0])
         oldest = eps_hist.get(valid_years[min(2, len(valid_years)-1)])
         if newest and oldest and oldest != 0 and newest > oldest:
-            score_b += 2; detail_b.append("✅ EPS近年成長(+2)")
+            score_b += 2; detail_b.append("✅ EPS近年成長 +2")
         else:
-            detail_b.append("❌ EPS未成長(0)")
+            detail_b.append("❌ EPS未成長")
     else:
         detail_b.append("⚠️ 資料不足")
 
     if debt is not None:
-        if debt < 30:   score_b += 3; detail_b.append("✅ 負債比<30%(+3)")
-        elif debt < 50: score_b += 2; detail_b.append("✅ 負債比<50%(+2)")
-        elif debt < 65: score_b += 1; detail_b.append("🟡 負債比<65%(+1)")
-        else:           detail_b.append("❌ 負債比≥65%(0)")
+        if debt < 30:   score_b += 3; detail_b.append("✅ 負債比<30% +3")
+        elif debt < 50: score_b += 2; detail_b.append("✅ 負債比<50% +2")
+        elif debt < 65: score_b += 1; detail_b.append("🟡 負債比<65% +1")
+        else:           detail_b.append("❌ 負債比≥65%")
     else:
         detail_b.append("⚠️ 負債比無資料")
     score_b = min(score_b, 5)
@@ -2658,23 +2936,23 @@ def calc_quality_score_v2(code, stock, roe, debt, bvps, price, pb, eps_hist, val
     detail_c = []
     if pb is not None and roe is not None and roe > 0:
         pb_roe = pb / roe
-        if pb_roe < 0.10:   score_c += 3; detail_c.append("✅ PB/ROE<0.10極優(+3)")
-        elif pb_roe < 0.20: score_c += 2; detail_c.append("✅ PB/ROE<0.20合理(+2)")
-        elif pb_roe < 0.35: score_c += 1; detail_c.append("🟡 PB/ROE<0.35尚可(+1)")
-        else:                detail_c.append("❌ PB/ROE≥0.35偏高(0)")
+        if pb_roe < 0.10:   score_c += 3; detail_c.append("✅ PB/ROE<0.10 +3")
+        elif pb_roe < 0.20: score_c += 2; detail_c.append("✅ PB/ROE<0.20 +2")
+        elif pb_roe < 0.35: score_c += 1; detail_c.append("🟡 PB/ROE<0.35 +1")
+        else:                detail_c.append("❌ PB/ROE≥0.35")
     elif pb is not None:
-        if pb < 1.5:   score_c += 2; detail_c.append("✅ PB<1.5便宜(+2)")
-        elif pb < 3:   score_c += 1; detail_c.append("🟡 PB<3尚可(+1)")
-        else:          detail_c.append("❌ PB≥3偏高(0)")
+        if pb < 1.5:   score_c += 2; detail_c.append("✅ PB<1.5 +2")
+        elif pb < 3:   score_c += 1; detail_c.append("🟡 PB<3 +1")
+        else:          detail_c.append("❌ PB≥3")
     else:
         detail_c.append("⚠️ PB無資料")
 
     if price is not None and price > 10:
-        score_c += 2; detail_c.append("✅ 股價>10流動性合格(+2)")
+        score_c += 2; detail_c.append("✅ 股價>10 +2")
     elif price is not None and price > 5:
-        score_c += 1; detail_c.append("🟡 股價5-10(+1)")
+        score_c += 1; detail_c.append("🟡 股價5-10 +1")
     else:
-        detail_c.append("❌ 股價≤5或無資料(0)")
+        detail_c.append("❌ 股價≤5")
     score_c = min(score_c, 5)
 
     total = score_a + score_b + score_c
@@ -2683,18 +2961,26 @@ def calc_quality_score_v2(code, stock, roe, debt, bvps, price, pb, eps_hist, val
     elif total >= 5:  grade = "⭐ 高風險";    grade_label = "高風險"
     else:             grade = "💀 Broken";    grade_label = "Broken Model"
 
+    # KY 股警示（境外上市，財報可信度較低）
+    name_str = stock.get('name', '') or ''
+    is_ky = "KY" in str(code).upper() or "-KY" in name_str.upper() or "KY" in name_str.upper()
+    ky_warning = "⛔ 境外上市（KY）股：財報申報在境外，資訊透明度低於台灣本土股，評分數字需謹慎參考。" if is_ky else ""
+
     data_warn = ("⚠️ 資料{:.0f}%完整（缺：{}），分數可能偏低".format(
         completeness, "、".join(missing_fields)) if completeness < 75 else "")
+
+    full_warning = " | ".join(filter(None, [ky_warning, data_warn])) if (ky_warning or data_warn) else ""
 
     return {
         "total": total, "score_a": score_a, "score_b": score_b, "score_c": score_c,
         "grade": grade, "grade_label": grade_label,
-        "detail_a": "｜".join(detail_a),
-        "detail_b": "｜".join(detail_b),
-        "detail_c": "｜".join(detail_c),
+        "detail_a": "<br>".join(detail_a),
+        "detail_b": "<br>".join(detail_b),
+        "detail_c": "<br>".join(detail_c),
         "data_completeness": round(completeness),
-        "data_warning": data_warn,
+        "data_warning": full_warning,
         "missing_fields": missing_fields,
+        "is_ky": is_ky,
     }
 
 
@@ -3573,7 +3859,7 @@ with tab6:
             df_15 = df_scored[df_scored['體質分數'] >= 15].sort_values('體質分數', ascending=False)
             df_13 = df_scored[(df_scored['體質分數'] >= 13) & (df_scored['體質分數'] < 15)].sort_values('體質分數', ascending=False)
 
-            cols_rank = ['體質分數', '體質等級', '代碼', '名稱', '產業別', 'ROE%', '負債比%',
+            cols_rank = ['體質分數', '體質等級', '代碼', '名稱', '股價', '產業別', 'ROE%', '負債比%',
                          '▶A獲利(0-5)', '▶B護城河(0-5)', '▶C安全邊際(0-5)']
 
             st.markdown("""
@@ -3618,7 +3904,7 @@ with tab6:
             df_top_quality = df_pool[df_pool['體質分數'].notna()].sort_values('體質分數', ascending=False).head(20)
             if not df_top_quality.empty:
                 st.markdown("#### 體質分數排行（前20名）")
-                cols_rank = ['體質分數', '體質等級', '代碼', '名稱', '產業別', 'ROE%', '負債比%',
+                cols_rank = ['體質分數', '體質等級', '代碼', '名稱', '股價', '產業別', 'ROE%', '負債比%',
                              '▶A獲利(0-5)', '▶B護城河(0-5)', '▶C安全邊際(0-5)']
                 available = [c for c in cols_rank if c in df_top_quality.columns]
                 show_html(df_top_quality[available].reset_index(drop=True))
@@ -3953,9 +4239,9 @@ with tab1:
                             cqa.metric("A 獲利能力", "{}/5".format(sa))
                             cqb.metric("B 護城河", "{}/5".format(sb))
                             cqc.metric("C 安全邊際", "{}/5".format(sc))
-                            st.caption("A：{}".format(row2.get('A細節','')))
-                            st.caption("B：{}".format(row2.get('B細節','')))
-                            st.caption("C：{}".format(row2.get('C細節','')))
+                            st.caption("A：{}".format(row2.get('A細節','').replace('｜',' | ')))
+                            st.caption("B：{}".format(row2.get('B細節','').replace('｜',' | ')))
+                            st.caption("C：{}".format(row2.get('C細節','').replace('｜',' | ')))
                     else:
                         st.warning("此代碼尚未評分，請先至【合格標的池】建立評分庫")
     else:
@@ -4075,9 +4361,9 @@ with tab3:
             score_a = pr.get('▶A獲利(0-5)', 0)
             score_b = pr.get('▶B護城河(0-5)', 0)
             score_c = pr.get('▶C安全邊際(0-5)', 0)
-            det_a   = pr.get('A細節', '')
-            det_b   = pr.get('B細節', '')
-            det_c   = pr.get('C細節', '')
+            det_a   = pr.get('A細節', '').replace('｜','<br>')
+            det_b   = pr.get('B細節', '').replace('｜','<br>')
+            det_c   = pr.get('C細節', '').replace('｜','<br>')
 
             # q_total：優先讀 pool 的體質分數；若為 None/NaN，從 A+B+C 重算
             import math as _math
@@ -4116,7 +4402,7 @@ with tab3:
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
   <div style="font-size:13px;color:#888;margin-bottom:5px">{lb}</div>
   <div style="font-size:22px;font-weight:700;color:#003781">{sc}<span style="font-size:13px;color:#888;font-weight:400"> /5</span></div>
-  <div style="font-size:13px;color:#888;margin-top:5px">{dt}</div>
+  <div style="font-size:13px;color:#888;margin-top:5px;line-height:1.8">{dt}</div>
 </div>""".format(lb=label, sc=score, dt=detail), unsafe_allow_html=True)
 
             if q_total is not None and isinstance(q_total, (int, float)):
@@ -4211,15 +4497,15 @@ with tab3:
                         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
                         col_qa, col_qb, col_qc, col_qtotal2 = st.columns(4)
                         for col_x, lbl, scr, det in [
-                            (col_qa, "A 獲利能力", sa, q_quick.get('detail_a', '')),
-                            (col_qb, "B 護城河",   sb, q_quick.get('detail_b', '')),
-                            (col_qc, "C 安全邊際", sc_val, q_quick.get('detail_c', '')),
+                            (col_qa, "A 獲利能力", sa, q_quick.get('detail_a', '').replace('｜','<br>')),
+                            (col_qb, "B 護城河",   sb, q_quick.get('detail_b', '').replace('｜','<br>')),
+                            (col_qc, "C 安全邊際", sc_val, q_quick.get('detail_c', '').replace('｜','<br>')),
                         ]:
                             col_x.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
   <div style="font-size:13px;color:#888;margin-bottom:5px">{lb}</div>
   <div style="font-size:22px;font-weight:700;color:#003781">{sc}<span style="font-size:13px;color:#888;font-weight:400"> /5</span></div>
-  <div style="font-size:13px;color:#888;margin-top:5px">{dt}</div>
+  <div style="font-size:13px;color:#888;margin-top:5px;line-height:1.8">{dt}</div>
 </div>""".format(lb=lbl, sc=scr, dt=det), unsafe_allow_html=True)
 
                         sc_color2 = "#0F6E56" if total_q >= 13 else ("#F86200" if total_q >= 9 else "#A32D2D")
@@ -4257,6 +4543,116 @@ with tab3:
         ref_threshold_display = st.session_state["bt_thr_str"]
 
         st.success("成功抓取 " + str(len(prices)) + " 個交易日（" + min(prices.keys()) + " ～ " + max(prices.keys()) + "）")
+
+        with st.spinner("計算各門檻回測中..."):
+            df_win, df_avg, df_dd = build_summary_tables(prices)
+
+        # ══════════════════════════════════════════════════════
+        # ⚠️ 三層風險保護機制（辯證結果：均值回歸策略的前提條件）
+        # ══════════════════════════════════════════════════════
+        _risk_flags = []
+
+        # ① KY 股 / 境外股警示
+        _code_upper = single_code.strip().upper()
+        _name_str = ""
+        try:
+            _df_all = get_all_tw_stocks()
+            _match = [s for s in _df_all if s['code'] == single_code.strip()]
+            if _match:
+                _name_str = _match[0].get('name', '')
+        except Exception:
+            pass
+        if "KY" in _code_upper or "KY" in _name_str.upper() or "-KY" in _name_str:
+            _risk_flags.append({
+                "level": "danger",
+                "icon": "⛔",
+                "title": "境外上市（KY）股票警示",
+                "body": "此標的為境外上市公司（KY股），財報申報地點在境外，資訊透明度和財報可信度低於台灣本土股。"
+                        "體質評分基於歷史 yfinance 數據，無法驗證財報真實性。"
+                        "均值回歸策略在 KY 股的有效性大幅降低，建議不納入交易標的。"
+            })
+
+        # ② 近期觸發頻率異常偵測
+        try:
+            dates_all = sorted(prices.keys())
+            result_thr = run_full_backtest(prices, thr_val)
+            if result_thr and result_thr["total"] > 0:
+                # 計算近6個月觸發次數
+                from datetime import datetime as _dt, timedelta as _td
+                cutoff_6m = (_dt.now() - _td(days=180)).strftime("%Y-%m-%d")
+                recent_triggers = [t for t in result_thr["triggers"] if t["date"] >= cutoff_6m]
+                recent_count = len(recent_triggers)
+                # 歷史平均：總次數 / 年數 / 2（換算成6個月）
+                total_years = max((len(dates_all) / 252), 1)
+                hist_avg_6m = result_thr["total"] / total_years / 2
+                if recent_count > hist_avg_6m * 2.5 and recent_count >= 5:
+                    _risk_flags.append({
+                        "level": "warning",
+                        "icon": "⚠️",
+                        "title": "近期觸發頻率異常密集",
+                        "body": "近6個月觸發 {} 次（歷史6個月平均 {:.1f} 次），為歷史平均的 {:.1f} 倍。"
+                                "觸發密集通常代表趨勢性下跌，而非情緒性超跌。"
+                                "均值回歸策略在趨勢性下跌中勝率大幅下降，建議等待觸發頻率回歸正常再進場。".format(
+                                    recent_count, hist_avg_6m,
+                                    recent_count / max(hist_avg_6m, 0.1))
+                    })
+        except Exception:
+            pass
+
+        # ③ 均線空頭排列警示（股價低於120日均線且均線向下）
+        try:
+            dates_all = sorted(prices.keys())
+            price_list = [prices[d] for d in dates_all]
+            if len(price_list) >= 120:
+                ma120_now  = sum(price_list[-120:]) / 120
+                ma120_prev = sum(price_list[-140:-20]) / 120 if len(price_list) >= 140 else ma120_now
+                curr_price_now = price_list[-1]
+                ma120_falling = ma120_now < ma120_prev * 0.99  # 均線過去3個月下跌超過1%
+                price_below_ma = curr_price_now < ma120_now
+                pct_below = (curr_price_now - ma120_now) / ma120_now * 100
+
+                if price_below_ma and ma120_falling:
+                    _risk_flags.append({
+                        "level": "warning",
+                        "icon": "📉",
+                        "title": "均線空頭排列：股價低於下降中的120日均線",
+                        "body": "現價 {:.1f}，120日均線 {:.1f}（現價低於均線 {:.1f}%），且均線方向向下。"
+                                "此型態代表中期趨勢偏空，超跌後的反彈力道通常比均線多頭時弱。"
+                                "建議等待股價站回120日均線後再考慮進場，或將觸發門檻提高至 -15% 以上。".format(
+                                    curr_price_now, ma120_now, abs(pct_below))
+                    })
+        except Exception:
+            pass
+
+        # ── 顯示風險警示 ──
+        if _risk_flags:
+            st.markdown("---")
+            st.markdown("""
+<div style="font-size:15px;font-weight:700;color:#A32D2D;margin-bottom:10px">
+  ⚠️ 進場前風險提示（共 {} 項，請逐一確認）
+</div>""".format(len(_risk_flags)), unsafe_allow_html=True)
+
+            for flag in _risk_flags:
+                bg   = "#FEE0CC" if flag["level"] == "danger" else "#FEF0CC"
+                bd   = "#A32D2D" if flag["level"] == "danger" else "#F86200"
+                tc   = "#A32D2D" if flag["level"] == "danger" else "#633806"
+                st.markdown("""
+<div style="background:{bg};border-left:5px solid {bd};border-radius:0 8px 8px 0;
+     padding:14px 18px;margin-bottom:10px">
+  <div style="font-size:14px;font-weight:700;color:{tc};margin-bottom:6px">{icon} {title}</div>
+  <div style="font-size:14px;color:#414141;line-height:1.7">{body}</div>
+</div>""".format(bg=bg, bd=bd, tc=tc, icon=flag["icon"],
+                title=flag["title"], body=flag["body"]), unsafe_allow_html=True)
+
+            if not any(f["level"] == "danger" for f in _risk_flags):
+                st.caption("以上為系統自動偵測的風險提示，不構成投資建議。請結合基本面判斷後決定是否進場。")
+        else:
+            st.markdown("""
+<div style="background:#E1F5EE;border-left:5px solid #0F6E56;border-radius:0 8px 8px 0;
+     padding:10px 18px;margin-bottom:6px">
+  <div style="font-size:14px;color:#085041">✅ 風險偵測通過：無 KY 股 / 觸發頻率正常 / 均線方向中性或偏多</div>
+</div>""", unsafe_allow_html=True)
+        st.markdown("---")
 
         with st.spinner("計算各門檻回測中..."):
             df_win, df_avg, df_dd = build_summary_tables(prices)
