@@ -406,10 +406,24 @@ def color_winrate(val):
     if val is None or str(val) in ["", "---", "待觀察"]:
         return ""
     try:
-        v = float(str(val).replace("%", ""))
+        v = float(str(val).replace("%", "").replace("⚠️", ""))
         if v >= 80:
-            return "background-color: #FF8C00; color: white; font-weight: bold"
+            return "background-color: #F86200; color: white; font-weight: bold"
         return ""
+    except:
+        return ""
+
+
+def color_winrate_80only(val):
+    """連續觸發勝率表專用：只塗 ≥80% 的格子，其他不塗色"""
+    if val is None or str(val) in ["", "---", "待觀察"]:
+        return ""
+    try:
+        raw = str(val).replace("⚠️", "").replace("%", "").strip()
+        v = float(raw)
+        if v >= 80:
+            return "background-color: #F86200; color: white; font-weight: bold"
+        return "color: #414141"
     except:
         return ""
 
@@ -736,7 +750,15 @@ def build_consec_analysis(prices_dict, threshold, horizon):
 
 
 
-def _render_conclusion_banner(level_now, best_thr, best_h):
+def _section_title(num, text, sub=""):
+    """統一區塊標題樣式：藍色數字徽章 + 標題文字"""
+    sub_html = '<div style="font-size:11px;color:#888;font-weight:400;margin-left:8px">{}</div>'.format(sub) if sub else ""
+    st.markdown("""
+<div style="display:flex;align-items:center;gap:8px;margin:8px 0 10px">
+  <div style="width:24px;height:24px;border-radius:6px;background:#003781;color:#fff;
+       font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0">{num}</div>
+  <span style="font-size:15px;font-weight:600;color:#003781">{text}</span>{sub}
+</div>""".format(num=num, text=text, sub=sub_html), unsafe_allow_html=True)
     """頂部一句話結論橫幅（v14新增）"""
     if level_now >= 9:
         bg, border, icon, title, sub = (
@@ -930,7 +952,7 @@ def _render_exit_strategy_v14(prices_dict, best_thr, best_h, code):
     三層出場邏輯：①時間到期、②報酬目標提前出場、③分批出場建議
     基於歷史回測的報酬分布計算各分位數，給出量化的出場價位建議。
     """
-    st.markdown("### 7️⃣ 出場策略")
+    _section_title("7", "出場策略", "不只看持有幾天——報酬提前到頂時怎麼做")
     st.caption("不只看「持有幾天」——當報酬提前到達目標時，歷史告訴你該怎麼做")
 
     if not best_thr or not best_h or not prices_dict:
@@ -1132,7 +1154,7 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
     # ══════════════════════════════
     # 1. 最佳觸發門檻
     # ══════════════════════════════
-    st.markdown("### 1️⃣ 建議觸發門檻")
+    _section_title("1", "建議觸發門檻")
 
     thr_scores = []
     for _, row in df_win.iterrows():
@@ -1205,7 +1227,7 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
     # ══════════════════════════════
     # 2. 最佳持有天數
     # ══════════════════════════════
-    st.markdown("### 2️⃣ 最佳持有天數建議")
+    _section_title("2", "最佳持有天數建議")
 
     if best_thr:
         thr_avg_row = df_avg[df_avg["觸發門檻"] == best_thr]
@@ -1254,7 +1276,7 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
     # ══════════════════════════════
     # 3. 歷史規律
     # ══════════════════════════════
-    st.markdown("### 3️⃣ 歷史規律")
+    _section_title("3", "歷史規律", "哪些年觸發後特別強或弱")
     st.caption("分析哪些年度觸發後表現特別好或特別差，幫助判斷「現在的市場環境」是否類似歷史上的好年或壞年")
 
     if df_yearly is not None and len(df_yearly) > 2:
@@ -1308,7 +1330,7 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
     # ══════════════════════════════
     # 4. 風險提示
     # ══════════════════════════════
-    st.markdown("### 4️⃣ 風險提示")
+    _section_title("4", "風險提示")
     st.caption("以下數字是指你進場後的報酬虧損幅度（相對你的進場價），不是股價的絕對跌幅")
 
     def get_dd_summary(thr_str, prices_dict):
@@ -1389,7 +1411,7 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
     # ══════════════════════════════
     # 5. 進場時機建議（v14重設計）
     # ══════════════════════════════
-    st.markdown("### 5️⃣ 進場時機")
+    _section_title("5", "進場時機")
     best_t_timing = None
     diff_timing   = None
     if prices_dict and best_thr:
@@ -1418,7 +1440,7 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
     # ══════════════════════════════
     # 6. 綜合操作建議（v14重設計）
     # ══════════════════════════════
-    st.markdown("### 6️⃣ 綜合操作建議")
+    _section_title("6", "綜合操作建議")
     level_now = twii_now["level"] if twii_now else 6
 
     # 頂部結論橫幅
@@ -1647,7 +1669,7 @@ def group_selector(key_prefix):
 # ==============================
 # 頁籤順序：使用說明→系統檢核→每日警示→批次回測→個股回測→全市場勝率
 # ==============================
-tab0, tab5, tab6, tab1, tab3, tab4, tab2 = st.tabs([
+tab0, tab5, tab6, tab1, tab3, tab4, tab2, tab_brief = st.tabs([
     "📖 使用說明",
     "🔧 系統檢核",
     "📋 合格標的池",
@@ -1655,6 +1677,7 @@ tab0, tab5, tab6, tab1, tab3, tab4, tab2 = st.tabs([
     "🔬 個股回測",
     "🏆 全市場勝率排行",
     "📊 批次回測",
+    "📰 每日市場簡報",
 ])
 
 # ==============================
@@ -4124,16 +4147,80 @@ with tab3:
         df_yearly, result_yr = build_yearly_table(prices, thr_val_f)
         if df_yearly is not None:
             st.markdown("### 年度明細 A：每年平均單次報酬%（門檻 " + thr_choice_f + "）")
-            st.caption("每年各筆報酬率算術平均。假設每次買相同股數或等金額，兩者結果相同。")
+            st.caption("每年各筆報酬率算術平均。橘色格 = 勝率 ≥ 80%。★ = 整體平均報酬最高的持有天數。")
             yr_cols = [str(h) + "天平均%" for h in HORIZONS]
-            show_html(heatmap_positive(df_yearly, yr_cols))
+
+            # 找合計/平均列報酬最高的欄位
+            best_yr_col_a = None
+            try:
+                avg_row_a = df_yearly[df_yearly["年度"] == "合計/平均"]
+                if not avg_row_a.empty:
+                    col_vals_a = {}
+                    for c in yr_cols:
+                        try:
+                            col_vals_a[c] = float(str(avg_row_a.iloc[0][c]).replace("%", ""))
+                        except Exception:
+                            pass
+                    if col_vals_a:
+                        best_yr_col_a = max(col_vals_a, key=col_vals_a.get)
+            except Exception:
+                pass
+
+            def _highlight_best_col_a(col):
+                if col.name == best_yr_col_a:
+                    return ["border-left: 3px solid #F86200; font-weight:600"] * len(col)
+                return [""] * len(col)
+
+            styled_a = heatmap_positive(df_yearly, yr_cols)
+            if best_yr_col_a:
+                styled_a = styled_a.apply(_highlight_best_col_a, axis=0)
+                # 在欄位標題旁加 ★ 說明
+                df_yr_display = df_yearly.copy()
+                df_yr_display.rename(columns={best_yr_col_a: best_yr_col_a.replace("平均%", "平均%★")}, inplace=True)
+                yr_cols_display = [c.replace("平均%", "平均%★") if c == best_yr_col_a else c for c in yr_cols]
+                styled_a = heatmap_positive(df_yr_display, yr_cols_display)
+                if best_yr_col_a.replace("平均%", "平均%★") in df_yr_display.columns:
+                    styled_a = styled_a.apply(
+                        lambda col: ["border-left: 3px solid #F86200; font-weight:600"] * len(col)
+                        if col.name == best_yr_col_a.replace("平均%", "平均%★") else [""] * len(col), axis=0)
+            show_html(styled_a)
 
             df_yearly_cum = build_yearly_cumulative_table(prices, thr_val_f)
             if df_yearly_cum is not None:
                 st.markdown("### 年度明細 B：每年實際累積損益%（門檻 " + thr_choice_f + "，按股價進場）")
-                st.caption("每年 Σ(出場價-進場價)/Σ進場價 × 100。假設每次買相同股數（1張），高價股權重較大。")
+                st.caption("每年 Σ(出場價-進場價)/Σ進場價 × 100。★ = 整體累積損益最高的持有天數。")
                 yr_cum_cols = [str(h) + "天累積%" for h in HORIZONS]
-                show_html(heatmap_positive(df_yearly_cum, yr_cum_cols))
+
+                best_yr_col_b = None
+                try:
+                    avg_row_b = df_yearly_cum[df_yearly_cum["年度"] == "合計/平均"]
+                    if not avg_row_b.empty:
+                        col_vals_b = {}
+                        for c in yr_cum_cols:
+                            try:
+                                col_vals_b[c] = float(str(avg_row_b.iloc[0][c]).replace("%", ""))
+                            except Exception:
+                                pass
+                        if col_vals_b:
+                            best_yr_col_b = max(col_vals_b, key=col_vals_b.get)
+                except Exception:
+                    pass
+
+                df_cum_display = df_yearly_cum.copy()
+                if best_yr_col_b:
+                    df_cum_display.rename(
+                        columns={best_yr_col_b: best_yr_col_b.replace("累積%", "累積%★")}, inplace=True)
+                    yr_cum_cols_display = [
+                        c.replace("累積%", "累積%★") if c == best_yr_col_b else c for c in yr_cum_cols]
+                    styled_b = heatmap_positive(df_cum_display, yr_cum_cols_display)
+                    marked_col = best_yr_col_b.replace("累積%", "累積%★")
+                    if marked_col in df_cum_display.columns:
+                        styled_b = styled_b.apply(
+                            lambda col: ["border-left: 3px solid #F86200; font-weight:600"] * len(col)
+                            if col.name == marked_col else [""] * len(col), axis=0)
+                else:
+                    styled_b = heatmap_positive(df_cum_display, yr_cum_cols)
+                show_html(styled_b)
 
         st.markdown("### 連續觸發分析")
         st.caption("第1天：首次觸發｜第2天：連跌第2天｜第3天：連跌第3天｜第4天以後：持續下跌")
@@ -4169,8 +4256,8 @@ with tab3:
         df_cwr = pd.DataFrame(consec_matrix_wr)
         df_cret = pd.DataFrame(consec_matrix_ret)
 
-        st.markdown("**勝率**")
-        show_html(heatmap_positive(df_cwr, h_cols))   # 熱力圖
+        st.markdown("**勝率（橘色 = 歷史勝率 ≥ 80%）**")
+        show_html(pd.DataFrame(consec_matrix_wr).style.map(color_winrate_80only, subset=h_cols))
         st.markdown("**平均報酬%**")
         show_html(heatmap_positive(df_cret, h_cols))
         st.caption("⚠️ = 樣本數 < 5筆")
@@ -4423,25 +4510,34 @@ with tab3:
         if first_thr:
             col_t1, col_t2 = st.columns(2)
             with col_t1:
-                st.success(
-                    "首選　**{}**\n\n"
-                    "15年觸發 **{}筆**　{}\n\n"
-                    "100天勝率 **{:.1f}%**　平均報酬 **{:.1f}%**".format(
-                        first_thr[0], first_thr[1], first_thr[5], first_thr[2], first_thr[3]))
+                st.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px">
+<div style="font-size:12px;color:#0F6E56;font-weight:600;margin-bottom:6px">首選　{t0}</div>
+<div style="font-size:13px;color:#003781">15年觸發 <strong>{t1}筆</strong>　{t5}</div>
+<div style="font-size:13px;color:#003781;margin-top:4px">100天勝率 <strong>{t2:.1f}%</strong>　平均報酬 <strong>{t3:.1f}%</strong></div>
+</div>""".format(t0=first_thr[0], t1=first_thr[1], t5=first_thr[5],
+                t2=first_thr[2], t3=first_thr[3]), unsafe_allow_html=True)
             with col_t2:
                 if second_thr:
-                    st.info(
-                        "次選　**{}**\n\n"
-                        "15年觸發 **{}筆**　{}\n\n"
-                        "100天勝率 **{:.1f}%**　平均報酬 **{:.1f}%**".format(
-                            second_thr[0], second_thr[1], second_thr[5], second_thr[2], second_thr[3]))
-                    if second_thr[2] > first_thr[2]:
-                        st.caption("次選勝率較高（**{:.1f}%** vs **{:.1f}%**），但觸發機會較少（{}筆 vs {}筆）".format(
-                            second_thr[2], first_thr[2], second_thr[1], first_thr[1]))
+                    st.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px">
+<div style="font-size:12px;color:#185FA5;font-weight:600;margin-bottom:6px">次選　{t0}</div>
+<div style="font-size:13px;color:#003781">15年觸發 <strong>{t1}筆</strong>　{t5}</div>
+<div style="font-size:13px;color:#003781;margin-top:4px">100天勝率 <strong>{t2:.1f}%</strong>　平均報酬 <strong>{t3:.1f}%</strong></div>
+{cmp}
+</div>""".format(t0=second_thr[0], t1=second_thr[1], t5=second_thr[5],
+                t2=second_thr[2], t3=second_thr[3],
+                cmp='<div style="font-size:11px;color:#888;margin-top:6px">次選勝率較高（{:.1f}% vs {:.1f}%），但觸發機會較少（{}筆 vs {}筆）</div>'.format(
+                    second_thr[2], first_thr[2], second_thr[1], first_thr[1])
+                if second_thr[2] > first_thr[2] else ""), unsafe_allow_html=True)
                 else:
-                    st.info("無次選門檻（其餘樣本不足 5 筆）")
+                    st.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px">
+<div style="font-size:12px;color:#888;margin-bottom:6px">次選</div>
+<div style="font-size:13px;color:#888">其餘門檻樣本不足 5 筆，不採用</div>
+</div>""", unsafe_allow_html=True)
             for sk in skipped_thrs:
-                st.caption("{} 理論勝率 **{:.1f}%** 最高，但僅 **{}筆**（< 5 筆不採用）".format(sk[0], sk[2], sk[1]))
+                st.caption("{} 理論勝率 {:.1f}% 最高，但僅 {}筆（< 5 筆不採用）".format(sk[0], sk[2], sk[1]))
             st.caption("樣本標準：≥30筆可靠　15–29筆尚可　5–14筆偏少　<5筆不採用")
 
         # ── 結論 4：建議持有天數 ──
@@ -4451,24 +4547,27 @@ with tab3:
             with col_h1:
                 cum_c_str = "{:.1f}%".format(best_cum_ret_c) if best_cum_ret_c is not None else "—"
                 cum_d_str = "{:.1f}%".format(best_cum_ret_d) if best_cum_ret_d is not None else "—"
-                st.success(
-                    "建議持有　**{} 天**\n\n"
-                    "歷史勝率　**{:.1f}%**\n\n"
-                    "平均單次報酬　**{:.1f}%**\n\n"
-                    "15年累積損益（按股數）　**{}**\n\n"
-                    "15年累積損益（等金額）　**{}**".format(
-                        best_h_suggestion, best_wr_val, best_avg_ret, cum_c_str, cum_d_str))
+                st.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px">
+<div style="font-size:12px;color:#0F6E56;font-weight:600;margin-bottom:6px">建議持有　{h} 天</div>
+<div style="font-size:13px;color:#003781">歷史勝率　<strong>{wr:.1f}%</strong></div>
+<div style="font-size:13px;color:#003781;margin-top:3px">平均單次報酬　<strong>{avg:.1f}%</strong></div>
+<div style="font-size:13px;color:#003781;margin-top:3px">15年累積損益（按股數）　<strong>{cc}</strong></div>
+<div style="font-size:13px;color:#003781;margin-top:3px">15年累積損益（等金額）　<strong>{cd}</strong></div>
+</div>""".format(h=best_h_suggestion, wr=best_wr_val, avg=best_avg_ret,
+                cc=cum_c_str, cd=cum_d_str), unsafe_allow_html=True)
             with col_h2:
                 if avg_dd_day and worst_dd_val:
-                    st.warning(
-                        "最大回撤參考\n\n"
-                        "歷史最深單筆回撤　**{:.1f}%**\n\n"
-                        "平均最低點出現於進場後第　**{:.0f} 天**\n\n"
-                        "進場後第 **{:.0f} 天**若浮虧仍超過 **{:.1f}%**，可評估是否停損\n\n"
-                        "注意：歷史數據顯示忍住浮虧的整體報酬通常優於停損".format(
-                            worst_dd_val, avg_dd_day, avg_dd_day, abs(worst_dd_val) * 0.8))
+                    st.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px">
+<div style="font-size:12px;color:#F86200;font-weight:600;margin-bottom:6px">最大回撤參考</div>
+<div style="font-size:13px;color:#003781">歷史最深單筆回撤　<strong>{wd:.1f}%</strong></div>
+<div style="font-size:13px;color:#003781;margin-top:3px">平均最低點出現於進場後第　<strong>{dd:.0f} 天</strong></div>
+<div style="font-size:13px;color:#414141;margin-top:3px">進場後第 <strong>{dd:.0f} 天</strong>若浮虧仍超過 <strong>{lim:.1f}%</strong>，可評估是否停損</div>
+<div style="font-size:11px;color:#888;margin-top:6px">注意：歷史數據顯示忍住浮虧的整體報酬通常優於停損</div>
+</div>""".format(wd=worst_dd_val, dd=avg_dd_day, lim=abs(worst_dd_val) * 0.8), unsafe_allow_html=True)
 
-        # ── 綜合決策：市場熱度燈號 + 體質/勝率 + 最終建議 ──
+        # ── 綜合決策 ──
         st.markdown("### 綜合決策")
 
         level = market_level
@@ -4520,46 +4619,55 @@ with tab3:
         col_q2, col_w2, col_final2 = st.columns(3)
         with col_q2:
             st.markdown("""
-<div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;text-align:center;height:150px">
-<div style="font-size:12px;color:#888;margin-bottom:6px">個股體質</div>
-<div style="background:#f0f0f0;border-radius:4px;height:6px;margin-bottom:10px">
-  <div style="background:{c};border-radius:4px;height:6px;width:{p}%"></div>
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:16px;text-align:center">
+<div style="font-size:12px;color:#888;margin-bottom:8px">個股體質</div>
+<div style="background:#e0e0e0;border-radius:4px;height:5px;margin-bottom:10px">
+  <div style="background:{c};border-radius:4px;height:5px;width:{p}%"></div>
 </div>
-<div style="font-size:32px;font-weight:700;color:{c}">{s}<span style="font-size:14px;color:#888"> / 15分</span></div>
-<div style="font-size:12px;color:{c};margin-top:6px">{g}</div>
+<div style="font-size:28px;font-weight:700;color:{c}">{s}<span style="font-size:13px;color:#888;font-weight:400"> / 15分</span></div>
+<div style="font-size:12px;color:{c};margin-top:5px">{g}</div>
 </div>""".format(c=q_color2, p=q_pct2, s=q_val2 if q_val2 else "—",
                 g=q_grade_bt if q_grade_bt else "未評分"), unsafe_allow_html=True)
 
         with col_w2:
             st.markdown("""
-<div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;text-align:center;height:150px">
-<div style="font-size:12px;color:#888;margin-bottom:6px">歷史勝率（持有{d}天）</div>
-<div style="background:#f0f0f0;border-radius:4px;height:6px;margin-bottom:10px">
-  <div style="background:{c};border-radius:4px;height:6px;width:{p}%"></div>
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:16px;text-align:center">
+<div style="font-size:12px;color:#888;margin-bottom:8px">歷史勝率（持有{d}天）</div>
+<div style="background:#e0e0e0;border-radius:4px;height:5px;margin-bottom:10px">
+  <div style="background:{c};border-radius:4px;height:5px;width:{p}%"></div>
 </div>
-<div style="font-size:32px;font-weight:700;color:{c}">{w}<span style="font-size:14px;color:#888">%</span></div>
-<div style="font-size:12px;color:{c};margin-top:6px">{lb}</div>
+<div style="font-size:28px;font-weight:700;color:{c}">{w}<span style="font-size:13px;color:#888;font-weight:400">%</span></div>
+<div style="font-size:12px;color:{c};margin-top:5px">{lb}</div>
 </div>""".format(c=w_color2, p=min(best_wr_val, 100), d=best_h_suggestion or "—",
                 w="{:.1f}".format(best_wr_val), lb=wr_label2), unsafe_allow_html=True)
 
         with col_final2:
             st.markdown("""
-<div style="background:#fff;border:2px solid {c};border-radius:8px;padding:16px;text-align:center;height:150px">
-<div style="font-size:12px;color:#888;margin-bottom:16px">綜合建議</div>
-<div style="font-size:26px;font-weight:700;color:{c};margin-bottom:8px">{a}</div>
+<div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:16px;text-align:center">
+<div style="font-size:12px;color:#888;margin-bottom:12px">綜合建議</div>
+<div style="font-size:24px;font-weight:700;color:{c};margin-bottom:6px">{a}</div>
 <div style="font-size:12px;color:#666">{r}</div>
 </div>""".format(c=f_color, a=f_advice, r=f_reason), unsafe_allow_html=True)
 
         st.caption("市場熱度為獨立警示，不納入評分　｜　本分析基於歷史回測數據自動生成，不構成投資建議")
 
-        # 分析建議
-
-        # 分析建議
+        # ── ④ 15分滿分標的清單入口 ──
         st.markdown("---")
-        st.markdown("### 回測分析報告（詳細）")
-        st.caption("根據上方回測數據自動生成，不構成投資建議")
-        if st.button("生成詳細分析報告", key="ai_analysis"):
-            render_analysis(single_code, df_win, df_avg, df_dd, df_yearly, thr_val, prices_dict=prices)
+        st.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 18px;display:flex;align-items:center;gap:14px">
+  <div style="font-size:20px">📋</div>
+  <div>
+    <div style="font-size:13px;font-weight:600;color:#003781;margin-bottom:2px">尋找 15/15 滿分或高分標的？</div>
+    <div style="font-size:12px;color:#414141">前往【<strong>合格標的池</strong>】頁籤 → 建立完整評分庫後，在「體質分數排行」中篩選 ≥13分（A級）或 15分（滿分）的標的清單。</div>
+    <div style="font-size:12px;color:#888;margin-top:2px">注意：合格標的池顯示的是「體質合格」清單，不代表目前已觸發進場信號。觸發信號請至【每日警示掃描】頁籤確認。</div>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+        # ── ②整合：詳細分析報告（不再是獨立按鈕區塊，直接展開）──
+        st.markdown("---")
+        st.markdown("### 詳細回測分析報告")
+        st.caption("以下為完整的七段式分析——觸發門檻、持有天數、歷史規律、風險提示、進場時機、綜合建議、出場策略")
+        render_analysis(single_code, df_win, df_avg, df_dd, df_yearly, thr_val, prices_dict=prices)
 
 # ==============================
 # TAB 4: 全市場勝率排行
@@ -4763,3 +4871,749 @@ with tab4:
                 "**📊 產業分布**\n\n" + industry_str + "\n\n" +
                 "→ 若特定產業集中出現，代表該產業在此門檻觸發後歷史上反彈能力較強，可作為產業輪動參考。"
             )
+
+
+# ==============================
+# TAB: 每日市場簡報
+# ==============================
+
+# ── 免費資料抓取函數 ──────────────────────────────────────
+
+@st.cache_data(ttl=900)
+def _brief_get_premarket():
+    """
+    第一區：盤前快訊
+    資料源：Yahoo Finance（yfinance）- 免費、無需API key
+    tickers: TSM ADR、NVDA ADR、費半SOX、台指期夜盤、美元指數、美債10年、VIX
+    回傳 dict: { ticker_key: {name, val, chg_pct, signal, signal_color} }
+    """
+    import yfinance as yf
+    TICKERS = [
+        ("TSM",    "台積電 ADR",       "半導體",  "tsm"),
+        ("NVDA",   "輝達 NVDA",        "半導體",  "nvda"),
+        ("AMD",    "超微 AMD",         "半導體",  "amd"),
+        ("AVGO",   "博通 AVGO",        "半導體",  "avgo"),
+        ("^SOX",   "費半指數 SOX",     "指數",    "sox"),
+        ("^GSPC",  "S&P 500",          "指數",    "sp500"),
+        ("TWN=F",  "台指期夜盤",       "台股",    "txf"),
+        ("DX-Y.NYB","美元指數 DXY",    "匯率",    "dxy"),
+        ("^TNX",   "美債10年殖利率",   "債券",    "tnx"),
+        ("^VIX",   "VIX 恐慌指數",     "風險",    "vix"),
+    ]
+    result = {}
+    for ticker, name, category, key in TICKERS:
+        try:
+            t = yf.Ticker(ticker)
+            hist = t.history(period="5d", interval="1d")
+            if hist.empty or len(hist) < 2:
+                result[key] = {"name": name, "category": category, "val": None,
+                               "chg_pct": None, "signal": "資料不足", "color": "#888"}
+                continue
+            latest = float(hist["Close"].iloc[-1])
+            prev   = float(hist["Close"].iloc[-2])
+            chg_pct = (latest - prev) / prev * 100
+
+            # 信號判斷
+            if key == "vix":
+                if latest > 30:
+                    sig, col = "⚠️ 極度恐慌（>30），市場高度不確定", "#A32D2D"
+                elif latest > 20:
+                    sig, col = "🟡 恐慌升溫（20-30），波動加大", "#F86200"
+                else:
+                    sig, col = "🟢 市場平靜（<20），風險偏好正常", "#0F6E56"
+            elif key == "tnx":
+                if chg_pct > 2:
+                    sig, col = "🔴 殖利率快速上升，科技股估值承壓", "#A32D2D"
+                elif chg_pct < -2:
+                    sig, col = "🟢 殖利率下行，有利成長股估值", "#0F6E56"
+                else:
+                    sig, col = "⚪ 殖利率變化平穩，影響中性", "#888"
+            elif key == "dxy":
+                if chg_pct > 0.5:
+                    sig, col = "🟡 美元走強，外資匯出壓力偏大", "#F86200"
+                elif chg_pct < -0.5:
+                    sig, col = "🟢 美元走弱，台幣升值利多外資留台", "#0F6E56"
+                else:
+                    sig, col = "⚪ 美元持穩，匯率影響中性", "#888"
+            elif key == "txf":
+                if chg_pct > 0.5:
+                    sig, col = "🟢 台指期夜盤偏多，今日開盤預估強勢", "#0F6E56"
+                elif chg_pct < -0.5:
+                    sig, col = "🔴 台指期夜盤偏空，今日開盤預估弱勢", "#A32D2D"
+                else:
+                    sig, col = "⚪ 台指期夜盤持平，開盤方向未定", "#888"
+            elif key in ("tsm", "nvda", "amd", "avgo"):
+                if chg_pct > 2:
+                    sig, col = "🟢 強勢大漲，供應鏈族群今日看漲", "#0F6E56"
+                elif chg_pct > 0:
+                    sig, col = "🟢 小幅上漲，偏多", "#0F6E56"
+                elif chg_pct > -2:
+                    sig, col = "🔴 小幅下跌，偏空", "#A32D2D"
+                else:
+                    sig, col = "🔴 明顯下跌，供應鏈族群今日承壓", "#A32D2D"
+            else:
+                if chg_pct > 0.5:
+                    sig, col = "🟢 上漲", "#0F6E56"
+                elif chg_pct < -0.5:
+                    sig, col = "🔴 下跌", "#A32D2D"
+                else:
+                    sig, col = "⚪ 持平", "#888"
+
+            # 格式化顯示值
+            if key == "tnx":
+                val_str = "{:.2f}%".format(latest)
+            elif key in ("dxy",):
+                val_str = "{:.2f}".format(latest)
+            elif key == "txf":
+                val_str = "{:,.0f}".format(latest)
+            else:
+                val_str = "{:,.2f}".format(latest)
+
+            result[key] = {
+                "name": name, "category": category,
+                "val": val_str,
+                "chg_pct": round(chg_pct, 2),
+                "signal": sig, "color": col,
+            }
+        except Exception as e:
+            result[key] = {"name": name, "category": category, "val": "—",
+                           "chg_pct": None, "signal": "抓取失敗", "color": "#888"}
+    return result
+
+
+@st.cache_data(ttl=3600)
+def _brief_get_foreign_net():
+    """
+    外資買賣超（TWSE OpenAPI）
+    資料源：https://openapi.twse.com.tw - 官方免費API
+    回傳 dict: {date, net_buy_b (億元), consecutive_days, direction}
+    """
+    try:
+        url = "https://openapi.twse.com.tw/v1/exchangeReport/MI_MARGN"
+        # 改用三大法人買賣超
+        url2 = "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_d"
+        # 實際用三大法人總計
+        url3 = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=tse_t00.tw"
+        # 最可靠：TWSE t86（三大法人）
+        res = requests.get(
+            "https://openapi.twse.com.tw/v1/exchangeReport/TWT44U",
+            timeout=8, headers={"User-Agent": "Mozilla/5.0"}
+        )
+        if res.status_code == 200 and res.text.strip() not in ["[]", ""]:
+            data = res.json()
+            if data:
+                latest = data[-1]
+                # 外資買超金額（單位：千元）
+                buy  = float(str(latest.get("外陸資買進股數","0")).replace(",",""))
+                sell = float(str(latest.get("外陸資賣出股數","0")).replace(",",""))
+                net  = (buy - sell) / 1e8  # 轉億股
+                date_str = latest.get("日期", "")
+                direction = "買超" if net > 0 else "賣超"
+                return {"date": date_str, "net": round(net, 2),
+                        "direction": direction, "unit": "億股"}
+    except Exception:
+        pass
+
+    # 備援：簡單提示
+    return {"date": "—", "net": None, "direction": "—", "unit": ""}
+
+
+@st.cache_data(ttl=43200)  # 12小時快取
+def _brief_get_news():
+    """
+    第二區：重大財經新聞（免費資料源）
+    資料源優先順序：
+      1. Reuters RSS（英文，免費公開）
+      2. Yahoo Finance ticker.news（英文，yfinance免費）
+      3. TWSE MoPS 重大訊息（中文台股，官方免費API）
+    翻譯：deep_translator（免費）→ 備援 googletrans
+    關鍵字分類：正面/負面/中性
+    """
+    import yfinance as yf
+    import feedparser
+    from datetime import datetime, timedelta
+    import re
+
+    POSITIVE_KW = [
+        "beat", "surge", "soar", "record", "upgrade", "raise", "raised guidance",
+        "strong demand", "record revenue", "outperform", "beat estimates",
+        "raises forecast", "strong quarter", "better than expected",
+        "優於預期", "上調", "創新高", "強勁需求", "獲利超預期", "調升目標價",
+    ]
+    NEGATIVE_KW = [
+        "miss", "slump", "plunge", "downgrade", "cut", "lower guidance",
+        "weak demand", "below estimates", "disappoints", "lowers forecast",
+        "warning", "recall", "layoffs", "tariff", "investigation",
+        "低於預期", "下調", "獲利警告", "需求疲弱", "裁員", "調降目標價",
+    ]
+
+    def classify(text):
+        t = text.lower()
+        pos = sum(1 for kw in POSITIVE_KW if kw.lower() in t)
+        neg = sum(1 for kw in NEGATIVE_KW if kw.lower() in t)
+        if pos > neg:
+            return "正面", "#E1F5EE", "#085041"
+        elif neg > pos:
+            return "負面", "#FEE0CC", "#993C1D"
+        else:
+            return "中性", "#f0f0f0", "#414141"
+
+    def try_translate(text):
+        """免費翻譯：deep_translator → googletrans → 原文"""
+        if not text or _is_mostly_chinese(text):
+            return text
+        try:
+            from deep_translator import GoogleTranslator
+            translated = GoogleTranslator(source='auto', target='zh-TW').translate(text[:500])
+            return translated if translated else text
+        except Exception:
+            pass
+        try:
+            from googletrans import Translator
+            tr = Translator()
+            result = tr.translate(text[:500], dest='zh-TW')
+            return result.text if result and result.text else text
+        except Exception:
+            pass
+        return text  # 翻譯失敗→原文
+
+    def _is_mostly_chinese(text):
+        chinese = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+        return chinese / max(len(text), 1) > 0.3
+
+    news_items = []
+    seen_titles = set()
+    cutoff = datetime.now() - timedelta(hours=72)
+
+    # ── 資料源1：Reuters Business RSS（免費）──
+    RSS_FEEDS = [
+        ("https://feeds.reuters.com/reuters/businessNews", "Reuters 商業"),
+        ("https://feeds.reuters.com/reuters/technology", "Reuters 科技"),
+        ("https://www.wsj.com/xml/rss/3_7085.xml", "WSJ 科技"),
+    ]
+    KEY_TOPICS = [
+        "nvidia", "tsmc", "micron", "taiwan semiconductor",
+        "fed", "fomc", "interest rate", "cpi", "inflation",
+        "apple", "microsoft", "broadcom", "amd",
+        "semiconductor", "ai chip", "hbm", "cowos",
+        "台積電", "輝達", "聯發科", "美光", "聯準會",
+    ]
+
+    for rss_url, src_name in RSS_FEEDS:
+        try:
+            feed = feedparser.parse(rss_url)
+            for entry in feed.entries[:30]:
+                title = entry.get("title", "").strip()
+                summary = entry.get("summary", entry.get("description", "")).strip()
+                # 過濾相關主題
+                combined = (title + " " + summary).lower()
+                if not any(kw.lower() in combined for kw in KEY_TOPICS):
+                    continue
+                # 去重
+                title_key = title[:60].lower()
+                if title_key in seen_titles:
+                    continue
+                seen_titles.add(title_key)
+                # 翻譯
+                title_zh = try_translate(title)
+                summary_zh = try_translate(summary[:200]) if summary else ""
+                impact, bg, fg = classify(title + " " + summary)
+                news_items.append({
+                    "title": title_zh,
+                    "summary": summary_zh,
+                    "impact": impact, "bg": bg, "fg": fg,
+                    "source": src_name,
+                    "url": entry.get("link", ""),
+                })
+                if len(news_items) >= 12:
+                    break
+        except Exception:
+            continue
+        if len(news_items) >= 12:
+            break
+
+    # ── 資料源2：Yahoo Finance ticker news（備援）──
+    if len(news_items) < 5:
+        for ticker_sym in ["TSM", "NVDA", "MU", "AVGO"]:
+            try:
+                t = yf.Ticker(ticker_sym)
+                for n in (t.news or [])[:5]:
+                    title = n.get("title", "").strip()
+                    title_key = title[:60].lower()
+                    if title_key in seen_titles:
+                        continue
+                    seen_titles.add(title_key)
+                    title_zh = try_translate(title)
+                    impact, bg, fg = classify(title)
+                    news_items.append({
+                        "title": title_zh,
+                        "summary": "",
+                        "impact": impact, "bg": bg, "fg": fg,
+                        "source": "Yahoo Finance",
+                        "url": n.get("link", ""),
+                    })
+                    if len(news_items) >= 12:
+                        break
+            except Exception:
+                continue
+
+    # ── 資料源3：TWSE MoPS 重大訊息（台股官方）──
+    try:
+        today_str = datetime.now().strftime("%Y%m%d")
+        mops_url = (
+            "https://mops.twse.com.tw/mops/web/ajax_t05st03"
+            "?encodeURIComponent=1&step=1&firstin=1&off=1"
+            "&TYPEK=sii&year={}&month={}&day={}&b_date={}&e_date={}".format(
+                datetime.now().year - 1911,
+                datetime.now().month,
+                datetime.now().day,
+                today_str, today_str
+            )
+        )
+        res = requests.get(mops_url, timeout=6,
+                           headers={"User-Agent": "Mozilla/5.0",
+                                    "Referer": "https://mops.twse.com.tw"})
+        if res.status_code == 200 and len(res.text) > 100:
+            import re as _re
+            # 簡單抓取重大訊息標題
+            matches = _re.findall(r'<td[^>]*>([^<]{10,80}重大[^<]{0,60})</td>', res.text)
+            for m in matches[:3]:
+                m = m.strip()
+                if m and m not in seen_titles:
+                    seen_titles.add(m)
+                    impact, bg, fg = classify(m)
+                    news_items.append({
+                        "title": m, "summary": "台灣證交所公開資訊觀測站重大訊息",
+                        "impact": impact, "bg": bg, "fg": fg,
+                        "source": "TWSE MoPS", "url": "",
+                    })
+    except Exception:
+        pass
+
+    return news_items[:10]  # 最多10條
+
+
+@st.cache_data(ttl=86400)  # 24小時快取（日曆不常變）
+def _brief_get_calendar():
+    """
+    第三區：未來30天重大事件日曆
+    資料源：
+      - Fed官方 (federalreserve.gov) → FOMC日期
+      - BLS官方 (bls.gov) → CPI/PPI/非農日期
+      - Yahoo Finance earnings_dates → 重大企業財報
+      - 內建規則 → TWSE MSCI調整（每季）
+    回傳 list of dict sorted by date
+    """
+    import yfinance as yf
+    from datetime import datetime, timedelta
+    import re
+
+    today = datetime.now().date()
+    horizon = today + timedelta(days=35)
+    events = []
+
+    # ── FOMC 日期（Fed官方 HTML，穩定可靠）──
+    try:
+        res = requests.get(
+            "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+            timeout=8, headers={"User-Agent": "Mozilla/5.0"}
+        )
+        if res.status_code == 200:
+            # 抓取年份+月份+日期
+            matches = re.findall(
+                r'(\w+)\s+(\d{1,2})(?:[-–](\d{1,2}))?,?\s*(\d{4})',
+                res.text
+            )
+            month_map = {
+                "January":1,"February":2,"March":3,"April":4,"May":5,"June":6,
+                "July":7,"August":8,"September":9,"October":10,"November":11,"December":12
+            }
+            for m in matches:
+                month_name, day_start, day_end, year = m
+                month_num = month_map.get(month_name.capitalize())
+                if not month_num:
+                    continue
+                try:
+                    end_day = int(day_end) if day_end else int(day_start)
+                    dt = datetime(int(year), month_num, end_day).date()
+                    if today <= dt <= horizon:
+                        events.append({
+                            "date": dt,
+                            "title": "FOMC 利率決策會議",
+                            "sub": "聯準會利率決策＋聲明發布，直接影響全球資金成本",
+                            "category": "美國總經",
+                            "cat_color": "#185FA5",
+                        })
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # ── BLS 重要數據發布日曆 ──
+    try:
+        res = requests.get(
+            "https://www.bls.gov/schedule/news_release/cpi.htm",
+            timeout=8, headers={"User-Agent": "Mozilla/5.0"}
+        )
+        if res.status_code == 200:
+            matches = re.findall(r'(\w+)\s+(\d{1,2}),?\s*(\d{4})', res.text)
+            month_map = {
+                "January":1,"February":2,"March":3,"April":4,"May":5,"June":6,
+                "July":7,"August":8,"September":9,"October":10,"November":11,"December":12
+            }
+            for month_name, day, year in matches:
+                month_num = month_map.get(month_name.capitalize())
+                if not month_num:
+                    continue
+                try:
+                    dt = datetime(int(year), month_num, int(day)).date()
+                    if today <= dt <= horizon:
+                        events.append({
+                            "date": dt,
+                            "title": "美國 CPI 通膨數據",
+                            "sub": "Fed最關鍵通膨指標，影響降息預期與科技股估值",
+                            "category": "美國總經",
+                            "cat_color": "#185FA5",
+                        })
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # ── 重大企業財報（Yahoo Finance earnings_dates）──
+    KEY_STOCKS = {
+        "NVDA": ("輝達 NVDA 財報", "GPU供給/AI需求能見度，直接影響台積電/廣達/鴻海訂單"),
+        "MU":   ("美光 MU 財報",   "HBM/DRAM展望，影響南亞科/旺宏/台灣記憶體族群"),
+        "AVGO": ("博通 AVGO 財報", "ASIC/網路晶片展望，影響台積電先進封裝需求"),
+        "TSM":  ("台積電法說會",   "CoWoS/3nm/2nm產能展望，是台股最重要單一事件"),
+        "AAPL": ("蘋果 AAPL 財報", "iPhone組裝需求，影響鴻海/和碩/台達電"),
+        "MSFT": ("微軟 MSFT 財報", "AI雲端支出展望，間接影響AI伺服器供應鏈"),
+    }
+    for sym, (title, sub) in KEY_STOCKS.items():
+        try:
+            t = yf.Ticker(sym)
+            ed = t.earnings_dates
+            if ed is None or ed.empty:
+                continue
+            for idx in ed.index:
+                dt = idx.date() if hasattr(idx, 'date') else idx
+                if today <= dt <= horizon:
+                    events.append({
+                        "date": dt,
+                        "title": title,
+                        "sub": sub,
+                        "category": "企業財報/法說",
+                        "cat_color": "#F86200",
+                    })
+                    break
+        except Exception:
+            continue
+
+    # ── 台積電月營收（固定每月10日前後）──
+    try:
+        for offset in range(35):
+            dt = today + timedelta(days=offset)
+            if dt.day == 10:
+                events.append({
+                    "date": dt,
+                    "title": "台積電月營收公告（預估）",
+                    "sub": "每月10日前公布上月營收，影響外資當日買賣決策",
+                    "category": "台股事件",
+                    "cat_color": "#534AB7",
+                })
+                break
+    except Exception:
+        pass
+
+    # ── MSCI季度調整（3/6/9/12月最後一個週五）──
+    try:
+        import calendar
+        for month_offset in range(3):
+            check_month_dt = today.replace(day=1)
+            for _ in range(month_offset):
+                next_m = check_month_dt.replace(day=28) + timedelta(days=4)
+                check_month_dt = next_m.replace(day=1)
+            if check_month_dt.month in (3, 6, 9, 12):
+                last_day = calendar.monthrange(check_month_dt.year, check_month_dt.month)[1]
+                last_day_dt = check_month_dt.replace(day=last_day)
+                # 找最後一個週五
+                offset_to_fri = (last_day_dt.weekday() - 4) % 7
+                last_fri = last_day_dt - timedelta(days=offset_to_fri)
+                if today <= last_fri <= horizon:
+                    events.append({
+                        "date": last_fri,
+                        "title": "MSCI 季度調整生效",
+                        "sub": "被動基金強制進出，成分股當日波動放大，留意流動性",
+                        "category": "台股事件",
+                        "cat_color": "#534AB7",
+                    })
+    except Exception:
+        pass
+
+    # 去重 + 排序
+    seen_ev = set()
+    unique_events = []
+    for ev in sorted(events, key=lambda x: x["date"]):
+        key = "{}_{}".format(ev["date"], ev["title"][:20])
+        if key not in seen_ev:
+            seen_ev.add(key)
+            unique_events.append(ev)
+
+    return unique_events
+
+
+# ── 渲染函數 ──────────────────────────────────────────────
+
+def _render_metric_card(col, data):
+    """渲染單一盤前快訊卡片"""
+    if data["val"] is None or data["val"] == "—":
+        col.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;
+     padding:12px 14px;min-height:100px">
+  <div style="font-size:11px;color:#888;margin-bottom:4px">{name}</div>
+  <div style="font-size:18px;font-weight:600;color:#bbb">—</div>
+  <div style="font-size:11px;color:#bbb;margin-top:4px">資料抓取中...</div>
+</div>""".format(name=data["name"]), unsafe_allow_html=True)
+        return
+
+    chg = data["chg_pct"]
+    if chg is None:
+        chg_str = "—"
+        chg_color = "#888"
+        arrow = ""
+    elif chg > 0:
+        chg_str = "+{:.2f}%".format(chg)
+        chg_color = "#A32D2D"  # 台灣慣例：漲紅
+        arrow = "▲"
+    elif chg < 0:
+        chg_str = "{:.2f}%".format(chg)
+        chg_color = "#0F6E56"  # 台灣慣例：跌綠
+        arrow = "▼"
+    else:
+        chg_str = "0.00%"
+        chg_color = "#888"
+        arrow = "—"
+
+    col.markdown("""
+<div style="background:#ffffff;border-radius:8px;border:0.5px solid #e0e0e0;
+     padding:12px 14px;min-height:110px">
+  <div style="font-size:11px;color:#888;margin-bottom:3px">{name}</div>
+  <div style="font-size:18px;font-weight:600;color:#003781">{val}</div>
+  <div style="font-size:13px;font-weight:600;color:{cc};margin-top:2px">{arrow} {chg}</div>
+  <div style="font-size:11px;color:{sc};margin-top:5px;line-height:1.4">{sig}</div>
+</div>""".format(
+        name=data["name"], val=data["val"],
+        cc=chg_color, arrow=arrow, chg=chg_str,
+        sc=data["color"], sig=data["signal"]
+    ), unsafe_allow_html=True)
+
+
+def _render_news_item(item):
+    """渲染單一新聞解讀卡片"""
+    impact, bg, fg = item["impact"], item["bg"], item["fg"]
+    url = item.get("url", "")
+    link_html = ' <a href="{}" target="_blank" style="color:#185FA5;font-size:11px">[原文]</a>'.format(url) if url else ""
+
+    st.markdown("""
+<div style="border-radius:8px;border:0.5px solid #e0e0e0;padding:10px 14px;
+     display:flex;align-items:flex-start;gap:12px;margin-bottom:6px">
+  <div style="flex-shrink:0;background:{bg};color:{fg};font-size:10px;font-weight:600;
+       padding:3px 8px;border-radius:4px;white-space:nowrap;margin-top:2px">{impact}</div>
+  <div style="flex:1">
+    <div style="font-size:13px;font-weight:600;color:#003781;margin-bottom:3px">
+      {title}{link}
+    </div>
+    {summary_html}
+    <div style="font-size:10px;color:#888;margin-top:3px">來源：{src}</div>
+  </div>
+</div>""".format(
+        bg=bg, fg=fg, impact=impact,
+        title=item["title"], link=link_html,
+        summary_html='<div style="font-size:12px;color:#414141;line-height:1.5">{}</div>'.format(
+            item["summary"]) if item.get("summary") else "",
+        src=item["source"]
+    ), unsafe_allow_html=True)
+
+
+# ── Tab 主體 ──────────────────────────────────────────────
+
+with tab_brief:
+    st.markdown("## 📰 每日市場簡報")
+    st.caption(
+        "資料源：Yahoo Finance（盤前快訊）｜ Reuters/Yahoo RSS（新聞）｜ "
+        "Fed.gov / BLS.gov（總經日曆）｜ TWSE MoPS（台股重大訊息）｜ 全部免費"
+    )
+
+    # ── 第一區：盤前快訊 ──────────────────────────────────
+    st.markdown("---")
+    st.markdown("""
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+  <div style="width:22px;height:22px;border-radius:6px;background:#003781;color:#fff;
+       font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center">1</div>
+  <span style="font-size:14px;font-weight:600;color:#003781">今日盤前快訊</span>
+  <span style="font-size:11px;color:#888">每15分鐘自動更新 ｜ 資料源：Yahoo Finance</span>
+</div>""", unsafe_allow_html=True)
+
+    with st.spinner("抓取盤前數據中..."):
+        premarket = _brief_get_premarket()
+
+    # 第一列：4個半導體ADR
+    st.markdown("**半導體 ADR**")
+    c1, c2, c3, c4 = st.columns(4)
+    for col, key in zip([c1, c2, c3, c4], ["tsm", "nvda", "amd", "avgo"]):
+        _render_metric_card(col, premarket.get(key, {"name": key, "val": None, "chg_pct": None, "signal": "—", "color": "#888"}))
+
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+
+    # 第二列：指數 + 台股 + 總經
+    st.markdown("**大盤指數 ｜ 台股 ｜ 總經**")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    for col, key in zip([c1, c2, c3, c4, c5, c6],
+                        ["sox", "sp500", "txf", "dxy", "tnx", "vix"]):
+        _render_metric_card(col, premarket.get(key, {"name": key, "val": None, "chg_pct": None, "signal": "—", "color": "#888"}))
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    # 外資買賣超
+    try:
+        foreign = _brief_get_foreign_net()
+        if foreign["net"] is not None:
+            net_v = foreign["net"]
+            direction = "買超" if net_v > 0 else "賣超"
+            net_color = "#A32D2D" if net_v > 0 else "#0F6E56"
+            st.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;
+     padding:10px 16px;display:flex;align-items:center;gap:16px;margin-top:4px">
+  <div style="font-size:12px;color:#888">外資買賣超（TWSE）</div>
+  <div style="font-size:16px;font-weight:600;color:{c}">{dir} {val}{unit}</div>
+  <div style="font-size:11px;color:#888">{date}</div>
+</div>""".format(c=net_color, dir=direction,
+                val=abs(round(net_v, 2)),
+                unit=" " + foreign["unit"],
+                date=foreign.get("date", "")), unsafe_allow_html=True)
+    except Exception:
+        pass
+
+    # ── 第二區：重大財經新聞 ──────────────────────────────
+    st.markdown("---")
+    st.markdown("""
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+  <div style="width:22px;height:22px;border-radius:6px;background:#003781;color:#fff;
+       font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center">2</div>
+  <span style="font-size:14px;font-weight:600;color:#003781">重大財經事件解讀</span>
+  <span style="font-size:11px;color:#888">近72小時 ｜ Reuters RSS ＋ Yahoo Finance ＋ TWSE MoPS ｜ 自動中文化</span>
+</div>""", unsafe_allow_html=True)
+    st.caption("關鍵字涵蓋：台積電・輝達・美光・博通・AMD・蘋果・FOMC・CPI・半導體・AI晶片")
+
+    col_news, col_refresh = st.columns([6, 1])
+    with col_refresh:
+        if st.button("🔄 重新整理", key="brief_news_refresh"):
+            st.cache_data.clear()
+            st.rerun()
+
+    with st.spinner("抓取並翻譯新聞中（首次較慢，後續有快取）..."):
+        news_items = _brief_get_news()
+
+    if news_items:
+        for item in news_items:
+            _render_news_item(item)
+    else:
+        st.info(
+            "目前無法抓到符合關鍵字的財經新聞。\n\n"
+            "可能原因：網路連線限制（Streamlit Cloud部分RSS被封）。\n"
+            "建議：點「重新整理」再試一次，或直接查閱 Reuters.com / Bloomberg.com。"
+        )
+
+    # ── 第三區：事件日曆 ──────────────────────────────────
+    st.markdown("---")
+    st.markdown("""
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+  <div style="width:22px;height:22px;border-radius:6px;background:#003781;color:#fff;
+       font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center">3</div>
+  <span style="font-size:14px;font-weight:600;color:#003781">未來35天重大事件日曆</span>
+  <span style="font-size:11px;color:#888">Fed.gov ＋ BLS.gov ＋ Yahoo Finance ＋ 內建規則</span>
+</div>""", unsafe_allow_html=True)
+
+    CAT_BADGE = {
+        "美國總經":    ("#E6F1FB", "#0C447C"),
+        "企業財報/法說": ("#FEF0CC", "#633806"),
+        "台股事件":    ("#EEEDFE", "#3C3489"),
+    }
+    CAT_DESC = {
+        "美國總經":    "影響全球資金成本與風險偏好",
+        "企業財報/法說": "台股供應鏈訂單能見度關鍵",
+        "台股事件":    "台股市場結構性資金移動",
+    }
+
+    with st.spinner("載入事件日曆..."):
+        events = _brief_get_calendar()
+
+    if events:
+        from datetime import date as _date
+        today_d = __import__('datetime').datetime.now().date()
+
+        for ev in events:
+            ev_date = ev["date"]
+            is_today = (ev_date == today_d)
+            is_past  = (ev_date < today_d)
+
+            date_str = ev_date.strftime("%-m/%-d") if hasattr(ev_date, 'strftime') else str(ev_date)
+            weekday_map = ["一","二","三","四","五","六","日"]
+            weekday_str = weekday_map[ev_date.weekday()] if hasattr(ev_date, 'weekday') else ""
+
+            cat = ev["category"]
+            badge_bg, badge_fg = CAT_BADGE.get(cat, ("#e0e0e0", "#414141"))
+            row_bg = "#FEF0CC" if is_today else ("#f8f8f8" if is_past else "#ffffff")
+            opacity = "0.55" if is_past else "1"
+
+            st.markdown("""
+<div style="border-radius:8px;border:0.5px solid #e0e0e0;padding:9px 14px;
+     display:flex;align-items:center;gap:12px;margin-bottom:5px;
+     background:{bg};opacity:{op}">
+  <div style="width:52px;flex-shrink:0;text-align:center">
+    <div style="font-size:16px;font-weight:600;color:#003781">{d}</div>
+    <div style="font-size:10px;color:#888">週{wd}</div>
+  </div>
+  <div style="width:8px;height:8px;border-radius:50%;background:{cc};flex-shrink:0"></div>
+  <div style="flex:1">
+    <div style="font-size:13px;font-weight:600;color:#003781">{title}</div>
+    <div style="font-size:11px;color:#888;margin-top:1px">{sub}</div>
+  </div>
+  <div style="flex-shrink:0;background:{bb};color:{bf};font-size:10px;
+       font-weight:600;padding:2px 8px;border-radius:4px;white-space:nowrap">{cat}</div>
+  {today_tag}
+</div>""".format(
+                bg=row_bg, op=opacity,
+                d=date_str, wd=weekday_str,
+                cc=ev["cat_color"],
+                title=ev["title"], sub=ev["sub"],
+                bb=badge_bg, bf=badge_fg, cat=cat,
+                today_tag='<div style="flex-shrink:0;background:#003781;color:#fff;font-size:10px;padding:2px 6px;border-radius:3px">今天</div>' if is_today else ""
+            ), unsafe_allow_html=True)
+
+        # 圖例
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        legend_html = "<div style='display:flex;gap:16px;flex-wrap:wrap'>"
+        for cat, (bb, bf) in CAT_BADGE.items():
+            legend_html += """
+<div style="display:flex;align-items:center;gap:5px">
+  <div style="background:{bb};color:{bf};font-size:10px;font-weight:600;
+       padding:2px 8px;border-radius:4px">{cat}</div>
+  <span style="font-size:11px;color:#888">{desc}</span>
+</div>""".format(bb=bb, bf=bf, cat=cat, desc=CAT_DESC.get(cat, ""))
+        legend_html += "</div>"
+        st.markdown(legend_html, unsafe_allow_html=True)
+
+    else:
+        st.info(
+            "近35天內未找到已知重大事件。\n\n"
+            "可能原因：Fed/BLS官網暫時無法連線（Streamlit Cloud境外IP有時受限）。\n"
+            "建議：參考 federalreserve.gov 或 bls.gov 的官方日曆。"
+        )
+
+    st.markdown("---")
+    st.caption(
+        "⚡ 快取策略：盤前快訊15分鐘更新 ｜ 新聞12小時更新 ｜ 事件日曆24小時更新。"
+        "若需立即刷新請點「重新整理」按鈕或重新整理頁面。"
+        "本頁所有資料均來自公開免費資料源，不含任何付費API。"
+    )
