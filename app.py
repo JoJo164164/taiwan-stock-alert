@@ -5138,7 +5138,7 @@ def _brief_get_premarket():
         ("AVGO",   "博通 AVGO",        "半導體",  "avgo"),
         ("^SOX",   "費半指數 SOX",     "指數",    "sox"),
         ("^GSPC",  "S&P 500",          "指數",    "sp500"),
-        ("TWN=F",  "台指期夜盤",       "台股",    "txf"),
+        ("TW=F",   "台指期夜盤",       "台股",    "txf"),
         ("DX-Y.NYB","美元指數 DXY",    "匯率",    "dxy"),
         ("^TNX",   "美債10年殖利率",   "債券",    "tnx"),
         ("^VIX",   "VIX 恐慌指數",     "風險",    "vix"),
@@ -5328,6 +5328,20 @@ def _brief_get_news():
     seen_titles = set()
     cutoff = datetime.now() - timedelta(hours=72)
 
+    def _strip_html(text):
+        """把 HTML 標籤全部剝掉，只保留純文字"""
+        import re as _re2
+        import html as _html2
+        if not text:
+            return ""
+        # 先解碼 HTML entities（&amp; &lt; 等）
+        text = _html2.unescape(str(text))
+        # 再剃掉所有 HTML 標籤
+        text = _re2.sub(r'<[^>]+>', '', text)
+        # 清理多餘空白
+        text = ' '.join(text.split())
+        return text.strip()
+
     # ── 資料源1：Reuters Business RSS（免費）──
     RSS_FEEDS = [
         ("https://feeds.reuters.com/reuters/businessNews", "Reuters 商業"),
@@ -5346,8 +5360,8 @@ def _brief_get_news():
         try:
             feed = feedparser.parse(rss_url)
             for entry in feed.entries[:30]:
-                title = entry.get("title", "").strip()
-                summary = entry.get("summary", entry.get("description", "")).strip()
+                title = _strip_html(entry.get("title", "").strip())
+                summary = _strip_html(entry.get("summary", entry.get("description", "")).strip())
                 # 過濾相關主題
                 combined = (title + " " + summary).lower()
                 if not any(kw.lower() in combined for kw in KEY_TOPICS):
