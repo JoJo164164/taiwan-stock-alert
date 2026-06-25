@@ -1,6 +1,16 @@
-streamlit>=1.30.0
+# 台股滾動10日跌幅系統 v14
+# Streamlit Cloud 部署用 requirements.txt
+
+# ── 核心框架 ──
+streamlit>=1.32.0
 pandas>=2.0.0
-requests>=2.31.0
 plotly>=5.18.0
-yfinance>=0.2.40,<1.0.0
-pyarrow>=14.0.0
+
+# ── 資料抓取 ──
+yfinance>=0.2.38
+requests>=2.31.0
+
+# ── 每日市場簡報 Tab 專用 ──
+feedparser>=6.0.11          # Reuters RSS 新聞抓取
+deep_translator>=1.11.4     # 英文新聞自動翻譯中文（主力）
+googletrans==4.0.0rc1       # 翻譯備援（注意：只有 rc1 版本穩定）
