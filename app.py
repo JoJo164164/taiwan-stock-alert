@@ -752,13 +752,16 @@ def build_consec_analysis(prices_dict, threshold, horizon):
 
 def _section_title(num, text, sub=""):
     """統一區塊標題樣式：藍色數字徽章 + 標題文字"""
-    sub_html = '<div style="font-size:11px;color:#888;font-weight:400;margin-left:8px">{}</div>'.format(sub) if sub else ""
+    sub_html = '<span style="font-size:11px;color:#888;font-weight:400;margin-left:6px">{}</span>'.format(sub) if sub else ""
     st.markdown("""
 <div style="display:flex;align-items:center;gap:8px;margin:8px 0 10px">
   <div style="width:24px;height:24px;border-radius:6px;background:#003781;color:#fff;
        font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0">{num}</div>
   <span style="font-size:15px;font-weight:600;color:#003781">{text}</span>{sub}
 </div>""".format(num=num, text=text, sub=sub_html), unsafe_allow_html=True)
+
+
+def _render_conclusion_banner(level_now, best_thr, best_h):
     """頂部一句話結論橫幅（v14新增）"""
     if level_now >= 9:
         bg, border, icon, title, sub = (
@@ -1125,26 +1128,57 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
     # ══════════════════════════════════════════════════════
     # 報告標題
     # ══════════════════════════════════════════════════════
-    st.markdown("## 📊 回測分析報告　｜　{}　｜　{}".format(
-        code, datetime.now().strftime("%Y-%m-%d")))
+    st.markdown("""
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+  <div style="width:36px;height:36px;border-radius:8px;background:#003781;color:#fff;
+       font-size:18px;display:flex;align-items:center;justify-content:center;flex-shrink:0">📊</div>
+  <div>
+    <div style="font-size:20px;font-weight:700;color:#003781">回測分析報告</div>
+    <div style="font-size:13px;color:#888;margin-top:1px">{code}　｜　{date}</div>
+  </div>
+</div>""".format(code=code, date=datetime.now().strftime("%Y-%m-%d")), unsafe_allow_html=True)
 
-    # 當前市場背景
+    # 當前市場背景——統一灰底卡片
     twii_now = get_twii_heat()
     fin_now = get_fin_data_yfinance(code)
-    roe_now = fin_now.get('roe')
-    debt_now = fin_now.get('debt_ratio')
-    pb_now = fin_now.get('pb')
-    eps_now = fin_now.get('trailing_eps')
+    roe_now   = fin_now.get('roe')
+    debt_now  = fin_now.get('debt_ratio')
+    pb_now    = fin_now.get('pb')
+    eps_now   = fin_now.get('trailing_eps')
+
+    def _mini_card(col, label, value, hint="", val_color="#003781"):
+        col.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
+  <div style="font-size:11px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:22px;font-weight:700;color:{vc}">{vl}</div>
+  {hint_html}
+</div>""".format(lb=label, vc=val_color, vl=value,
+        hint_html='<div style="font-size:11px;color:#888;margin-top:4px">{}</div>'.format(hint) if hint else ""),
+        unsafe_allow_html=True)
+
+    level_val = twii_now["level"] if twii_now else None
+    level_str = "第{}級".format(level_val) if level_val else "—"
+    level_color = "#A32D2D" if (level_val and level_val >= 9) else ("#F86200" if (level_val and level_val >= 8) else "#003781")
+    level_hint = twii_now.get("label", "") if twii_now else ""
 
     col_bg1, col_bg2, col_bg3, col_bg4, col_bg5 = st.columns(5)
-    col_bg1.metric("市場熱度",
-        "第{}級".format(twii_now["level"]) if twii_now else "—",
-        help="1-4冷靜｜5-7正常｜8-9過熱｜10極熱")
-    col_bg2.metric("ROE", "{}%".format(round(roe_now, 1)) if roe_now else "—")
-    col_bg3.metric("負債比", "{}%".format(round(debt_now, 1)) if debt_now else "—")
-    col_bg4.metric("PB", str(round(pb_now, 2)) if pb_now else "—")
-    col_bg5.metric("EPS(年)", str(round(eps_now, 2)) if eps_now else "—")
-    st.divider()
+    _mini_card(col_bg1, "市場熱度", level_str, level_hint, level_color)
+    _mini_card(col_bg2, "ROE",
+               "{}%".format(round(roe_now, 1)) if roe_now else "—",
+               "優秀(≥15%)" if roe_now and roe_now >= 15 else ("普通(≥8%)" if roe_now and roe_now >= 8 else "偏弱"),
+               "#0F6E56" if roe_now and roe_now >= 15 else ("#F86200" if roe_now and roe_now >= 8 else "#A32D2D") if roe_now else "#888")
+    _mini_card(col_bg3, "負債比",
+               "{}%".format(round(debt_now, 1)) if debt_now else "—",
+               "健康(<50%)" if debt_now and debt_now < 50 else ("偏高(<65%)" if debt_now and debt_now < 65 else "過高"),
+               "#0F6E56" if debt_now and debt_now < 50 else ("#F86200" if debt_now and debt_now < 65 else "#A32D2D") if debt_now else "#888")
+    _mini_card(col_bg4, "PB",
+               str(round(pb_now, 2)) if pb_now else "—",
+               "合理(<3)" if pb_now and pb_now < 3 else ("偏貴(<5)" if pb_now and pb_now < 5 else "高估") if pb_now else "")
+    _mini_card(col_bg5, "EPS(年)",
+               str(round(eps_now, 2)) if eps_now else "—",
+               "獲利穩定" if eps_now and eps_now > 0 else "虧損" if eps_now else "",
+               "#0F6E56" if eps_now and eps_now > 0 else "#A32D2D" if eps_now else "#888")
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
     worst_dd = None
     worst_dd_single = None
@@ -3883,25 +3917,39 @@ with tab3:
             det_b = pr.get('B細節', '')
             det_c = pr.get('C細節', '')
 
-            st.markdown("#### 📊 {} 體質評分卡".format(code_clean))
+            st.markdown("""
+<div style="font-size:14px;font-weight:600;color:#003781;margin:4px 0 10px">{code} 體質評分卡</div>""".format(
+    code=code_clean), unsafe_allow_html=True)
+
             col_qa, col_qb, col_qc, col_qtotal = st.columns(4)
-            with col_qa:
-                st.metric("A 獲利能力", "{}/5分".format(score_a))
-                st.caption(det_a)
-            with col_qb:
-                st.metric("B 護城河", "{}/5分".format(score_b))
-                st.caption(det_b)
-            with col_qc:
-                st.metric("C 安全邊際", "{}/5分".format(score_c))
-                st.caption(det_c)
-            with col_qtotal:
-                if q_total is not None and isinstance(q_total, (int, float)):
-                    score_int = int(q_total)
-                    fn = st.success if score_int >= 13 else (st.warning if score_int >= 9 else st.error)
-                    fn("**總分 {}/15**\n\n{}".format(score_int, q_grade))
-                else:
-                    st.info("資料不足")
-            st.divider()
+            for col, label, score, detail in [
+                (col_qa, "A 獲利能力", score_a, det_a),
+                (col_qb, "B 護城河",   score_b, det_b),
+                (col_qc, "C 安全邊際", score_c, det_c),
+            ]:
+                col.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
+  <div style="font-size:11px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:22px;font-weight:700;color:#003781">{sc}<span style="font-size:13px;color:#888;font-weight:400"> /5</span></div>
+  <div style="font-size:11px;color:#888;margin-top:4px">{dt}</div>
+</div>""".format(lb=label, sc=score, dt=detail), unsafe_allow_html=True)
+
+            if q_total is not None and isinstance(q_total, (int, float)):
+                score_int = int(q_total)
+                sc_color = "#0F6E56" if score_int >= 13 else ("#F86200" if score_int >= 9 else "#A32D2D")
+                col_qtotal.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:12px 14px;text-align:center">
+  <div style="font-size:11px;color:#888;margin-bottom:4px">體質總分</div>
+  <div style="font-size:26px;font-weight:700;color:{c}">{sc}<span style="font-size:13px;color:#888;font-weight:400"> /15</span></div>
+  <div style="font-size:12px;color:{c};margin-top:4px;font-weight:600">{gr}</div>
+</div>""".format(c=sc_color, sc=score_int, gr=q_grade), unsafe_allow_html=True)
+            else:
+                col_qtotal.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px;text-align:center">
+  <div style="font-size:11px;color:#888">體質總分</div>
+  <div style="font-size:18px;color:#888;margin-top:8px">資料不足</div>
+</div>""", unsafe_allow_html=True)
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
         else:
             try:
                 fin_quick = get_fin_data_yfinance(code_clean)
@@ -3913,6 +3961,36 @@ with tab3:
                 valid_yrs = sorted([y for y in eps_hist if eps_hist[y] is not None], reverse=True)
 
                 if any(v is not None for v in [roe_q, debt_q, pb_q, eps_q]):
+                    # ── 財務數字卡片 ──
+                    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+
+                    def _fin_card(col, label, val_str, hint, val_color="#003781"):
+                        col.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
+  <div style="font-size:11px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:22px;font-weight:700;color:{vc}">{vl}</div>
+  <div style="font-size:11px;color:#888;margin-top:4px">{ht}</div>
+</div>""".format(lb=label, vc=val_color, vl=val_str, ht=hint), unsafe_allow_html=True)
+
+                    roe_str  = "{}%".format(round(roe_q,  1)) if roe_q  else "—"
+                    debt_str = "{}%".format(round(debt_q, 1)) if debt_q else "—"
+                    pb_str   = str(round(pb_q,  2)) if pb_q  else "—"
+                    eps_str  = str(round(eps_q,  2)) if eps_q else "—"
+
+                    roe_hint  = ("優秀(≥20%)" if roe_q  and roe_q  >= 20 else "良好(≥15%)" if roe_q  and roe_q  >= 15 else "普通(≥8%)"  if roe_q  and roe_q  >= 8  else "偏弱(<8%)")  if roe_q  else "—"
+                    debt_hint = ("健康(<30%)" if debt_q and debt_q < 30 else "合格(<50%)" if debt_q and debt_q < 50 else "偏高(<65%)" if debt_q and debt_q < 65 else "過高(≥65%)") if debt_q else "—"
+                    pb_hint   = ("便宜(<1.5)" if pb_q   and pb_q   < 1.5 else "合理(<3)"  if pb_q   and pb_q   < 3   else "偏貴(<5)"  if pb_q   and pb_q   < 5   else "高估(≥5)")  if pb_q   else "—"
+                    eps_hint  = ("獲利穩定" if eps_q and eps_q > 0 else "虧損") if eps_q else "—"
+
+                    roe_c  = "#0F6E56" if roe_q  and roe_q  >= 15 else "#F86200" if roe_q  and roe_q  >= 8  else "#A32D2D" if roe_q  else "#888"
+                    debt_c = "#0F6E56" if debt_q and debt_q < 50  else "#F86200" if debt_q and debt_q < 65  else "#A32D2D" if debt_q else "#888"
+
+                    _fin_card(col_f1, "ROE",     roe_str,  roe_hint,  roe_c)
+                    _fin_card(col_f2, "負債比",  debt_str, debt_hint, debt_c)
+                    _fin_card(col_f3, "PB",      pb_str,   pb_hint)
+                    _fin_card(col_f4, "EPS(年)", eps_str,  eps_hint,
+                              "#0F6E56" if eps_q and eps_q > 0 else "#A32D2D" if eps_q else "#888")
+
                     # ── 即時體質評分（用 calc_quality_score_v2）──
                     q_quick = calc_quality_score_v2(
                         code_clean,
@@ -3924,68 +4002,38 @@ with tab3:
                         eps_hist, valid_yrs
                     )
 
-                    # ── 財務數字 + 評分判斷一起顯示 ──
-                    col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-
-                    # ROE
-                    roe_str = "{}%".format(round(roe_q, 1)) if roe_q else "—"
-                    roe_hint = ("✅ 優秀(≥20%)" if roe_q and roe_q >= 20 else
-                                "✅ 良好(≥15%)" if roe_q and roe_q >= 15 else
-                                "🟡 普通(≥8%)"  if roe_q and roe_q >= 8  else
-                                "❌ 偏弱(<8%)"  if roe_q else "—")
-                    col_f1.metric("ROE", roe_str)
-                    col_f1.caption(roe_hint)
-
-                    # 負債比
-                    debt_str = "{}%".format(round(debt_q, 1)) if debt_q else "—"
-                    debt_hint = ("✅ 健康(<30%)" if debt_q and debt_q < 30 else
-                                 "✅ 合格(<50%)" if debt_q and debt_q < 50 else
-                                 "🟡 偏高(<65%)" if debt_q and debt_q < 65 else
-                                 "❌ 過高(≥65%)" if debt_q else "—")
-                    col_f2.metric("負債比", debt_str)
-                    col_f2.caption(debt_hint)
-
-                    # PB
-                    pb_str = str(round(pb_q, 2)) if pb_q else "—"
-                    pb_hint = ("✅ 便宜(<1.5)" if pb_q and pb_q < 1.5 else
-                               "✅ 合理(<3)"   if pb_q and pb_q < 3   else
-                               "🟡 偏貴(<5)"   if pb_q and pb_q < 5   else
-                               "❌ 高估(≥5)"   if pb_q else "—")
-                    col_f3.metric("PB", pb_str)
-                    col_f3.caption(pb_hint)
-
-                    # EPS
-                    eps_str = str(round(eps_q, 2)) if eps_q else "—"
-                    eps_hint = ("✅ 獲利穩定" if eps_q and eps_q > 0 else
-                                "❌ 虧損"     if eps_q and eps_q <= 0 else "—")
-                    col_f4.metric("EPS(年)", eps_str)
-                    col_f4.caption(eps_hint)
-
-                    # ── 15分評分卡（若 calc_quality_score_v2 有結果）──
                     if q_quick:
                         total_q = q_quick['total']
                         grade_q = q_quick['grade']
                         warn_q  = q_quick.get('data_warning', '')
-                        sa, sb, sc = q_quick['score_a'], q_quick['score_b'], q_quick['score_c']
+                        sa, sb, sc_val = q_quick['score_a'], q_quick['score_b'], q_quick['score_c']
 
-                        st.markdown("---")
-                        col_qa, col_qb, col_qc, col_qtotal = st.columns(4)
-                        col_qa.metric("A 獲利能力", "{}/5".format(sa))
-                        col_qa.caption(q_quick.get('detail_a', ''))
-                        col_qb.metric("B 護城河",   "{}/5".format(sb))
-                        col_qb.caption(q_quick.get('detail_b', ''))
-                        col_qc.metric("C 安全邊際", "{}/5".format(sc))
-                        col_qc.caption(q_quick.get('detail_c', ''))
+                        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                        col_qa, col_qb, col_qc, col_qtotal2 = st.columns(4)
+                        for col_x, lbl, scr, det in [
+                            (col_qa, "A 獲利能力", sa, q_quick.get('detail_a', '')),
+                            (col_qb, "B 護城河",   sb, q_quick.get('detail_b', '')),
+                            (col_qc, "C 安全邊際", sc_val, q_quick.get('detail_c', '')),
+                        ]:
+                            col_x.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
+  <div style="font-size:11px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:22px;font-weight:700;color:#003781">{sc}<span style="font-size:13px;color:#888;font-weight:400"> /5</span></div>
+  <div style="font-size:11px;color:#888;margin-top:4px">{dt}</div>
+</div>""".format(lb=lbl, sc=scr, dt=det), unsafe_allow_html=True)
 
-                        with col_qtotal:
-                            fn = (st.success if total_q >= 13 else
-                                  st.warning if total_q >= 9  else st.error)
-                            fn("**{}/15分**\n\n{}".format(total_q, grade_q))
+                        sc_color2 = "#0F6E56" if total_q >= 13 else ("#F86200" if total_q >= 9 else "#A32D2D")
+                        col_qtotal2.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:12px 14px;text-align:center">
+  <div style="font-size:11px;color:#888;margin-bottom:4px">體質總分</div>
+  <div style="font-size:26px;font-weight:700;color:{c}">{sc}<span style="font-size:13px;color:#888;font-weight:400"> /15</span></div>
+  <div style="font-size:12px;color:{c};margin-top:4px;font-weight:600">{gr}</div>
+</div>""".format(c=sc_color2, sc=total_q, gr=grade_q), unsafe_allow_html=True)
 
                         if warn_q:
                             st.caption(warn_q)
 
-                    st.caption("📊 即時財務（yfinance）｜建立合格標的池可取得含EPS歷史的完整評分")
+                    st.caption("即時財務（yfinance）｜建立合格標的池可取得含EPS歷史的完整評分")
                 else:
                     st.caption("財務資料暫無（ETF或新掛牌股票）")
             except Exception:
