@@ -4072,14 +4072,35 @@ with tab3:
 
         if not pool_r.empty:
             pr = pool_r.iloc[0]
-            q_total = pr.get('體質分數')
+            score_a = pr.get('▶A獲利(0-5)', 0)
+            score_b = pr.get('▶B護城河(0-5)', 0)
+            score_c = pr.get('▶C安全邊際(0-5)', 0)
+            det_a   = pr.get('A細節', '')
+            det_b   = pr.get('B細節', '')
+            det_c   = pr.get('C細節', '')
+
+            # q_total：優先讀 pool 的體質分數；若為 None/NaN，從 A+B+C 重算
+            import math as _math
+            q_total_raw = pr.get('體質分數')
+            try:
+                q_total = float(q_total_raw) if (q_total_raw is not None and not _math.isnan(float(q_total_raw))) else None
+            except Exception:
+                q_total = None
+
+            if q_total is None:
+                # 從子分數重建總分
+                try:
+                    sa = int(score_a) if score_a not in (None, '-', '') else 0
+                    sb = int(score_b) if score_b not in (None, '-', '') else 0
+                    sc_v = int(score_c) if score_c not in (None, '-', '') else 0
+                    q_total = sa + sb + sc_v
+                except Exception:
+                    q_total = None
+
             q_grade = pr.get('體質等級', '')
-            score_a = pr.get('▶A獲利(0-5)', '-')
-            score_b = pr.get('▶B護城河(0-5)', '-')
-            score_c = pr.get('▶C安全邊際(0-5)', '-')
-            det_a = pr.get('A細節', '')
-            det_b = pr.get('B細節', '')
-            det_c = pr.get('C細節', '')
+            # 若 grade 也缺失，根據分數重建
+            if not q_grade and q_total is not None:
+                q_grade = "核心標的" if q_total >= 13 else ("可觀察" if q_total >= 9 else ("高風險" if q_total >= 5 else "Broken Model"))
 
             st.markdown("""
 <div style="font-size:14px;font-weight:600;color:#003781;margin:4px 0 10px">{code} 體質評分卡</div>""".format(
@@ -4549,7 +4570,15 @@ with tab3:
             df_pool_now2['代碼'] = df_pool_now2['代碼'].astype(str).str.strip()
             pr2 = df_pool_now2[df_pool_now2['代碼'] == single_code.strip()]
             if not pr2.empty:
-                q_score_bt = pr2.iloc[0].get('體質分數')
+                _raw_score = pr2.iloc[0].get('體質分數')
+                try:
+                    import math as _m
+                    _sa = int(pr2.iloc[0].get('▶A獲利(0-5)', 0) or 0)
+                    _sb = int(pr2.iloc[0].get('▶B護城河(0-5)', 0) or 0)
+                    _sc = int(pr2.iloc[0].get('▶C安全邊際(0-5)', 0) or 0)
+                    q_score_bt = float(_raw_score) if (_raw_score is not None and not _m.isnan(float(_raw_score))) else (_sa + _sb + _sc)
+                except Exception:
+                    q_score_bt = None
 
         # 若 pool 沒有，用即時 yfinance 計算
         if q_score_bt is None or not isinstance(q_score_bt, (int, float)):
@@ -4586,8 +4615,18 @@ with tab3:
             df_pool_now2['代碼'] = df_pool_now2['代碼'].astype(str).str.strip()
             pr2 = df_pool_now2[df_pool_now2['代碼'] == single_code.strip()]
             if not pr2.empty:
-                q_score_bt = pr2.iloc[0].get('體質分數')
+                _raw_score2 = pr2.iloc[0].get('體質分數')
+                try:
+                    import math as _m2
+                    _sa2 = int(pr2.iloc[0].get('▶A獲利(0-5)', 0) or 0)
+                    _sb2 = int(pr2.iloc[0].get('▶B護城河(0-5)', 0) or 0)
+                    _sc2 = int(pr2.iloc[0].get('▶C安全邊際(0-5)', 0) or 0)
+                    q_score_bt = float(_raw_score2) if (_raw_score2 is not None and not _m2.isnan(float(_raw_score2))) else (_sa2 + _sb2 + _sc2)
+                except Exception:
+                    q_score_bt = None
                 q_grade_bt = pr2.iloc[0].get('體質等級', '')
+                if not q_grade_bt and q_score_bt is not None:
+                    q_grade_bt = "核心標的" if q_score_bt >= 13 else ("可觀察" if q_score_bt >= 9 else "高風險")
 
         if q_score_bt is None or not isinstance(q_score_bt, (int, float)):
             try:
