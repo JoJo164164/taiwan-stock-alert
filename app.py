@@ -2435,8 +2435,8 @@ def get_book_value_per_share(codes):
 def build_qualified_pool(all_stocks, fin_data=None):
     """
     建立合格標的池。
-    資料來源：yfinance（取代 MOPS）。
-    fin_data 參數保留但不使用（向後相容）。
+    資料來源：yfinance。
+    改進：分批處理 + 即時進度更新 + 中途結果暫存（避免 Streamlit Cloud timeout）
     """
     import yfinance as yf
 
@@ -2445,279 +2445,148 @@ def build_qualified_pool(all_stocks, fin_data=None):
     individual_codes = [k for k, v in stock_dict.items() if v.get('type') == '個股']
 
     now_yr = datetime.now().year
-
-    bvps_map = {}
-    price_map = {}
-    roe_map = {}
-    debt_map = {}
-    eps_history_map = {}
-
     total = len(individual_codes)
+
+    # ── 進度顯示元件 ──
+    progress_bar = st.progress(0)
+    status_text  = st.empty()
+    partial_save = st.empty()
+
+    BATCH_SIZE = 50  # 每50檔存一次暫存，避免整批丟失
+
     for i, code in enumerate(individual_codes):
-        fin = get_fin_data_yfinance(code)
-        bvps_map[code]         = fin.get('bvps')
-        price_map[code]        = fin.get('price')
-        roe_map[code]          = fin.get('roe')
-        debt_map[code]         = fin.get('debt_ratio')
-        eps_history_map[code]  = fin.get('eps_history', {})
-        # 若 yfinance 有更好的產業別，補充回 stock_dict
-        yf_industry = fin.get('industry', '')
-        if yf_industry and not stock_dict[code].get('industry'):
-            stock_dict[code]['industry'] = yf_industry
+        # 即時更新進度
+        pct = (i + 1) / total
+        progress_bar.progress(pct)
+        status_text.text("評分中 {}/{} — {} （{:.0f}%）".format(
+            i + 1, total, code, pct * 100))
 
-    for code in individual_codes:
-        stock = stock_dict.get(code, {})
+        try:
+            fin = get_fin_data_yfinance(code)
+            stock = stock_dict.get(code, {})
 
-        roe   = roe_map.get(code)
-        debt  = debt_map.get(code)
-        bvps  = bvps_map.get(code)
-        price = price_map.get(code)
-        pb    = round(price / bvps, 2) if price and bvps and bvps > 0 else None
+            roe   = fin.get('roe')
+            debt  = fin.get('debt_ratio')
+            bvps  = fin.get('bvps')
+            price = fin.get('price')
+            pb    = round(price / bvps, 2) if price and bvps and bvps > 0 else None
+            eps_hist    = fin.get('eps_history', {})
+            valid_years = sorted([yr for yr in eps_hist.keys() if yr >= now_yr - 6], reverse=True)
 
-        eps_hist = eps_history_map.get(code, {})
-        # 取最近5年的 EPS（以西元年為 key）
-        valid_years = sorted([yr for yr in eps_hist.keys() if yr >= now_yr - 6], reverse=True)
+            # 補充 yfinance 產業別
+            yf_industry = fin.get('industry', '')
+            if yf_industry and not stock.get('industry'):
+                stock_dict[code]['industry'] = yf_industry
 
-        # ── 第一層：硬性排除條件 ──
-        # c1：近3年 EPS 皆正（yfinance 最多給4年）
-        c1 = (len(valid_years) >= 2 and
-              all(eps_hist.get(yr, -1) > 0 for yr in valid_years[:3]))
-
-        # c2：近3年 EPS 成長（最新 vs 3年前）
-        c2 = False
-        if len(valid_years) >= 2:
-            newest = eps_hist.get(valid_years[0])
-            oldest = eps_hist.get(valid_years[min(2, len(valid_years)-1)])
-            if newest is not None and oldest and oldest != 0:
-                c2 = newest > oldest
-
-        c3 = debt < 50 if debt is not None else None
-
-        # ── 第二層：品質評分條件 ──
-        c4 = roe > 15 if roe is not None else None
-        c5 = pb < 3   if pb  is not None else None
-        c6 = round(pb / roe, 3) < 0.20 if pb and roe and roe > 0 else None
-
-        hard_pass = c1 and c2 and (c3 is True)
-        quality_scores = [x for x in [c4, c5, c6] if x is not None]
-        quality_pass_count = sum(1 for x in quality_scores if x is True)
-
-        if not hard_pass:
-            hard_fail = []
-            if not c1: hard_fail.append("近3年有虧損年度")
-            if not c2: hard_fail.append("EPS未成長")
-            if c3 is False: hard_fail.append("負債比≥50%")
-            grade = "❌ 排除"
-            grade_reason = "硬性條件未通過：" + "、".join(hard_fail) if hard_fail else "資料不足"
-            grade_short = "排除"
-        else:
-            quality_fail = []
-            if c4 is False: quality_fail.append("ROE<15%")
-            if c5 is False: quality_fail.append("PB≥3")
-            if c6 is False: quality_fail.append("PB/ROE≥0.20")
-            if quality_pass_count >= 3 or (len(quality_scores) < 3 and quality_pass_count == len(quality_scores)):
-                grade = "🥇 A級"; grade_reason = "通過全部條件"; grade_short = "A級"
-            elif quality_pass_count >= 2:
-                grade = "🥈 B級"; grade_reason = "、".join(quality_fail); grade_short = "B級"
+            # ── NaN 保護 ──
+            import math
+            def _v(x):
+                if x is None: return None
+                try:
+                    return None if math.isnan(float(x)) else float(x)
+                except Exception:
+                    return None
+            roe = _v(roe); debt = _v(debt); bvps = _v(bvps); price = _v(price)
+            if price and bvps and bvps > 0:
+                pb = round(price / bvps, 2)
             else:
-                grade = "🥉 C級"; grade_reason = "多項未通過：" + "、".join(quality_fail); grade_short = "C級"
+                pb = None
 
-        # ── 15分制體質評分 ──
-        q = calc_quality_score_v2(code, stock, roe, debt, bvps, price, pb, eps_hist, valid_years)
+            # ── 硬性條件 ──
+            c1 = (len(valid_years) >= 2 and
+                  all(eps_hist.get(yr, -1) > 0 for yr in valid_years[:3]))
+            c2 = False
+            if len(valid_years) >= 2:
+                newest = eps_hist.get(valid_years[0])
+                oldest = eps_hist.get(valid_years[min(2, len(valid_years)-1)])
+                if newest is not None and oldest and oldest != 0:
+                    c2 = newest > oldest
+            c3 = (debt < 50) if debt is not None else None
 
-        results.append({
-            '等級': grade,
-            '體質分數': q['total'] if q else None,
-            '體質等級': q['grade'] if q else 'N/A',
-            '資料完整度': str(q['data_completeness']) + '%' if q else 'N/A',
-            '資料警示': q['data_warning'] if q else '',
-            '代碼': code,
-            '名稱': stock.get('name', ''),
-            '產業別': stock.get('industry', stock.get('group', '')),
-            '降級原因': grade_reason,
-            '股價': price,
-            'PB': pb,
-            'ROE%': roe,
-            '負債比%': debt,
-            'PB/ROE': round(pb / roe, 3) if pb and roe and roe > 0 else None,
-            '①EPS近3年正': '✅' if c1 else '❌',
-            '②EPS成長':    '✅' if c2 else '❌',
-            '③負債比<50%': '✅' if c3 else ('❌' if c3 is False else '⚠️'),
-            '④ROE>15%':    '✅' if c4 else ('❌' if c4 is False else '⚠️'),
-            '⑤PB<3':       '✅' if c5 else ('❌' if c5 is False else '⚠️'),
-            '⑥PB/ROE<0.20':'✅' if c6 else ('❌' if c6 is False else '⚠️'),
-            '▶A獲利(0-5)':      q['score_a'] if q else None,
-            '▶B護城河(0-5)':    q['score_b'] if q else None,
-            '▶C安全邊際(0-5)':  q['score_c'] if q else None,
-            'A細節': q['detail_a'] if q else '',
-            'B細節': q['detail_b'] if q else '',
-            'C細節': q['detail_c'] if q else '',
-            '_grade_short': grade_short,
-            '_hard_pass': hard_pass,
-        })
+            # ── 品質條件 ──
+            c4 = (roe  > 15)  if roe  is not None else None
+            c5 = (pb   < 3)   if pb   is not None else None
+            c6 = round(pb / roe, 3) < 0.20 if pb and roe and roe > 0 else None
 
-    return pd.DataFrame(results)
+            hard_pass = c1 and c2 and (c3 is True)
+            quality_scores = [x for x in [c4, c5, c6] if x is not None]
+            quality_pass_count = sum(1 for x in quality_scores if x is True)
 
-    # EPS：取每年最後一季的累計值（MOPS每季EPS是累計值，Q4=全年，Q3=前三季）
-    # 正確做法：每年取季數最大的那筆，而非加總
-    eps_by_code_raw = {}  # {code: {year_roc: {season: eps_value}}}
-    for _, row in fin_data.iterrows():
-        code = str(row.get('code', '')).strip().replace('.0', '')
-        eps = row.get('eps')
-        yr = row.get('year_roc', 0)
-        season = int(row.get('season', 0))
-        if not code or not code.isdigit():
-            continue
-        if pd.isna(eps):
-            continue
-        yr_key = int(yr) if yr else 0
-        if code not in eps_by_code_raw:
-            eps_by_code_raw[code] = {}
-        if yr_key not in eps_by_code_raw[code]:
-            eps_by_code_raw[code][yr_key] = {}
-        eps_by_code_raw[code][yr_key][season] = float(eps)
-
-    # 取每年最高季的值（Q4優先，否則取現有最高季）
-    eps_by_code = {}
-    for code, yr_data in eps_by_code_raw.items():
-        eps_by_code[code] = {}
-        for yr_key, season_data in yr_data.items():
-            if not season_data:
-                continue
-            best_season = max(season_data.keys())
-            eps_by_code[code][yr_key] = season_data[best_season]
-
-    latest_roe = {}
-    latest_debt = {}
-    for _, row in fin_data.sort_values(['year_roc', 'season'], ascending=False).iterrows():
-        code = str(row.get('code', '')).strip().replace('.0', '')
-        if not code or not code.isdigit():
-            continue
-        if code not in latest_roe and not pd.isna(row.get('roe')):
-            latest_roe[code] = float(row['roe'])
-        if code not in latest_debt and not pd.isna(row.get('debt_ratio')):
-            latest_debt[code] = float(row['debt_ratio'])
-
-    now_yr = datetime.now().year - 1911
-    latest_eps_annual = eps_by_code  # 已是 {code: {year_roc: eps_累計值}}
-
-    for code in codes:
-        stock = stock_dict.get(code, {})
-        if stock.get('type') not in ['個股']:
-            continue
-
-        eps_annual = latest_eps_annual.get(code, {})
-        roe = latest_roe.get(code)
-        debt = latest_debt.get(code)
-        bvps = bvps_map.get(code)
-        price = price_map.get(code)
-        pb = round(price / bvps, 2) if price and bvps and bvps > 0 else None
-
-        # ── 第一層：硬性排除條件 ──
-        valid_years = sorted([yr for yr in eps_annual.keys() if yr >= now_yr - 5], reverse=True)
-        c1 = all(eps_annual.get(yr, -1) > 0 for yr in valid_years) if len(valid_years) >= 3 else False
-
-        c2 = False
-        recent_years = sorted(valid_years, reverse=True)
-        if len(recent_years) >= 2:
-            newest = eps_annual.get(recent_years[0], None)
-            oldest = eps_annual.get(recent_years[min(2, len(recent_years)-1)], None)
-            if newest and oldest and oldest != 0:
-                c2 = newest > oldest
-
-        c3 = debt < 50 if debt is not None else None
-
-        # ── 第二層：品質評分條件 ──
-        c4 = roe > 15 if roe is not None else None
-        c5 = pb < 3 if pb is not None else None
-        c6 = round(pb / roe, 3) < 0.20 if pb and roe and roe > 0 else None
-
-        # ── 分級 ──
-        hard_pass = c1 and c2 and (c3 is True)
-        quality_scores = [x for x in [c4, c5, c6] if x is not None]
-        quality_pass_count = sum(1 for x in quality_scores if x is True)
-
-        if not hard_pass:
-            hard_fail = []
-            if not c1:
-                hard_fail.append("近5年有虧損年度")
-            if not c2:
-                hard_fail.append("近3年EPS未成長")
-            if c3 is False:
-                hard_fail.append("負債比≥50%")
-            grade = "❌ 排除"
-            grade_reason = "硬性條件未通過：" + "、".join(hard_fail)
-            grade_short = "排除"
-        else:
-            quality_fail = []
-            if c4 is False:
-                quality_fail.append("ROE<15%（獲利能力偏弱）")
-            if c5 is False:
-                quality_fail.append("PB≥3（估值偏高，如台積電）")
-            if c6 is False:
-                quality_fail.append("PB/ROE≥0.20（為ROE付出過高溢價）")
-
-            if quality_pass_count >= 3 or (len(quality_scores) < 3 and quality_pass_count == len(quality_scores)):
-                grade = "🥇 A級"
-                grade_reason = "通過全部條件，優先進場"
-                grade_short = "A級"
-            elif quality_pass_count >= 2:
-                grade = "🥈 B級"
-                grade_reason = "次要條件部分未通過：" + "、".join(quality_fail)
-                grade_short = "B級"
+            if not hard_pass:
+                hard_fail = []
+                if not c1: hard_fail.append("近3年有虧損年度")
+                if not c2: hard_fail.append("EPS未成長")
+                if c3 is False: hard_fail.append("負債比≥50%")
+                grade = "❌ 排除"
+                grade_reason = "硬性條件未通過：" + "、".join(hard_fail) if hard_fail else "資料不足"
+                grade_short = "排除"
             else:
-                grade = "🥉 C級"
-                grade_reason = "次要條件多項未通過：" + "、".join(quality_fail)
-                grade_short = "C級"
+                quality_fail = []
+                if c4 is False: quality_fail.append("ROE<15%")
+                if c5 is False: quality_fail.append("PB≥3")
+                if c6 is False: quality_fail.append("PB/ROE≥0.20")
+                if quality_pass_count >= 3 or (len(quality_scores) < 3 and quality_pass_count == len(quality_scores)):
+                    grade = "🥇 A級"; grade_reason = "通過全部條件"; grade_short = "A級"
+                elif quality_pass_count >= 2:
+                    grade = "🥈 B級"; grade_reason = "、".join(quality_fail); grade_short = "B級"
+                else:
+                    grade = "🥉 C級"; grade_reason = "多項未通過：" + "、".join(quality_fail); grade_short = "C級"
 
-        # 計算15分制體質評分
-        q = calc_quality_score(
-            code, stock_dict, fin_data, bvps_map, price_map,
-            eps_by_code, latest_roe, latest_debt, latest_eps_annual
-        )
-        q_total = q["total"] if q else None
-        q_grade = q["grade"] if q else "N/A"
-        q_detail_a = q["detail_a"] if q else ""
-        q_detail_b = q["detail_b"] if q else ""
-        q_detail_c = q["detail_c"] if q else ""
+            q = calc_quality_score_v2(code, stock, roe, debt, bvps, price, pb, eps_hist, valid_years)
 
-        results.append({
-            '等級': grade,
-            '體質分數': q_total,
-            '體質等級': q_grade,
-            '資料完整度': str(q["data_completeness"]) + "%" if q else "N/A",
-            '資料警示': q["data_warning"] if q else "",
-            '代碼': code,
-            '名稱': stock.get('name', ''),
-            '產業別': stock.get('industry', stock.get('group', '')),
-            '降級原因': grade_reason,
-            '股價': price,
-            'PB': pb,
-            'ROE%': roe,
-            '負債比%': debt,
-            'PB/ROE': round(pb / roe, 3) if pb and roe and roe > 0 else None,
-            '①5年EPS正': '✅' if c1 else '❌',
-            '②EPS成長': '✅' if c2 else '❌',
-            '③負債比<50%': '✅' if c3 else ('❌' if c3 is False else '⚠️'),
-            '④ROE>15%': '✅' if c4 else ('❌' if c4 is False else '⚠️'),
-            '⑤PB<3': '✅' if c5 else ('❌' if c5 is False else '⚠️'),
-            '⑥PB/ROE<0.20': '✅' if c6 else ('❌' if c6 is False else '⚠️'),
-            '▶A獲利(0-5)': q["score_a"] if q else None,
-            '▶B護城河(0-5)': q["score_b"] if q else None,
-            '▶C安全邊際(0-5)': q["score_c"] if q else None,
-            'A細節': q_detail_a,
-            'B細節': q_detail_b,
-            'C細節': q_detail_c,
-            '_grade_short': grade_short,
-            '_hard_pass': hard_pass,
-        })
+            results.append({
+                '等級': grade, '_grade_short': grade_short,
+                '體質分數': q['total'] if q else None,
+                '體質等級': q['grade'] if q else 'N/A',
+                '資料完整度': str(q['data_completeness']) + '%' if q else 'N/A',
+                '資料警示': q['data_warning'] if q else '',
+                '代碼': code, '名稱': stock.get('name', ''),
+                '產業別': stock.get('industry', stock.get('group', '')),
+                '降級原因': grade_reason,
+                '股價': price, 'PB': pb, 'ROE%': roe, '負債比%': debt,
+                'PB/ROE': round(pb / roe, 3) if pb and roe and roe > 0 else None,
+                '①EPS近3年正': '✅' if c1 else '❌',
+                '②EPS成長':    '✅' if c2 else '❌',
+                '③負債比<50%': '✅' if c3 else ('❌' if c3 is False else '⚠️'),
+                '④ROE>15%':   '✅' if c4 else ('❌' if c4 is False else '⚠️'),
+                '⑤PB<3':      '✅' if c5 else ('❌' if c5 is False else '⚠️'),
+                '⑥PB/ROE<0.20': '✅' if c6 else ('❌' if c6 is False else '⚠️'),
+                '▶A獲利(0-5)': q['score_a'] if q else 0,
+                '▶B護城河(0-5)': q['score_b'] if q else 0,
+                '▶C安全邊際(0-5)': q['score_c'] if q else 0,
+                'A細節': q['detail_a'] if q else '',
+                'B細節': q['detail_b'] if q else '',
+                'C細節': q['detail_c'] if q else '',
+            })
 
+        except Exception as e:
+            # 單檔失敗不中斷整體
+            results.append({
+                '等級': '⚠️ 跳過', '_grade_short': '排除',
+                '體質分數': None, '體質等級': 'N/A', '資料完整度': '0%',
+                '資料警示': str(e)[:50], '代碼': code,
+                '名稱': stock_dict.get(code, {}).get('name', ''),
+                '產業別': '', '降級原因': '資料抓取失敗',
+            })
+
+        # 每 BATCH_SIZE 檔暫存到 session_state，讓使用者即使斷線也不會完全重頭
+        if (i + 1) % BATCH_SIZE == 0:
+            df_partial = pd.DataFrame(results)
+            st.session_state['df_pool_partial'] = df_partial
+            partial_save.caption("已完成 {}/{} 檔，暫存中...".format(i + 1, total))
+
+    progress_bar.empty()
+    status_text.empty()
+    partial_save.empty()
+
+    if not results:
+        return None
     return pd.DataFrame(results)
 
 
 
 # ══════════════════════════════════════════════════════
-# 📊 Coatue體質評分卡（滿分15分，每項5分，共3大項）
+# 📊 體質評分卡（滿分15分，每項5分，共3大項）
 # ══════════════════════════════════════════════════════
 
 def calc_quality_score_v2(code, stock, roe, debt, bvps, price, pb, eps_hist, valid_years):
@@ -3062,8 +2931,9 @@ def get_twii_heat():
 
 
 with tab6:
-    st.markdown(_tab_icon("icon-building", "合格標的池", "Coatue 15分體質評分 · 滿分標的篩選"), unsafe_allow_html=True)
-    st.caption("基本面篩選器：只在通過六個條件的股票中尋找進場機會，排除基本面有問題的標的")
+    st.markdown(_tab_icon("icon-building", "合格標的池", "15分體質評分篩選 · 找出值得進場的好公司"), unsafe_allow_html=True)
+    st.caption("體質評分系統：從ROE、EPS成長、負債比、估值三個維度為個股打分，找出「基本面紮實、值得在超跌時進場」的標的。合格標的池的用途是縮小候選範圍，觸發信號仍以每日警示掃描為準。")
+    st.divider()
 
     # 預設值，確保後面的程式不會因未定義而崩潰
     sox = None
@@ -3572,7 +3442,67 @@ with tab6:
     with col_btn2:
         quick_btn = st.button("⚡ 快速查詢（個股）", key="quick_check_btn")
     with col_info:
-        st.caption("建立完整池子需要抓取MOPS財報資料（約需3～5分鐘）。池子每季更新一次即可。")
+        st.caption("建立完整池子需要抓取約2000檔財務資料（約需3～5分鐘）。池子每季更新一次即可。")
+
+    # ── 快速查詢（不需要建立完整池子）──
+    if quick_btn:
+        st.markdown("#### 個股即時體質查詢")
+        q_col1, q_col2 = st.columns([1, 3])
+        with q_col1:
+            instant_code = st.text_input("輸入代碼", placeholder="例：2330", key="instant_query_code")
+            instant_go = st.button("查詢", key="instant_query_go")
+        with q_col2:
+            if instant_go and instant_code.strip():
+                code_q = instant_code.strip()
+                # 先查 pool
+                df_pool_check = st.session_state.get('df_pool', None)
+                found_in_pool = False
+                if df_pool_check is not None and not df_pool_check.empty:
+                    df_pool_check['代碼'] = df_pool_check['代碼'].astype(str).str.strip()
+                    row_df = df_pool_check[df_pool_check['代碼'] == code_q]
+                    if not row_df.empty:
+                        found_in_pool = True
+                        row = row_df.iloc[0]
+                        sc = "#0F6E56" if row.get('體質分數', 0) >= 13 else "#F86200" if row.get('體質分數', 0) >= 9 else "#A32D2D"
+                        st.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:14px 18px">
+  <div style="font-size:13px;color:#888;margin-bottom:4px">{code} {name} ── 合格標的池記錄</div>
+  <div style="font-size:22px;font-weight:700;color:{c}">{grade} 　{sc}/15分</div>
+  <div style="font-size:13px;color:#414141;margin-top:6px">{reason}</div>
+</div>""".format(c=sc, code=code_q, name=row.get('名稱',''),
+                grade=row.get('等級',''), sc=int(row.get('體質分數',0)) if row.get('體質分數') else '—',
+                reason=row.get('降級原因','')), unsafe_allow_html=True)
+
+                if not found_in_pool:
+                    # 即時抓 yfinance
+                    with st.spinner("即時抓取 {} 財務資料...".format(code_q)):
+                        fin_q = get_fin_data_yfinance(code_q)
+                    import math
+                    def _vq(x):
+                        if x is None: return None
+                        try: return None if math.isnan(float(x)) else float(x)
+                        except: return None
+                    roe_q = _vq(fin_q.get('roe')); debt_q = _vq(fin_q.get('debt_ratio'))
+                    pb_q  = _vq(fin_q.get('pb'));  eps_q  = _vq(fin_q.get('trailing_eps'))
+                    eps_hist_q = fin_q.get('eps_history', {})
+                    valid_yr_q = sorted([y for y in eps_hist_q if eps_hist_q[y] is not None], reverse=True)
+                    q_result = calc_quality_score_v2(code_q, {'type':'個股'}, roe_q, debt_q,
+                                                     fin_q.get('bvps'), fin_q.get('price'), pb_q,
+                                                     eps_hist_q, valid_yr_q)
+                    if q_result:
+                        sc = "#0F6E56" if q_result['total'] >= 13 else "#F86200" if q_result['total'] >= 9 else "#A32D2D"
+                        st.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:14px 18px">
+  <div style="font-size:13px;color:#888;margin-bottom:4px">{code} ── 即時計算（未建池）</div>
+  <div style="font-size:22px;font-weight:700;color:{c}">{grade}　{sc}/15分</div>
+  <div style="font-size:13px;color:#414141;margin-top:4px">A:{sa}/5　B:{sb}/5　C:{scc}/5</div>
+</div>""".format(c=sc, code=code_q, grade=q_result['grade'], sc=q_result['total'],
+                sa=q_result['score_a'], sb=q_result['score_b'], scc=q_result['score_c']),
+                unsafe_allow_html=True)
+                    else:
+                        st.warning("{} 財務資料不足，無法評分（ETF 或新掛牌股）".format(code_q))
+            elif instant_go:
+                st.warning("請輸入股票代碼")
 
     if build_btn:
         with st.spinner("步驟1/2：取得全市場股票清單..."):
@@ -5159,7 +5089,7 @@ def _brief_get_premarket():
         ("AVGO",   "博通 AVGO",        "半導體",  "avgo"),
         ("^SOX",   "費半指數 SOX",     "指數",    "sox"),
         ("^GSPC",  "S&P 500",          "指數",    "sp500"),
-        ("TW=F",   "台指期夜盤",       "台股",    "txf"),
+        ("0050.TW","台灣大盤（ETF代理）","台股",  "txf"),  # 台指期 yfinance 無穩定 ticker，用0050代理走勢
         ("DX-Y.NYB","美元指數 DXY",    "匯率",    "dxy"),
         ("^TNX",   "美債10年殖利率",   "債券",    "tnx"),
         ("^VIX",   "VIX 恐慌指數",     "風險",    "vix"),
