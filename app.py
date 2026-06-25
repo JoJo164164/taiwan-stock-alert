@@ -176,8 +176,94 @@ div[data-testid="stProgress"] p { font-size: 13px !important; }
 
 /* ══ Download button ══ */
 a[data-testid="stDownloadButton"] span { font-size: 14px !important; }
-</style>
-""", unsafe_allow_html=True)
+
+/* ══════════════════════════════════════
+   列印 / PDF 樣式（Ctrl+P 或點列印按鈕）
+   ══════════════════════════════════════ */
+@media print {
+  /* 隱藏不需要列印的 Streamlit 介面 */
+  header[data-testid="stHeader"],
+  section[data-testid="stSidebar"],
+  div[data-testid="stToolbar"],
+  div[data-testid="stDecoration"],
+  div[data-testid="stStatusWidget"],
+  button[kind="header"],
+  .stDeployButton,
+  footer,
+  #MainMenu,
+  .no-print,
+  div[data-testid="stBaseButton-secondary"],
+  div[data-testid="stDownloadButton"],
+  div[data-testid="stBaseButton-primary"] { display: none !important; }
+
+  /* 主內容區全寬 */
+  section[data-testid="stMain"],
+  div[data-testid="stAppViewContainer"],
+  .main .block-container {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+
+  /* 頁面基準 */
+  body, html {
+    background: #fff !important;
+    color: #000 !important;
+    font-size: 11pt !important;
+    font-family: "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif !important;
+  }
+
+  /* 所有 markdown 文字 */
+  .stMarkdown p,
+  div[data-testid="stMarkdownContainer"] p,
+  div[data-testid="stMarkdownContainer"] li { font-size: 11pt !important; }
+
+  /* 確保 HTML 卡片顏色印出來 */
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+
+  /* 表格列印 */
+  .stbl { width: 100% !important; font-size: 9pt !important; border-collapse: collapse !important; }
+  .stbl th { background: #003781 !important; color: #fff !important; padding: 5px 8px !important; font-size: 9pt !important; }
+  .stbl td { padding: 4px 8px !important; font-size: 9pt !important; border-bottom: 0.5px solid #ddd !important; }
+
+  /* 強制黑色邊框讓表格在PDF可見 */
+  table { border: 0.5px solid #ccc !important; }
+  th, td { border: 0.5px solid #e0e0e0 !important; }
+
+  /* Plotly 圖表：確保正常大小 */
+  .js-plotly-plot, .plotly { width: 100% !important; page-break-inside: avoid; }
+
+  /* 分頁控制 */
+  h1, h2, h3 { page-break-after: avoid; }
+  .page-break-before { page-break-before: always; }
+  .page-break-avoid { page-break-inside: avoid; }
+
+  /* 卡片區塊不要被截斷 */
+  div[style*="border-radius"] { page-break-inside: avoid; }
+
+  /* alert 框 */
+  div[data-testid="stAlert"] { page-break-inside: avoid; border: 0.5px solid #ccc !important; }
+
+  /* 頁首頁尾 */
+  @page {
+    size: A4 portrait;
+    margin: 15mm 12mm 20mm 12mm;
+    @top-center {
+      content: "台股滾動10日跌幅系統 · 回測分析報告";
+      font-size: 9pt; color: #666;
+    }
+    @bottom-right {
+      content: "第 " counter(page) " 頁 / 共 " counter(pages) " 頁";
+      font-size: 8pt; color: #999;
+    }
+    @bottom-left {
+      content: "歷史績效不代表未來報酬，不構成投資建議";
+      font-size: 8pt; color: #999;
+    }
+  }
+}
+</style>""", unsafe_allow_html=True)
 
 # ── 圓框 SVG icon 全域定義 ──
 st.markdown("""
@@ -2180,10 +2266,410 @@ tab0, tab5, tab6, tab1, tab3, tab4, tab2, tab_brief = st.tabs([
 ])
 
 # ==============================
+# PDF 匯出模組
+# ==============================
+
+def _pdf_header(c, title, subtitle, page_w, page_h, y_start):
+    """PDF 共用頁首：深藍色橫幅 + 標題"""
+    from reportlab.lib.colors import HexColor
+    from reportlab.pdfbase import pdfmetrics
+    NAVY = HexColor("#003781")
+    LIGHT = HexColor("#f8f9fa")
+    # 頁首色塊
+    c.setFillColor(NAVY)
+    c.rect(0, page_h - 56, page_w, 56, fill=1, stroke=0)
+    c.setFillColor(HexColor("#ffffff"))
+    c.setFont("Helvetica-Bold", 15)
+    c.drawString(32, page_h - 34, title)
+    c.setFont("Helvetica", 9)
+    c.drawString(32, page_h - 48, subtitle)
+    # 右上時間戳
+    c.setFont("Helvetica", 8)
+    c.drawRightString(page_w - 24, page_h - 34, datetime.now().strftime("%Y-%m-%d"))
+    return page_h - 72  # 返回可用起始 y
+
+def _pdf_footer(c, page_w, page_no):
+    """PDF 共用頁尾"""
+    from reportlab.lib.colors import HexColor
+    c.setStrokeColor(HexColor("#e0e0e0"))
+    c.line(32, 36, page_w - 32, 36)
+    c.setFillColor(HexColor("#888888"))
+    c.setFont("Helvetica", 8)
+    c.drawString(32, 24, "本報告由台股滾動10日跌幅系統自動生成，不構成投資建議。歷史績效不代表未來報酬。")
+    c.drawRightString(page_w - 32, 24, "第 {} 頁".format(page_no))
+
+def _pdf_section(c, title, y, page_w, color="#003781"):
+    """PDF 區塊標題"""
+    from reportlab.lib.colors import HexColor
+    c.setFillColor(HexColor(color))
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(32, y, title)
+    c.setStrokeColor(HexColor(color))
+    c.setLineWidth(1.5)
+    c.line(32, y - 3, page_w - 32, y - 3)
+    return y - 18
+
+def _pdf_kv_row(c, key, val, y, page_w, alt=False):
+    """PDF 鍵值對橫排"""
+    from reportlab.lib.colors import HexColor
+    if alt:
+        c.setFillColor(HexColor("#f8f9fa"))
+        c.rect(32, y - 4, page_w - 64, 18, fill=1, stroke=0)
+    c.setFillColor(HexColor("#888888"))
+    c.setFont("Helvetica", 9)
+    c.drawString(40, y + 2, str(key))
+    c.setFillColor(HexColor("#003781"))
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(180, y + 2, str(val))
+    return y - 18
+
+def _pdf_df_table(c, df, y, page_w, page_h, col_widths=None, font_size=8):
+    """DataFrame → PDF 表格，自動換頁"""
+    from reportlab.lib.colors import HexColor
+    NAVY = HexColor("#003781")
+    LIGHT = HexColor("#f8f9fa")
+    ORANGE = HexColor("#F86200")
+
+    cols = list(df.columns)
+    n_cols = len(cols)
+    usable_w = page_w - 64
+
+    if col_widths is None:
+        col_widths = [usable_w / n_cols] * n_cols
+    else:
+        # 等比例縮放到 usable_w
+        total = sum(col_widths)
+        col_widths = [w / total * usable_w for w in col_widths]
+
+    row_h = font_size + 7
+    header_h = row_h + 2
+
+    def draw_header(yy):
+        x = 32
+        c.setFillColor(NAVY)
+        c.rect(32, yy - header_h + 4, usable_w, header_h, fill=1, stroke=0)
+        c.setFillColor(HexColor("#ffffff"))
+        c.setFont("Helvetica-Bold", font_size - 1)
+        for i, col in enumerate(cols):
+            c.drawString(x + 3, yy - 4, str(col)[:20])
+            x += col_widths[i]
+        return yy - header_h
+
+    y = draw_header(y)
+
+    for ridx, (_, row) in enumerate(df.iterrows()):
+        if y < 70:  # 換頁
+            _pdf_footer(c, page_w, "")
+            c.showPage()
+            y = page_h - 80
+            y = draw_header(y)
+
+        # 交替底色
+        if ridx % 2 == 0:
+            c.setFillColor(LIGHT)
+            c.rect(32, y - row_h + 4, usable_w, row_h, fill=1, stroke=0)
+
+        x = 32
+        c.setFont("Helvetica", font_size)
+        for i, col in enumerate(cols):
+            val = str(row[col]) if row[col] is not None else "—"
+            # 高勝率橘色
+            try:
+                if "%" in val and float(val.replace("%","").replace("⚠️","")) >= 80:
+                    c.setFillColor(ORANGE)
+                elif "%" in val and float(val.replace("%","").replace("⚠️","")) < 0:
+                    c.setFillColor(HexColor("#0F6E56"))
+                else:
+                    c.setFillColor(HexColor("#333333"))
+            except Exception:
+                c.setFillColor(HexColor("#333333"))
+            c.drawString(x + 3, y - 4, val[:18])
+            x += col_widths[i]
+        y -= row_h
+
+    return y - 6
+
+
+def generate_pdf_backtest(code, prices, df_win, df_avg, df_dd, df_yearly, thr_val,
+                           q_score=None, q_grade="", market_level=None):
+    """個股回測完整 PDF 報告"""
+    import io
+    from reportlab.pdfgen import canvas as rl_canvas
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.colors import HexColor
+
+    buf = io.BytesIO()
+    page_w, page_h = A4  # 595 x 842
+    c = rl_canvas.Canvas(buf, pagesize=A4)
+    page_no = [1]
+
+    def new_page(title_suffix=""):
+        _pdf_footer(c, page_w, page_no[0])
+        c.showPage()
+        page_no[0] += 1
+        y = _pdf_header(c,
+            "個股回測報告　{}　{}".format(code, title_suffix),
+            "台股滾動10日跌幅系統 · 回測門檻 {}%".format(thr_val),
+            page_w, page_h, page_h - 56)
+        return y
+
+    # ── 第1頁：封面 + 基本資訊 ──
+    y = _pdf_header(c,
+        "個股回測分析報告　{}".format(code),
+        "台股滾動10日跌幅系統 · 生成日期 {}".format(datetime.now().strftime("%Y-%m-%d")),
+        page_w, page_h, page_h - 56)
+
+    # 基本資訊卡
+    y -= 10
+    y = _pdf_section(c, "基本資訊", y, page_w)
+    if prices:
+        dates = sorted(prices.keys())
+        y = _pdf_kv_row(c, "分析標的", code, y, page_w)
+        y = _pdf_kv_row(c, "資料期間", "{} ～ {}".format(dates[0], dates[-1]), y, page_w, alt=True)
+        y = _pdf_kv_row(c, "交易日數", "{}天".format(len(dates)), y, page_w)
+        y = _pdf_kv_row(c, "分析門檻", "{}%".format(thr_val), y, page_w, alt=True)
+        curr_p = prices[dates[-1]]
+        y = _pdf_kv_row(c, "最新收盤價", "{:.2f}".format(curr_p), y, page_w)
+
+    if q_score is not None:
+        y -= 6
+        y = _pdf_section(c, "體質評分（15分制）", y, page_w)
+        sc_val = int(q_score) if isinstance(q_score, (int, float)) else "—"
+        y = _pdf_kv_row(c, "體質總分", "{}/15　{}".format(sc_val, q_grade), y, page_w)
+
+    if market_level is not None:
+        y -= 6
+        y = _pdf_section(c, "市場環境", y, page_w)
+        ml_text = ("第{}級過熱，建議暫停進場".format(market_level) if market_level >= 9 else
+                   "第{}級偏熱，提高門檻".format(market_level) if market_level >= 8 else
+                   "第{}級正常，可正常操作".format(market_level))
+        y = _pdf_kv_row(c, "台股市場熱度", ml_text, y, page_w)
+
+    # ── 第2頁：勝率表 ──
+    y = new_page("勝率表")
+    y -= 4
+    y = _pdf_section(c, "表A：勝率（各門檻 × 觀察天數）｜橘色 ≥ 80%", y, page_w)
+    if df_win is not None:
+        win_cols = ["觸發門檻","樣本數"] + [str(h)+"天勝率" for h in HORIZONS]
+        win_cols = [c2 for c2 in win_cols if c2 in df_win.columns]
+        widths = [50, 40] + [45]*len(HORIZONS)
+        y = _pdf_df_table(c, df_win[win_cols], y, page_w, page_h,
+                           col_widths=widths[:len(win_cols)], font_size=7)
+
+    y -= 14
+    y = _pdf_section(c, "表B：平均單次報酬%（各門檻 × 觀察天數）", y, page_w)
+    if df_avg is not None:
+        avg_cols = ["觸發門檻","樣本數"] + [str(h)+"天平均報酬%" for h in HORIZONS]
+        avg_cols = [c2 for c2 in avg_cols if c2 in df_avg.columns]
+        y = _pdf_df_table(c, df_avg[avg_cols], y, page_w, page_h,
+                           col_widths=widths[:len(avg_cols)], font_size=7)
+
+    # ── 第3頁：年度明細 ──
+    y = new_page("年度明細")
+    y -= 4
+    y = _pdf_section(c, "年度明細 A：每年平均單次報酬%（門檻 {}%）".format(thr_val), y, page_w)
+    if df_yearly is not None:
+        yr_cols = ["年度","觸發次數"] + [str(h)+"天平均%" for h in HORIZONS]
+        yr_cols = [c2 for c2 in yr_cols if c2 in df_yearly.columns]
+        yr_widths = [38, 36] + [42]*len(HORIZONS)
+        y = _pdf_df_table(c, df_yearly[yr_cols], y, page_w, page_h,
+                           col_widths=yr_widths[:len(yr_cols)], font_size=7)
+
+    # ── 第4頁：操作建議摘要 ──
+    y = new_page("操作建議摘要")
+    y -= 4
+    y = _pdf_section(c, "操作建議摘要", y, page_w)
+
+    # 從勝率表找主推門檻
+    main_thr_str = "—"
+    main_wr = 0
+    main_h_best = "—"
+    if df_win is not None:
+        for _, row in df_win.iterrows():
+            try:
+                n = int(row.get("樣本數", 0))
+                if n < 10:
+                    continue
+                for h in HORIZONS:
+                    col = "{}天勝率".format(h)
+                    wr = float(str(row.get(col, "0")).replace("%",""))
+                    if wr > main_wr:
+                        main_wr = wr
+                        main_thr_str = row["觸發門檻"]
+                        main_h_best = "{}天".format(h)
+            except Exception:
+                pass
+
+    y = _pdf_kv_row(c, "建議觸發門檻", main_thr_str, y, page_w)
+    y = _pdf_kv_row(c, "最高歷史勝率", "{:.1f}%（持有{}）".format(main_wr, main_h_best), y, page_w, alt=True)
+    y = _pdf_kv_row(c, "進場策略", "等觸發門檻達到後，持有至目標天數或報酬目標出場", y, page_w)
+    y = _pdf_kv_row(c, "停損建議", "歷史數據顯示不停損的整體報酬優於停損，建議忍住浮虧", y, page_w, alt=True)
+    y -= 16
+    c.setFillColor(HexColor("#888888"))
+    c.setFont("Helvetica", 8)
+    c.drawString(32, y, "本報告基於歷史回測數據自動生成，不構成投資建議。歷史績效不代表未來報酬。")
+
+    _pdf_footer(c, page_w, page_no[0])
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+
+def generate_pdf_pool(df_pool):
+    """合格標的池 PDF 報告"""
+    import io
+    from reportlab.pdfgen import canvas as rl_canvas
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.colors import HexColor
+
+    buf = io.BytesIO()
+    page_w, page_h = A4
+    c = rl_canvas.Canvas(buf, pagesize=A4)
+    page_no = [1]
+
+    y = _pdf_header(c, "合格標的池報告",
+                    "台股15分體質評分 · 生成日期 {}".format(datetime.now().strftime("%Y-%m-%d")),
+                    page_w, page_h, page_h - 56)
+
+    # 統計摘要
+    y -= 8
+    y = _pdf_section(c, "評分統計摘要", y, page_w)
+    if df_pool is not None and not df_pool.empty:
+        total = len(df_pool)
+        grade_a = len(df_pool[df_pool.get('_grade_short', df_pool.get('等級','')) == 'A級']) if '_grade_short' in df_pool.columns else 0
+        grade_b = len(df_pool[df_pool.get('_grade_short', df_pool.get('等級','')) == 'B級']) if '_grade_short' in df_pool.columns else 0
+        y = _pdf_kv_row(c, "評分標的總數", "{}檔個股".format(total), y, page_w)
+        y = _pdf_kv_row(c, "A級（核心）", "{}檔".format(grade_a), y, page_w, alt=True)
+        y = _pdf_kv_row(c, "B級（可觀察）", "{}檔".format(grade_b), y, page_w)
+        if '體質分數' in df_pool.columns:
+            top15 = len(df_pool[pd.to_numeric(df_pool['體質分數'], errors='coerce') >= 15])
+            top13 = len(df_pool[pd.to_numeric(df_pool['體質分數'], errors='coerce') >= 13])
+            y = _pdf_kv_row(c, "15分滿分標的", "{}檔".format(top15), y, page_w, alt=True)
+            y = _pdf_kv_row(c, "13分以上標的", "{}檔".format(top13), y, page_w)
+
+    # A級清單
+    y -= 14
+    y = _pdf_section(c, "A級核心標的清單", y, page_w, color="#0F6E56")
+    if df_pool is not None and not df_pool.empty and '_grade_short' in df_pool.columns:
+        df_a = df_pool[df_pool['_grade_short'] == 'A級'].copy()
+        if not df_a.empty:
+            show_cols = ['代碼','名稱','體質分數','股價','ROE%','負債比%','▶A獲利(0-5)','▶B護城河(0-5)','▶C安全邊際(0-5)']
+            show_cols = [col for col in show_cols if col in df_a.columns]
+            widths_a = [36,60,36,40,40,40,50,50,50]
+            y = _pdf_df_table(c, df_a[show_cols].reset_index(drop=True),
+                              y, page_w, page_h,
+                              col_widths=widths_a[:len(show_cols)], font_size=7.5)
+
+    _pdf_footer(c, page_w, page_no[0])
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+
+def generate_pdf_scan(df_scan, threshold, scan_date):
+    """每日警示掃描 PDF 報告"""
+    import io
+    from reportlab.pdfgen import canvas as rl_canvas
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.colors import HexColor
+
+    buf = io.BytesIO()
+    page_w, page_h = A4
+    c = rl_canvas.Canvas(buf, pagesize=A4)
+
+    y = _pdf_header(c,
+        "每日警示掃描報告　{}".format(scan_date),
+        "台股滾動10日跌幅系統 · 警示門檻 {}%".format(threshold),
+        page_w, page_h, page_h - 56)
+
+    y -= 8
+    y = _pdf_section(c, "今日觸發標的（門檻 {}%）".format(threshold), y, page_w)
+
+    if df_scan is not None and not df_scan.empty:
+        show_cols = [col for col in ['代碼','名稱','產業群組','滾動10日報酬率','目前收盤','體質分數','體質等級'] if col in df_scan.columns]
+        widths_s = [36, 60, 60, 65, 50, 40, 60]
+        y = _pdf_df_table(c, df_scan[show_cols].head(50).reset_index(drop=True),
+                          y, page_w, page_h,
+                          col_widths=widths_s[:len(show_cols)], font_size=8)
+        c.setFillColor(HexColor("#888"))
+        c.setFont("Helvetica", 8)
+        c.drawString(32, y - 10, "共 {} 檔觸發（最多顯示50筆）".format(len(df_scan)))
+    else:
+        c.setFillColor(HexColor("#888"))
+        c.setFont("Helvetica", 10)
+        c.drawString(32, y - 20, "今日無標的觸發警示門檻 {}%".format(threshold))
+
+    _pdf_footer(c, page_w, 1)
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+
+def generate_pdf_briefing(premarket_data, events):
+    """每日市場簡報 PDF"""
+    import io
+    from reportlab.pdfgen import canvas as rl_canvas
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.colors import HexColor
+
+    buf = io.BytesIO()
+    page_w, page_h = A4
+    c = rl_canvas.Canvas(buf, pagesize=A4)
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    y = _pdf_header(c, "每日市場簡報　{}".format(today_str),
+                    "台股滾動10日跌幅系統 · 盤前快訊 + 事件日曆",
+                    page_w, page_h, page_h - 56)
+
+    # 盤前快訊
+    y -= 8
+    y = _pdf_section(c, "今日盤前快訊", y, page_w)
+    if premarket_data:
+        alt = False
+        for key, d in premarket_data.items():
+            if d.get("val") and d["val"] != "—":
+                chg = "+{:.2f}%".format(d["chg_pct"]) if (d.get("chg_pct") or 0) > 0 else "{:.2f}%".format(d.get("chg_pct") or 0)
+                y = _pdf_kv_row(c, d["name"], "{} ({})".format(d["val"], chg), y, page_w, alt=alt)
+                alt = not alt
+
+    # 事件日曆
+    y -= 14
+    y = _pdf_section(c, "近期重大事件日曆", y, page_w)
+    if events:
+        alt = False
+        for ev in events[:20]:
+            date_str = ev["date"].strftime("%m/%d") if hasattr(ev["date"], "strftime") else str(ev["date"])
+            y = _pdf_kv_row(c, "[{}] {}".format(date_str, ev["category"]),
+                            ev["title"], y, page_w, alt=alt)
+            if y < 70:
+                break
+            alt = not alt
+
+    _pdf_footer(c, page_w, 1)
+    c.save()
+    buf.seek(0)
+    return buf.read()
+
+
+# ==============================
 # TAB 0: 使用說明
 # ==============================
 with tab0:
     st.markdown(_tab_icon("icon-news", "系統使用說明", "操作流程 · 顏色說明 · 計算邏輯"), unsafe_allow_html=True)
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
+  <button onclick="window.print()"
+    style="background:#003781;color:#fff;border:none;border-radius:8px;
+           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+           display:flex;align-items:center;gap:6px">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+      <rect x="6" y="14" width="12" height="8"/>
+    </svg>
+    列印 / 存成 PDF
+  </button>
+</div>""", unsafe_allow_html=True)
+
     st.info(
         "資料說明：\n"
         "- 股價使用 Yahoo Finance 還原後收盤價（Adjusted Close）\n"
@@ -2270,6 +2756,20 @@ with tab0:
 # ==============================
 with tab5:
     st.markdown(_tab_icon("icon-search", "系統檢核", "市場背景快照 · 整體環境判斷"), unsafe_allow_html=True)
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
+  <button onclick="window.print()"
+    style="background:#003781;color:#fff;border:none;border-radius:8px;
+           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+           display:flex;align-items:center;gap:6px">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+      <rect x="6" y="14" width="12" height="8"/>
+    </svg>
+    列印 / 存成 PDF
+  </button>
+</div>""", unsafe_allow_html=True)
+
     st.info("點擊下方按鈕，自動驗證各項資料來源、API連線、計算邏輯與資料新鮮度")
 
     if st.button("▶️ 執行系統檢核", type="primary", key="check"):
@@ -3218,6 +3718,20 @@ def get_twii_heat():
 
 with tab6:
     st.markdown(_tab_icon("icon-building", "合格標的池", "15分體質評分篩選 · 找出值得進場的好公司"), unsafe_allow_html=True)
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
+  <button onclick="window.print()"
+    style="background:#003781;color:#fff;border:none;border-radius:8px;
+           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+           display:flex;align-items:center;gap:6px">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+      <rect x="6" y="14" width="12" height="8"/>
+    </svg>
+    列印 / 存成 PDF
+  </button>
+</div>""", unsafe_allow_html=True)
+
     st.caption("體質評分系統：從ROE、EPS成長、負債比、估值三個維度為個股打分，找出「基本面紮實、值得在超跌時進場」的標的。合格標的池的用途是縮小候選範圍，觸發信號仍以每日警示掃描為準。")
     st.divider()
 
@@ -3939,11 +4453,18 @@ with tab6:
                 show_html(df_c[display_cols])
 
         # 下載
-        st.download_button(
-            "📥 下載全部標的分級CSV",
-            df_pool[display_cols].to_csv(index=False).encode('utf-8-sig'),
-            "stock_grades.csv", "text/csv"
-        )
+        col_dl1, col_dl2 = st.columns(2)
+        with col_dl1:
+            st.download_button(
+                "📥 下載CSV",
+                df_pool[display_cols].to_csv(index=False).encode('utf-8-sig'),
+                "stock_grades.csv", "text/csv"
+            )
+        with col_dl2:
+            st.markdown("""<div class="no-print"><button onclick="window.print()"
+    style="background:#003781;color:#fff;border:none;border-radius:8px;
+           padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;width:100%">
+    🖨️ 列印 / 存成 PDF</button></div>""", unsafe_allow_html=True)
 
     else:
         st.info(
@@ -4025,6 +4546,20 @@ with tab6:
 
 
 with tab1:
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
+  <button onclick="window.print()"
+    style="background:#003781;color:#fff;border:none;border-radius:8px;
+           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+           display:flex;align-items:center;gap:6px">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+      <rect x="6" y="14" width="12" height="8"/>
+    </svg>
+    列印 / 存成 PDF
+  </button>
+</div>""", unsafe_allow_html=True)
+
     # ── df_pool_now：全 tab1 共用，必須在最頂部定義 ──
     df_pool_now = st.session_state.get('df_pool', None)
 
@@ -4208,7 +4743,14 @@ with tab1:
             # ── 表格 ──
             st.markdown(show_html.__doc__ or "")
             show_html(df_show)
-            st.download_button("📥 下載CSV", df_show.to_csv(index=False).encode("utf-8-sig"), "alert_scan.csv", "text/csv")
+            col_scan_dl1, col_scan_dl2 = st.columns(2)
+            with col_scan_dl1:
+                st.download_button("📥 下載CSV", df_show.to_csv(index=False).encode("utf-8-sig"), "alert_scan.csv", "text/csv")
+            with col_scan_dl2:
+                st.markdown("""<div class="no-print"><button onclick="window.print()"
+    style="background:#003781;color:#fff;border:none;border-radius:8px;
+           padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;width:100%">
+    🖨️ 列印 / 存成 PDF</button></div>""", unsafe_allow_html=True)
 
             # ── 個股快評 ──
             st.divider()
@@ -4252,6 +4794,20 @@ with tab1:
 # ==============================
 with tab2:
     st.markdown(_tab_icon("icon-trend", "批次回測", "最長15年 · 多標的同時回測"), unsafe_allow_html=True)
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
+  <button onclick="window.print()"
+    style="background:#003781;color:#fff;border:none;border-radius:8px;
+           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+           display:flex;align-items:center;gap:6px">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+      <rect x="6" y="14" width="12" height="8"/>
+    </svg>
+    列印 / 存成 PDF
+  </button>
+</div>""", unsafe_allow_html=True)
+
     threshold2 = st.slider("觸發門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t2")
     st.markdown("**選擇回測範圍（可多選，不選預設跑全部ETF）**")
     selected2 = group_selector("tab2")
@@ -4311,7 +4867,14 @@ with tab2:
             st.markdown("**回撤表（熱力圖：越深橘紅回撤越深）**")
             dd_display = df_bt[["產業群組", "代碼", "名稱", "年度", "觸發次數", "最長連續觸發"] + dd_cols]
             show_html(heatmap_negative(dd_display, dd_cols))
-            st.download_button("📥 下載CSV", df_bt.to_csv(index=False).encode("utf-8-sig"), "backtest.csv", "text/csv")
+            col_bt_dl1, col_bt_dl2 = st.columns(2)
+            with col_bt_dl1:
+                st.download_button("📥 下載CSV", df_bt.to_csv(index=False).encode("utf-8-sig"), "backtest.csv", "text/csv")
+            with col_bt_dl2:
+                st.markdown("""<div class="no-print"><button onclick="window.print()"
+    style="background:#003781;color:#fff;border:none;border-radius:8px;
+           padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;width:100%">
+    🖨️ 列印 / 存成 PDF</button></div>""", unsafe_allow_html=True)
         else:
             st.warning("沒有找到任何觸發紀錄")
 
@@ -4320,6 +4883,20 @@ with tab2:
 # ==============================
 with tab3:
     st.markdown(_tab_icon("icon-chart", "個股 / ETF 回測＋線圖", "15年回測 · 操作結論 · 出場策略"), unsafe_allow_html=True)
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
+  <button onclick="window.print()"
+    style="background:#003781;color:#fff;border:none;border-radius:8px;
+           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+           display:flex;align-items:center;gap:6px">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+      <rect x="6" y="14" width="12" height="8"/>
+    </svg>
+    列印 / 存成 PDF
+  </button>
+</div>""", unsafe_allow_html=True)
+
 
     # 市場熱度快速顯示
     twii_heat_bt = get_twii_heat()
@@ -5296,13 +5873,45 @@ with tab3:
         st.markdown("---")
         st.markdown("### 詳細回測分析報告")
         st.caption("以下為完整的七段式分析——觸發門檻、持有天數、歷史規律、風險提示、進場時機、綜合建議、出場策略")
+
         render_analysis(single_code, df_win, df_avg, df_dd, df_yearly, thr_val, prices_dict=prices)
+
+        # 報告末尾再放一個列印按鈕（讀完不用滾回頂部）
+        st.markdown("""
+<div class="no-print" style="text-align:center;padding:24px 0 8px">
+  <button onclick="window.print()"
+    style="background:#003781;color:#fff;border:none;border-radius:8px;
+           padding:12px 32px;font-size:15px;font-weight:600;cursor:pointer;
+           display:inline-flex;align-items:center;gap:8px">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="6 9 6 2 18 2 18 9"/>
+      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+      <rect x="6" y="14" width="12" height="8"/>
+    </svg>
+    列印完整報告 / 存成 PDF
+  </button>
+  <div style="font-size:12px;color:#888;margin-top:8px">印表機請選「另存為PDF」· 勾選「背景圖形」以保留顏色與表格底色</div>
+</div>""", unsafe_allow_html=True)
 
 # ==============================
 # TAB 4: 全市場勝率排行
 # ==============================
 with tab4:
     st.markdown(_tab_icon("icon-trophy", "全市場勝率排行", "各門檻前10名 · 多門檻交叉比較"), unsafe_allow_html=True)
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
+  <button onclick="window.print()"
+    style="background:#003781;color:#fff;border:none;border-radius:8px;
+           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+           display:flex;align-items:center;gap:6px">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+      <rect x="6" y="14" width="12" height="8"/>
+    </svg>
+    列印 / 存成 PDF
+  </button>
+</div>""", unsafe_allow_html=True)
+
     st.info(
         "系統對每檔股票跑15年回測，找出各觸發門檻下勝率最高的前10名，合併成一張表橫向比較。\n\n"
         "📌 **怎麼讀這張表**：橫向看同一檔股票在各門檻的勝率，找出在多個門檻都表現穩定的股票；"
@@ -6105,6 +6714,20 @@ def _render_news_item(item):
 
 with tab_brief:
     st.markdown(_tab_icon("icon-news", "每日市場簡報", "盤前快訊 · 財經事件解讀 · 重大事件日曆"), unsafe_allow_html=True)
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
+  <button onclick="window.print()"
+    style="background:#003781;color:#fff;border:none;border-radius:8px;
+           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+           display:flex;align-items:center;gap:6px">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+      <rect x="6" y="14" width="12" height="8"/>
+    </svg>
+    列印 / 存成 PDF
+  </button>
+</div>""", unsafe_allow_html=True)
+
     st.caption(
         "資料源：Yahoo Finance（盤前快訊）｜ Reuters/Yahoo RSS（新聞）｜ "
         "Fed.gov / BLS.gov（總經日曆）｜ TWSE MoPS（台股重大訊息）｜ 全部免費"
@@ -6283,3 +6906,11 @@ with tab_brief:
         "若需立即刷新請點「重新整理」按鈕或重新整理頁面。"
         "本頁所有資料均來自公開免費資料源，不含任何付費API。"
     )
+    st.markdown("""<div class="no-print" style="margin:8px 0">
+  <button onclick="window.print()"
+    style="background:#003781;color:#fff;border:none;border-radius:8px;
+           padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer">
+    🖨️ 列印今日簡報 / 存成 PDF
+  </button>
+  <span style="font-size:12px;color:#888;margin-left:12px">選擇「另存為PDF」· 開啟「背景圖形」</span>
+</div>""", unsafe_allow_html=True)
