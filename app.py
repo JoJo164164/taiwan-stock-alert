@@ -3863,6 +3863,8 @@ with tab3:
         show_html(heatmap_positive(df_cret, h_cols))
         st.caption("⚠️ = 樣本數 < 5筆")
 
+        # 股價走勢圖用主要門檻的 result
+        result = run_full_backtest(prices, thr_val)
         if result:
             st.markdown("### 股價走勢 + 各門檻觸發標記")
             dates_all = sorted(prices.keys())
