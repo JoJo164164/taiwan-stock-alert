@@ -86,6 +86,105 @@ def load_pool_from_disk():
 
 st.set_page_config(page_title="台股滾動10日跌幅系統 v14", layout="wide")
 
+# ── 全域 CSS：字型大小統一 + 圓框 SVG icon 系統 ──
+st.markdown("""
+<style>
+/* ── 全域字型基準：放大至舒適閱讀尺寸 ── */
+html, body, [class*="css"] { font-size: 15px !important; }
+
+/* Streamlit caption 放大 */
+.stCaption, [data-testid="stCaptionContainer"] p { font-size: 13px !important; color: #555 !important; }
+
+/* Streamlit metric 數值放大 */
+[data-testid="stMetricValue"] { font-size: 26px !important; font-weight: 700 !important; }
+[data-testid="stMetricLabel"] { font-size: 13px !important; color: #888 !important; }
+
+/* Tab 文字放大 */
+.stTabs [data-baseweb="tab"] { font-size: 14px !important; font-weight: 500 !important; }
+
+/* DataFrame / HTML 表格字型 */
+.stbl td { font-size: 14px !important; padding: 7px 12px !important; }
+.stbl th { font-size: 13px !important; padding: 8px 12px !important; }
+
+/* info/warning/error/success 框字型 */
+[data-testid="stAlert"] p { font-size: 14px !important; }
+
+/* selectbox / text_input 字型 */
+[data-baseweb="select"] span { font-size: 14px !important; }
+[data-baseweb="input"] input { font-size: 14px !important; }
+
+/* expander 標題 */
+details summary p { font-size: 14px !important; }
+
+/* 自訂 HTML 卡片內 label 最小字號 */
+.card-label { font-size: 12px !important; }
+</style>
+
+<!-- 圓框 SVG icon 定義（全域，與你提供的設計風格一致） -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+  <symbol id="icon-chart" viewBox="0 0 48 48">
+    <circle cx="24" cy="24" r="22" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <rect x="12" y="28" width="5" height="8" rx="1" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <rect x="21" y="20" width="5" height="16" rx="1" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <rect x="30" y="13" width="5" height="23" rx="1" fill="none" stroke="#003781" stroke-width="1.5"/>
+  </symbol>
+  <symbol id="icon-alert" viewBox="0 0 48 48">
+    <circle cx="24" cy="24" r="22" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <path d="M24 14v14" stroke="#003781" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="24" cy="33" r="1.5" fill="#003781"/>
+  </symbol>
+  <symbol id="icon-trend" viewBox="0 0 48 48">
+    <circle cx="24" cy="24" r="22" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <polyline points="11,32 20,22 27,27 37,16" fill="none" stroke="#003781" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <polyline points="31,16 37,16 37,22" fill="none" stroke="#003781" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="icon-clock" viewBox="0 0 48 48">
+    <circle cx="24" cy="24" r="22" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <circle cx="24" cy="24" r="13" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <polyline points="24,17 24,24 29,27" fill="none" stroke="#003781" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="icon-search" viewBox="0 0 48 48">
+    <circle cx="24" cy="24" r="22" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <circle cx="22" cy="22" r="8" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <line x1="28" y1="28" x2="35" y2="35" stroke="#003781" stroke-width="1.8" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="icon-building" viewBox="0 0 48 48">
+    <circle cx="24" cy="24" r="22" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <rect x="14" y="16" width="20" height="20" rx="1" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <rect x="17" y="20" width="4" height="4" rx="0.5" fill="none" stroke="#003781" stroke-width="1.2"/>
+    <rect x="26" y="20" width="4" height="4" rx="0.5" fill="none" stroke="#003781" stroke-width="1.2"/>
+    <rect x="17" y="27" width="4" height="4" rx="0.5" fill="none" stroke="#003781" stroke-width="1.2"/>
+    <rect x="26" y="27" width="4" height="4" rx="0.5" fill="none" stroke="#003781" stroke-width="1.2"/>
+    <line x1="20" y1="36" x2="20" y2="36" stroke="#003781" stroke-width="1.5"/>
+  </symbol>
+  <symbol id="icon-news" viewBox="0 0 48 48">
+    <circle cx="24" cy="24" r="22" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <rect x="13" y="14" width="22" height="20" rx="1.5" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <line x1="17" y1="20" x2="31" y2="20" stroke="#003781" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="17" y1="24" x2="31" y2="24" stroke="#003781" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="17" y1="28" x2="25" y2="28" stroke="#003781" stroke-width="1.5" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="icon-ai" viewBox="0 0 48 48">
+    <circle cx="24" cy="24" r="22" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <circle cx="24" cy="22" r="7" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <line x1="24" y1="15" x2="24" y2="11" stroke="#003781" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="30" y1="17" x2="33" y2="14" stroke="#003781" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="31" y1="22" x2="35" y2="22" stroke="#003781" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="18" y1="17" x2="15" y2="14" stroke="#003781" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="17" y1="22" x2="13" y2="22" stroke="#003781" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M18 29 Q24 35 30 29" fill="none" stroke="#003781" stroke-width="1.5" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="icon-trophy" viewBox="0 0 48 48">
+    <circle cx="24" cy="24" r="22" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <path d="M17 13h14v10a7 7 0 0 1-14 0z" fill="none" stroke="#003781" stroke-width="1.5" stroke-linejoin="round"/>
+    <path d="M17 17h-3a3 3 0 0 0 3 6" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <path d="M31 17h3a3 3 0 0 1-3 6" fill="none" stroke="#003781" stroke-width="1.5"/>
+    <line x1="24" y1="30" x2="24" y2="34" stroke="#003781" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="19" y1="34" x2="29" y2="34" stroke="#003781" stroke-width="1.5" stroke-linecap="round"/>
+  </symbol>
+</svg>
+""", unsafe_allow_html=True)
+
 # ── 啟動時自動從磁碟還原 df_pool ──
 if 'df_pool' not in st.session_state or st.session_state['df_pool'] is None:
     _cached_pool, _cached_meta = load_pool_from_disk()
@@ -497,15 +596,15 @@ def fmt(v):
 
 
 def show_html(s):
-    """輸出 DataFrame 為 HTML 表格，表頭不斷行、字體統一 13px"""
+    """輸出 DataFrame 為 HTML 表格，表頭不斷行、字體 14px"""
     html = s.to_html(index=False)
     styled = """
 <style>
-.stbl { border-collapse: collapse; width: 100%; font-size: 13px; }
-.stbl th { background: #1f4e79; color: white; padding: 6px 10px;
-           white-space: nowrap; text-align: center; }
-.stbl td { padding: 5px 10px; border-bottom: 1px solid #e0e0e0;
-           white-space: nowrap; text-align: center; }
+.stbl { border-collapse: collapse; width: 100%; font-size: 14px; }
+.stbl th { background: #003781; color: white; padding: 8px 12px;
+           white-space: nowrap; text-align: center; font-size: 13px; font-weight: 600; }
+.stbl td { padding: 7px 12px; border-bottom: 1px solid #e0e0e0;
+           white-space: nowrap; text-align: center; font-size: 14px; }
 .stbl tr:hover td { background: #f0f4ff; }
 </style>
 """ + html.replace('<table', '<table class="stbl"')
@@ -750,7 +849,17 @@ def build_consec_analysis(prices_dict, threshold, horizon):
 
 
 
-def _section_title(num, text, sub=""):
+def _tab_icon(icon_id, label, sub=""):
+    """產生圓框 SVG icon + 標題的組合 HTML，用於 tab 內頁首"""
+    sub_html = '<div style="font-size:13px;color:#888;font-weight:400;margin-top:2px">{}</div>'.format(sub) if sub else ""
+    return """
+<div style="display:flex;align-items:center;gap:14px;margin:4px 0 16px">
+  <svg width="44" height="44" style="flex-shrink:0"><use href="#{icon}"/></svg>
+  <div>
+    <div style="font-size:20px;font-weight:700;color:#003781">{label}</div>
+    {sub}
+  </div>
+</div>""".format(icon=icon_id, label=label, sub=sub_html)
     """統一區塊標題樣式：藍色數字徽章 + 標題文字"""
     sub_html = '<span style="font-size:11px;color:#888;font-weight:400;margin-left:6px">{}</span>'.format(sub) if sub else ""
     st.markdown("""
@@ -1718,7 +1827,7 @@ tab0, tab5, tab6, tab1, tab3, tab4, tab2, tab_brief = st.tabs([
 # TAB 0: 使用說明
 # ==============================
 with tab0:
-    st.markdown("## 系統使用說明")
+    st.markdown(_tab_icon("icon-news", "系統使用說明", "操作流程 · 顏色說明 · 計算邏輯"), unsafe_allow_html=True)
     st.info(
         "資料說明：\n"
         "- 股價使用 Yahoo Finance 還原後收盤價（Adjusted Close）\n"
@@ -1804,7 +1913,7 @@ with tab0:
 # TAB 系統檢核
 # ==============================
 with tab5:
-    st.subheader("🔧 系統檢核")
+    st.markdown(_tab_icon("icon-search", "系統檢核", "市場背景快照 · 整體環境判斷"), unsafe_allow_html=True)
     st.info("點擊下方按鈕，自動驗證各項資料來源、API連線、計算邏輯與資料新鮮度")
 
     if st.button("▶️ 執行系統檢核", type="primary", key="check"):
@@ -2875,7 +2984,7 @@ def get_twii_heat():
 
 
 with tab6:
-    st.subheader("📋 合格標的池")
+    st.markdown(_tab_icon("icon-building", "合格標的池", "Coatue 15分體質評分 · 滿分標的篩選"), unsafe_allow_html=True)
     st.caption("基本面篩選器：只在通過六個條件的股票中尋找進場機會，排除基本面有問題的標的")
 
     # 預設值，確保後面的程式不會因未定義而崩潰
@@ -3449,11 +3558,58 @@ with tab6:
 - 💀 **Broken Model**（0～4分）：類Robinhood/Lemonade，跌有原因，不宜進場
             """)
 
+        # ── ② 滿分 / 高分標的快速篩選 ──
+        if '體質分數' in df_pool.columns:
+            df_scored = df_pool[df_pool['體質分數'].notna()].copy()
+            df_scored['體質分數'] = pd.to_numeric(df_scored['體質分數'], errors='coerce')
+            df_15 = df_scored[df_scored['體質分數'] >= 15].sort_values('體質分數', ascending=False)
+            df_13 = df_scored[(df_scored['體質分數'] >= 13) & (df_scored['體質分數'] < 15)].sort_values('體質分數', ascending=False)
+
+            cols_rank = ['體質分數', '體質等級', '代碼', '名稱', '產業別', 'ROE%', '負債比%',
+                         '▶A獲利(0-5)', '▶B護城河(0-5)', '▶C安全邊際(0-5)']
+
+            st.markdown("""
+<div style="background:#f8f9fa;border-radius:10px;border:0.5px solid #e0e0e0;padding:16px 20px;margin-bottom:16px">
+  <div style="font-size:15px;font-weight:700;color:#003781;margin-bottom:10px">體質滿分 / 高分標的清單（不限是否觸發）</div>
+  <div style="font-size:13px;color:#414141;margin-bottom:4px">這裡顯示市場上所有高體質評分的標的，與是否已觸發進場信號無關。</div>
+  <div style="font-size:12px;color:#888">觸發進場信號請至【每日警示掃描】頁籤確認。</div>
+</div>""", unsafe_allow_html=True)
+
+            col_s15, col_s13 = st.columns(2)
+            col_s15.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:2px solid #0F6E56;padding:10px 14px;text-align:center">
+  <div style="font-size:11px;color:#888;margin-bottom:3px">滿分標的</div>
+  <div style="font-size:28px;font-weight:700;color:#0F6E56">{n}<span style="font-size:13px;color:#888;font-weight:400"> 檔</span></div>
+  <div style="font-size:11px;color:#0F6E56">15 / 15 分</div>
+</div>""".format(n=len(df_15)), unsafe_allow_html=True)
+            col_s13.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:2px solid #185FA5;padding:10px 14px;text-align:center">
+  <div style="font-size:11px;color:#888;margin-bottom:3px">A級標的</div>
+  <div style="font-size:28px;font-weight:700;color:#185FA5">{n}<span style="font-size:13px;color:#888;font-weight:400"> 檔</span></div>
+  <div style="font-size:11px;color:#185FA5">13–14 分</div>
+</div>""".format(n=len(df_13)), unsafe_allow_html=True)
+
+            st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+
+            if not df_15.empty:
+                st.markdown("**15/15 滿分標的**")
+                available_15 = [c for c in cols_rank if c in df_15.columns]
+                show_html(df_15[available_15].reset_index(drop=True))
+            else:
+                st.info("目前無 15/15 滿分標的（資料庫中所有個股均有至少一項扣分）")
+
+            if not df_13.empty:
+                with st.expander("A級標的（13–14分）共 {} 檔".format(len(df_13))):
+                    available_13 = [c for c in cols_rank if c in df_13.columns]
+                    show_html(df_13[available_13].reset_index(drop=True))
+
+            st.divider()
+
         # 體質分數排行（前20名）
         if '體質分數' in df_pool.columns:
             df_top_quality = df_pool[df_pool['體質分數'].notna()].sort_values('體質分數', ascending=False).head(20)
             if not df_top_quality.empty:
-                st.markdown("#### 🏅 體質分數排行（前20名）")
+                st.markdown("#### 體質分數排行（前20名）")
                 cols_rank = ['體質分數', '體質等級', '代碼', '名稱', '產業別', 'ROE%', '負債比%',
                              '▶A獲利(0-5)', '▶B護城河(0-5)', '▶C安全邊際(0-5)']
                 available = [c for c in cols_rank if c in df_top_quality.columns]
@@ -3801,7 +3957,7 @@ with tab1:
 # TAB 2: 批次回測
 # ==============================
 with tab2:
-    st.subheader("批次回測（最長15年）")
+    st.markdown(_tab_icon("icon-trend", "批次回測", "最長15年 · 多標的同時回測"), unsafe_allow_html=True)
     threshold2 = st.slider("觸發門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t2")
     st.markdown("**選擇回測範圍（可多選，不選預設跑全部ETF）**")
     selected2 = group_selector("tab2")
@@ -3869,7 +4025,7 @@ with tab2:
 # TAB 3: 個股回測
 # ==============================
 with tab3:
-    st.subheader("個股／ETF 回測＋線圖")
+    st.markdown(_tab_icon("icon-chart", "個股 / ETF 回測＋線圖", "15年回測 · 操作結論 · 出場策略"), unsafe_allow_html=True)
 
     # 市場熱度快速顯示
     twii_heat_bt = get_twii_heat()
@@ -4195,79 +4351,56 @@ with tab3:
         df_yearly, result_yr = build_yearly_table(prices, thr_val_f)
         if df_yearly is not None:
             st.markdown("### 年度明細 A：每年平均單次報酬%（門檻 " + thr_choice_f + "）")
-            st.caption("每年各筆報酬率算術平均。橘色格 = 勝率 ≥ 80%。★ = 整體平均報酬最高的持有天數。")
+            st.caption("每年各筆報酬率算術平均。橘紅色框 = 該年報酬最高的持有天數。")
             yr_cols = [str(h) + "天平均%" for h in HORIZONS]
 
-            # 找合計/平均列報酬最高的欄位
-            best_yr_col_a = None
-            try:
-                avg_row_a = df_yearly[df_yearly["年度"] == "合計/平均"]
-                if not avg_row_a.empty:
-                    col_vals_a = {}
-                    for c in yr_cols:
+            def _highlight_best_per_row_a(df, cols):
+                """每一行（每年）找報酬最高的格，加橘色粗框"""
+                styles = pd.DataFrame("", index=df.index, columns=df.columns)
+                for idx in df.index:
+                    best_col = None
+                    best_val = None
+                    for c in cols:
                         try:
-                            col_vals_a[c] = float(str(avg_row_a.iloc[0][c]).replace("%", ""))
+                            v = float(str(df.at[idx, c]).replace("%", "").replace("待觀察", "").replace("---", ""))
+                            if best_val is None or v > best_val:
+                                best_val = v
+                                best_col = c
                         except Exception:
                             pass
-                    if col_vals_a:
-                        best_yr_col_a = max(col_vals_a, key=col_vals_a.get)
-            except Exception:
-                pass
-
-            def _highlight_best_col_a(col):
-                if col.name == best_yr_col_a:
-                    return ["border-left: 3px solid #F86200; font-weight:600"] * len(col)
-                return [""] * len(col)
+                    if best_col and best_val is not None and best_val > 0:
+                        styles.at[idx, best_col] = "outline: 2px solid #F86200; outline-offset:-2px; font-weight:700"
+                return styles
 
             styled_a = heatmap_positive(df_yearly, yr_cols)
-            if best_yr_col_a:
-                styled_a = styled_a.apply(_highlight_best_col_a, axis=0)
-                # 在欄位標題旁加 ★ 說明
-                df_yr_display = df_yearly.copy()
-                df_yr_display.rename(columns={best_yr_col_a: best_yr_col_a.replace("平均%", "平均%★")}, inplace=True)
-                yr_cols_display = [c.replace("平均%", "平均%★") if c == best_yr_col_a else c for c in yr_cols]
-                styled_a = heatmap_positive(df_yr_display, yr_cols_display)
-                if best_yr_col_a.replace("平均%", "平均%★") in df_yr_display.columns:
-                    styled_a = styled_a.apply(
-                        lambda col: ["border-left: 3px solid #F86200; font-weight:600"] * len(col)
-                        if col.name == best_yr_col_a.replace("平均%", "平均%★") else [""] * len(col), axis=0)
+            styled_a = styled_a.apply(lambda _: _highlight_best_per_row_a(df_yearly, yr_cols), axis=None)
             show_html(styled_a)
 
             df_yearly_cum = build_yearly_cumulative_table(prices, thr_val_f)
             if df_yearly_cum is not None:
                 st.markdown("### 年度明細 B：每年實際累積損益%（門檻 " + thr_choice_f + "，按股價進場）")
-                st.caption("每年 Σ(出場價-進場價)/Σ進場價 × 100。★ = 整體累積損益最高的持有天數。")
+                st.caption("每年 Σ(出場價-進場價)/Σ進場價 × 100。橘紅色框 = 該年累積損益最高的持有天數。")
                 yr_cum_cols = [str(h) + "天累積%" for h in HORIZONS]
 
-                best_yr_col_b = None
-                try:
-                    avg_row_b = df_yearly_cum[df_yearly_cum["年度"] == "合計/平均"]
-                    if not avg_row_b.empty:
-                        col_vals_b = {}
-                        for c in yr_cum_cols:
+                def _highlight_best_per_row_b(df, cols):
+                    styles = pd.DataFrame("", index=df.index, columns=df.columns)
+                    for idx in df.index:
+                        best_col = None
+                        best_val = None
+                        for c in cols:
                             try:
-                                col_vals_b[c] = float(str(avg_row_b.iloc[0][c]).replace("%", ""))
+                                v = float(str(df.at[idx, c]).replace("%", "").replace("待觀察", "").replace("---", ""))
+                                if best_val is None or v > best_val:
+                                    best_val = v
+                                    best_col = c
                             except Exception:
                                 pass
-                        if col_vals_b:
-                            best_yr_col_b = max(col_vals_b, key=col_vals_b.get)
-                except Exception:
-                    pass
+                        if best_col and best_val is not None and best_val > 0:
+                            styles.at[idx, best_col] = "outline: 2px solid #F86200; outline-offset:-2px; font-weight:700"
+                    return styles
 
-                df_cum_display = df_yearly_cum.copy()
-                if best_yr_col_b:
-                    df_cum_display.rename(
-                        columns={best_yr_col_b: best_yr_col_b.replace("累積%", "累積%★")}, inplace=True)
-                    yr_cum_cols_display = [
-                        c.replace("累積%", "累積%★") if c == best_yr_col_b else c for c in yr_cum_cols]
-                    styled_b = heatmap_positive(df_cum_display, yr_cum_cols_display)
-                    marked_col = best_yr_col_b.replace("累積%", "累積%★")
-                    if marked_col in df_cum_display.columns:
-                        styled_b = styled_b.apply(
-                            lambda col: ["border-left: 3px solid #F86200; font-weight:600"] * len(col)
-                            if col.name == marked_col else [""] * len(col), axis=0)
-                else:
-                    styled_b = heatmap_positive(df_cum_display, yr_cum_cols)
+                styled_b = heatmap_positive(df_yearly_cum, yr_cum_cols)
+                styled_b = styled_b.apply(lambda _: _highlight_best_per_row_b(df_yearly_cum, yr_cum_cols), axis=None)
                 show_html(styled_b)
 
         st.markdown("### 連續觸發分析")
@@ -4426,7 +4559,7 @@ with tab3:
         # 操作結論
         # ══════════════════════════════════════════════════════
         st.markdown("---")
-        st.markdown("## 操作結論")
+        st.markdown(_tab_icon("icon-ai", "操作結論", "市場環境 · 個股體質 · 建議觸發門檻 · 建議持有天數"), unsafe_allow_html=True)
 
         # ── 收集所有需要的數據 ──
         twii_now = get_twii_heat()
@@ -4721,7 +4854,7 @@ with tab3:
 # TAB 4: 全市場勝率排行
 # ==============================
 with tab4:
-    st.subheader("全市場勝率排行（各門檻前10名）")
+    st.markdown(_tab_icon("icon-trophy", "全市場勝率排行", "各門檻前10名 · 多門檻交叉比較"), unsafe_allow_html=True)
     st.info(
         "系統對每檔股票跑15年回測，找出各觸發門檻下勝率最高的前10名，合併成一張表橫向比較。\n\n"
         "📌 **怎麼讀這張表**：橫向看同一檔股票在各門檻的勝率，找出在多個門檻都表現穩定的股票；"
@@ -5486,7 +5619,7 @@ def _render_news_item(item):
 # ── Tab 主體 ──────────────────────────────────────────────
 
 with tab_brief:
-    st.markdown("## 📰 每日市場簡報")
+    st.markdown(_tab_icon("icon-news", "每日市場簡報", "盤前快訊 · 財經事件解讀 · 重大事件日曆"), unsafe_allow_html=True)
     st.caption(
         "資料源：Yahoo Finance（盤前快訊）｜ Reuters/Yahoo RSS（新聞）｜ "
         "Fed.gov / BLS.gov（總經日曆）｜ TWSE MoPS（台股重大訊息）｜ 全部免費"
