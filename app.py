@@ -3784,11 +3784,19 @@ with tab3:
         show_html(heatmap_positive(df_tr, h_cols))
         st.caption("⚠️ = 樣本數 < 5筆，數字僅供參考")
 
-        st.markdown("### 表F：最大回撤分析（門檻 " + ref_threshold_display + "）")
+        # ── 表F、年度明細共用門檻選單 ──
+        thr_choice_f = st.selectbox(
+            "選擇觸發門檻",
+            [str(t) + "%" for t in THRESHOLDS],
+            index=THRESHOLDS.index(thr_val) if thr_val in THRESHOLDS else 2,
+            key="thr_f_yearly"
+        )
+        thr_val_f = int(thr_choice_f.replace("%", ""))
+
+        st.markdown("### 表F：最大回撤分析（門檻 " + thr_choice_f + "）")
         st.caption("意義：進場後股價會先跌到低點再反彈。「平均回撤發生於第幾天」= 最低點平均在進場後第幾天出現，代表你需要撐過這段浮虧期。")
-        df_dd_enhanced = build_dd_timing_table(prices, thr_val)
+        df_dd_enhanced = build_dd_timing_table(prices, thr_val_f)
         if df_dd_enhanced is not None:
-            # 去掉小數位
             if "平均回撤發生於第幾天" in df_dd_enhanced.columns:
                 df_dd_enhanced["平均回撤發生於第幾天"] = df_dd_enhanced["平均回撤發生於第幾天"].apply(
                     lambda x: str(int(float(str(x).replace("天","").replace("無回撤","0")))) + "天"
@@ -3801,33 +3809,38 @@ with tab3:
             "年度歸屬以觸發當天為準｜待觀察：觸發後未滿觀察天數，不計入統計"
         )
 
-        df_yearly, result = build_yearly_table(prices, thr_val)
+        df_yearly, result_yr = build_yearly_table(prices, thr_val_f)
         if df_yearly is not None:
-            st.markdown("### 年度明細 A：每年平均單次報酬%（門檻 " + ref_threshold_display + "）")
-            st.caption("📐 每年各筆報酬率算術平均。假設每次買相同股數或等金額，兩者結果相同。")
+            st.markdown("### 年度明細 A：每年平均單次報酬%（門檻 " + thr_choice_f + "）")
+            st.caption("每年各筆報酬率算術平均。假設每次買相同股數或等金額，兩者結果相同。")
             yr_cols = [str(h) + "天平均%" for h in HORIZONS]
             show_html(heatmap_positive(df_yearly, yr_cols))
 
-            df_yearly_cum = build_yearly_cumulative_table(prices, thr_val)
+            df_yearly_cum = build_yearly_cumulative_table(prices, thr_val_f)
             if df_yearly_cum is not None:
-                st.markdown("### 年度明細 B：每年實際累積損益%（門檻 " + ref_threshold_display + "，按股價進場）")
-                st.caption("📐 每年 Σ(出場價-進場價)/Σ進場價 × 100。假設每次買相同股數（1張），高價股權重較大。")
+                st.markdown("### 年度明細 B：每年實際累積損益%（門檻 " + thr_choice_f + "，按股價進場）")
+                st.caption("每年 Σ(出場價-進場價)/Σ進場價 × 100。假設每次買相同股數（1張），高價股權重較大。")
                 yr_cum_cols = [str(h) + "天累積%" for h in HORIZONS]
                 show_html(heatmap_positive(df_yearly_cum, yr_cum_cols))
 
-        st.markdown("### 連續觸發分析（門檻 " + ref_threshold_display + "）")
+        st.markdown("### 連續觸發分析")
         st.caption("第1天：首次觸發｜第2天：連跌第2天｜第3天：連跌第3天｜第4天以後：持續下跌")
 
-        # 建立全觀察天數矩陣（行=連續觸發天數，列=觀察天數）
+        thr_choice_consec = st.selectbox(
+            "選擇觸發門檻",
+            [str(t) + "%" for t in THRESHOLDS],
+            index=THRESHOLDS.index(thr_val) if thr_val in THRESHOLDS else 2,
+            key="thr_consec"
+        )
+        thr_val_consec = int(thr_choice_consec.replace("%", ""))
+
         consec_groups = ["第1天", "第2天", "第3天", "第4天以後"]
         consec_matrix_wr  = {"連續觸發天數": consec_groups}
         consec_matrix_ret = {"連續觸發天數": consec_groups}
-        consec_matrix_best = {"連續觸發天數": consec_groups}
-        consec_matrix_worst = {"連續觸發天數": consec_groups}
 
         for h in HORIZONS:
-            df_c = build_consec_analysis(prices, thr_val, h)
-            wr_col = []; ret_col = []; best_col = []; worst_col = []
+            df_c = build_consec_analysis(prices, thr_val_consec, h)
+            wr_col = []; ret_col = []
             for g in consec_groups:
                 if df_c is not None and g in df_c["連續觸發天數"].values:
                     row_c = df_c[df_c["連續觸發天數"] == g].iloc[0]
@@ -3835,21 +3848,19 @@ with tab3:
                     flag = "⚠️" if n < 5 else ""
                     wr_col.append(str(row_c.get("勝率", "---")) + flag)
                     ret_col.append(str(row_c.get("平均報酬%", "---")) + flag)
-                    best_col.append(str(row_c.get("最佳報酬%", "---")))
-                    worst_col.append(str(row_c.get("最差報酬%", "---")))
                 else:
                     wr_col.append("---"); ret_col.append("---")
-                    best_col.append("---"); worst_col.append("---")
-            consec_matrix_wr[str(h)   + "天"] = wr_col
-            consec_matrix_ret[str(h)  + "天"] = ret_col
-            consec_matrix_best[str(h) + "天"] = best_col
-            consec_matrix_worst[str(h)+ "天"] = worst_col
+            consec_matrix_wr[str(h)  + "天"] = wr_col
+            consec_matrix_ret[str(h) + "天"] = ret_col
 
         h_cols = [str(h) + "天" for h in HORIZONS]
+        df_cwr = pd.DataFrame(consec_matrix_wr)
+        df_cret = pd.DataFrame(consec_matrix_ret)
+
         st.markdown("**勝率**")
-        show_html(pd.DataFrame(consec_matrix_wr).style.map(color_winrate, subset=h_cols))
+        show_html(heatmap_positive(df_cwr, h_cols))   # 熱力圖
         st.markdown("**平均報酬%**")
-        show_html(heatmap_positive(pd.DataFrame(consec_matrix_ret), h_cols))
+        show_html(heatmap_positive(df_cret, h_cols))
         st.caption("⚠️ = 樣本數 < 5筆")
 
         if result:
@@ -4144,60 +4155,157 @@ with tab3:
                         "注意：歷史數據顯示忍住浮虧的整體報酬通常優於停損".format(
                             worst_dd_val, avg_dd_day, avg_dd_day, abs(worst_dd_val) * 0.8))
 
-        # ── 綜合決策 ──
+        # ══════════════════════════════════════════════════════
+        # 綜合決策
+        # ══════════════════════════════════════════════════════
         st.markdown("### 綜合決策")
 
-        # 計算評分（透明說明）
-        score_market = 2 if market_level <= 6 else (1 if market_level <= 7 else 0)
-        score_quality = 2 if (q_score_bt and q_score_bt >= 13) else (1 if (q_score_bt and q_score_bt >= 9) else 0)
-        score_history = 2 if best_wr_val >= 70 else (1 if best_wr_val >= 55 else 0)
-        total_score = score_market + score_quality + score_history
-        max_score = 6
+        # ── 市場環境：燈號顯示，不納入評分 ──
+        level = market_level
+        heat_bars = ""
+        for i in range(1, 11):
+            if i <= level:
+                if i <= 4:   heat_bars += "🟢"
+                elif i <= 7: heat_bars += "🟡"
+                elif i <= 9: heat_bars += "🟠"
+                else:        heat_bars += "🔴"
+            else:
+                heat_bars += "⬜"
 
-        # 倉位建議邏輯
-        if market_level >= 9:
-            position_pct = 0
-            decision_text = "不建議進場。市場熱度過高，等熱度降至 7 級以下再評估。"
-            decision_fn = st.error
-        elif total_score >= 5:
-            position_pct = 100
-            decision_text = "條件充分，可全倉進場（依個人風控調整）。"
-            decision_fn = st.success
-        elif total_score >= 4:
-            position_pct = 75
-            decision_text = "條件合理，建議以 75% 倉位進場，保留 25% 若繼續跌可加碼。"
-            decision_fn = st.success
-        elif total_score >= 2:
-            position_pct = 50
-            decision_text = "條件偏弱，建議以 50% 倉位試水溫，嚴格設停損。"
-            decision_fn = st.warning
+        if level >= 9:
+            market_color = "#b71c1c"
+            market_advice = "建議暫停進場，等熱度降至7級以下"
+        elif level >= 8:
+            market_color = "#e65100"
+            market_advice = "偏熱，建議提高觸發門檻至-15%"
+        elif level >= 6:
+            market_color = "#f57f17"
+            market_advice = "輕微偏熱，正常操作但勿追高"
         else:
-            position_pct = 0
-            decision_text = "條件不足，建議觀望。等市場環境或個股體質改善後再評估。"
-            decision_fn = st.error
+            market_color = "#1b5e20"
+            market_advice = "環境合理，策略可正常執行"
 
-        decision_fn(decision_text)
+        st.markdown("""
+<div style="background:#f8f9fa;border-left:5px solid {color};padding:14px 18px;border-radius:6px;margin-bottom:16px">
+<div style="font-size:13px;color:#555;margin-bottom:4px">台股市場熱度</div>
+<div style="font-size:22px;letter-spacing:2px;margin-bottom:6px">{bars}</div>
+<div style="font-size:15px;font-weight:600;color:{color}">第 {level} 級／10　{label}</div>
+<div style="font-size:13px;color:#444;margin-top:4px">{advice}</div>
+</div>
+""".format(
+            color=market_color,
+            bars=heat_bars,
+            level=level,
+            label=market_label,
+            advice=market_advice
+        ), unsafe_allow_html=True)
 
-        # 評分說明表格
-        score_rows = [
-            {"評估項目": "市場環境（熱度第{}級）".format(market_level),
-             "結果": market_label,
-             "得分": "{} / 2".format(score_market),
-             "說明": "≤6級得2分，7級得1分，≥8級得0分"},
-            {"評估項目": "個股體質（{}/15分）".format(int(q_score_bt) if q_score_bt else "—"),
-             "結果": q_grade_bt if q_grade_bt else "未評分",
-             "得分": "{} / 2".format(score_quality),
-             "說明": "≥13分得2分，≥9分得1分，其餘得0分"},
-            {"評估項目": "歷史勝率（持有{}天）".format(best_h_suggestion or "—"),
-             "結果": "{:.1f}%".format(best_wr_val),
-             "得分": "{} / 2".format(score_history),
-             "說明": "≥70%得2分，≥55%得1分，其餘得0分"},
-            {"評估項目": "總分",
-             "結果": "",
-             "得分": "{} / {}".format(total_score, max_score),
-             "說明": "5-6分全倉｜4分75%倉｜2-3分50%倉｜0-1分觀望"},
-        ]
-        show_html(pd.DataFrame(score_rows))
+        # ── 評分：體質50分 + 勝率50分 = 100分 ──
+        # 體質50分（15分制換算）
+        if q_score_bt is not None and isinstance(q_score_bt, (int, float)):
+            score_quality_100 = round(float(q_score_bt) / 15 * 50)
+        else:
+            score_quality_100 = None
+
+        # 勝率50分（用建議持有天數的勝率）
+        if best_wr_val >= 85:   score_wr_100 = 50
+        elif best_wr_val >= 75: score_wr_100 = 40
+        elif best_wr_val >= 65: score_wr_100 = 30
+        elif best_wr_val >= 55: score_wr_100 = 20
+        else:                   score_wr_100 = 10
+
+        if score_quality_100 is not None:
+            total_100 = score_quality_100 + score_wr_100
+        else:
+            total_100 = None
+
+        # ── 評分卡 ──
+        col_q, col_w, col_t = st.columns(3)
+
+        with col_q:
+            q_pct = score_quality_100 if score_quality_100 is not None else 0
+            q_color = "#1b5e20" if q_pct >= 35 else ("#e65100" if q_pct >= 20 else "#b71c1c")
+            st.markdown("""
+<div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;text-align:center">
+<div style="font-size:12px;color:#888;margin-bottom:8px">個股體質</div>
+<div style="font-size:11px;color:#aaa;margin-bottom:8px">{raw}/15分 → 換算</div>
+<div style="background:#f0f0f0;border-radius:4px;height:8px;margin-bottom:8px">
+  <div style="background:{color};border-radius:4px;height:8px;width:{pct}%"></div>
+</div>
+<div style="font-size:28px;font-weight:700;color:{color}">{score}</div>
+<div style="font-size:12px;color:#888">／ 50分</div>
+<div style="font-size:12px;color:{color};margin-top:4px">{grade}</div>
+</div>
+""".format(
+                raw=int(q_score_bt) if q_score_bt else "—",
+                color=q_color,
+                pct=q_pct*2,
+                score=q_pct if score_quality_100 is not None else "—",
+                grade=q_grade_bt if q_grade_bt else "未評分"
+            ), unsafe_allow_html=True)
+
+        with col_w:
+            w_color = "#1b5e20" if score_wr_100 >= 40 else ("#e65100" if score_wr_100 >= 25 else "#b71c1c")
+            st.markdown("""
+<div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;text-align:center">
+<div style="font-size:12px;color:#888;margin-bottom:8px">歷史勝率</div>
+<div style="font-size:11px;color:#aaa;margin-bottom:8px">持有{days}天　勝率{wr:.1f}%</div>
+<div style="background:#f0f0f0;border-radius:4px;height:8px;margin-bottom:8px">
+  <div style="background:{color};border-radius:4px;height:8px;width:{pct}%"></div>
+</div>
+<div style="font-size:28px;font-weight:700;color:{color}">{score}</div>
+<div style="font-size:12px;color:#888">／ 50分</div>
+<div style="font-size:12px;color:{color};margin-top:4px">{label}</div>
+</div>
+""".format(
+                days=best_h_suggestion or "—",
+                wr=best_wr_val,
+                color=w_color,
+                pct=score_wr_100*2,
+                score=score_wr_100,
+                label="優秀" if score_wr_100 >= 40 else ("良好" if score_wr_100 >= 30 else ("普通" if score_wr_100 >= 20 else "偏低"))
+            ), unsafe_allow_html=True)
+
+        with col_t:
+            if total_100 is not None:
+                t_color = "#1b5e20" if total_100 >= 75 else ("#e65100" if total_100 >= 50 else "#b71c1c")
+                if level >= 9:
+                    t_advice = "暫停進場"
+                    t_color_adv = "#b71c1c"
+                elif total_100 >= 75:
+                    t_advice = "可全倉進場"
+                    t_color_adv = "#1b5e20"
+                elif total_100 >= 60:
+                    t_advice = "建議75%倉位"
+                    t_color_adv = "#2e7d32"
+                elif total_100 >= 45:
+                    t_advice = "建議50%倉位"
+                    t_color_adv = "#e65100"
+                else:
+                    t_advice = "建議觀望"
+                    t_color_adv = "#b71c1c"
+
+                st.markdown("""
+<div style="background:#fff;border:2px solid {color};border-radius:8px;padding:16px;text-align:center">
+<div style="font-size:12px;color:#888;margin-bottom:8px">綜合得分</div>
+<div style="background:#f0f0f0;border-radius:4px;height:8px;margin-bottom:8px">
+  <div style="background:{color};border-radius:4px;height:8px;width:{pct}%"></div>
+</div>
+<div style="font-size:36px;font-weight:700;color:{color}">{score}</div>
+<div style="font-size:12px;color:#888">／ 100分</div>
+<div style="font-size:14px;font-weight:600;color:{color_adv};margin-top:8px;padding:4px 8px;background:#f8f8f8;border-radius:4px">{advice}</div>
+</div>
+""".format(
+                    color=t_color,
+                    pct=total_100,
+                    score=total_100,
+                    color_adv=t_color_adv,
+                    advice=t_advice
+                ), unsafe_allow_html=True)
+            else:
+                st.info("體質未評分，無法計算總分")
+
+        st.caption("體質評分：15分制換算為50分　｜　歷史勝率：建議持有{}天勝率，85%+得50分、75%+得40分、65%+得30分、55%+得20分、其餘10分　｜　市場熱度為獨立警示，不納入評分".format(best_h_suggestion or "—"))
         st.caption("本分析基於歷史回測數據自動生成，不構成投資建議。歷史績效不代表未來報酬。")
 
         # 分析建議
