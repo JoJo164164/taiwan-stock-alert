@@ -164,7 +164,7 @@ div[data-testid="stDataFrame"] td, div[data-testid="stDataFrame"] th { font-size
 .stbl tr:hover td { background: #f0f5ff; }
 
 /* ══ 自訂卡片統一字型 ══ */
-.v14-card-label { font-size: 12px; color: #888; margin-bottom: 4px; }
+.v14-card-label { font-size: 13px; color: #888; margin-bottom: 4px; }
 .v14-card-value { font-size: 22px; font-weight: 700; }
 .v14-card-hint  { font-size: 12px; color: #888; margin-top: 4px; }
 
@@ -931,6 +931,17 @@ def _tab_icon(icon_id, label, sub=""):
 </div>""".format(num=num, text=text, sub=sub_html), unsafe_allow_html=True)
 
 
+def _section_title(num, text, sub=""):
+    """統一區塊標題樣式：藍色數字徽章 + 標題文字"""
+    sub_html = '<span style="font-size:13px;color:#888;font-weight:400;margin-left:8px">{}</span>'.format(sub) if sub else ""
+    st.markdown("""
+<div style="display:flex;align-items:center;gap:8px;margin:10px 0 12px">
+  <div style="width:26px;height:26px;border-radius:6px;background:#003781;color:#fff;
+       font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0">{num}</div>
+  <span style="font-size:16px;font-weight:600;color:#003781">{text}</span>{sub}
+</div>""".format(num=num, text=text, sub=sub_html), unsafe_allow_html=True)
+
+
 def _render_conclusion_banner(level_now, best_thr, best_h):
     """頂部一句話結論橫幅（v14新增）"""
     if level_now >= 9:
@@ -1099,9 +1110,9 @@ def _render_decision_table_v14(best_thr, best_h, second_h, worst_dd, worst_dd_si
     def _card(col, label, value, sub, val_color="#003781"):
         col.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;padding:14px 16px;border:0.5px solid #e0e0e0">
-  <div style="font-size:12px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:13px;color:#888;margin-bottom:5px">{lb}</div>
   <div style="font-size:20px;font-weight:600;color:{vc}">{vl}</div>
-  <div style="font-size:12px;color:#888;margin-top:3px">{sb}</div>
+  <div style="font-size:13px;color:#888;margin-top:5px">{sb}</div>
 </div>""".format(lb=label, vl=value, sb=sub, vc=val_color), unsafe_allow_html=True)
 
     _card(c1, "首選持有天數", "{}天".format(best_h) if best_h else "—",
@@ -1199,8 +1210,8 @@ def _render_exit_strategy_v14(prices_dict, best_thr, best_h, code):
     def _stat(col, label, val, color="#003781"):
         col.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;padding:10px 12px;border:0.5px solid #e0e0e0;text-align:center">
-  <div style="font-size:12px;color:#888;margin-bottom:3px">{lb}</div>
-  <div style="font-size:17px;font-weight:600;color:{c}">{vl}%</div>
+  <div style="font-size:13px;color:#888;margin-bottom:5px">{lb}</div>
+  <div style="font-size:20px;font-weight:700;color:{c}">{vl}%</div>
 </div>""".format(lb=label, vl=val, c=color), unsafe_allow_html=True)
     _stat(col1, "最差25%（P25）", p25, "#0F6E56" if p25 >= 0 else "#A32D2D")
     _stat(col2, "中位數（P50）", p50, "#0F6E56" if p50 >= 0 else "#A32D2D")
@@ -1319,11 +1330,11 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
     def _mini_card(col, label, value, hint="", val_color="#003781"):
         col.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
-  <div style="font-size:12px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:13px;color:#888;margin-bottom:5px">{lb}</div>
   <div style="font-size:22px;font-weight:700;color:{vc}">{vl}</div>
   {hint_html}
 </div>""".format(lb=label, vc=val_color, vl=value,
-        hint_html='<div style="font-size:12px;color:#888;margin-top:4px">{}</div>'.format(hint) if hint else ""),
+        hint_html='<div style="font-size:13px;color:#888;margin-top:5px">{}</div>'.format(hint) if hint else ""),
         unsafe_allow_html=True)
 
     level_val = twii_now["level"] if twii_now else None
@@ -3633,19 +3644,19 @@ with tab6:
 <div style="background:#f8f9fa;border-radius:10px;border:0.5px solid #e0e0e0;padding:16px 20px;margin-bottom:16px">
   <div style="font-size:15px;font-weight:700;color:#003781;margin-bottom:10px">體質滿分 / 高分標的清單（不限是否觸發）</div>
   <div style="font-size:13px;color:#414141;margin-bottom:4px">這裡顯示市場上所有高體質評分的標的，與是否已觸發進場信號無關。</div>
-  <div style="font-size:12px;color:#888">觸發進場信號請至【每日警示掃描】頁籤確認。</div>
+  <div style="font-size:13px;color:#888">觸發進場信號請至【每日警示掃描】頁籤確認。</div>
 </div>""", unsafe_allow_html=True)
 
             col_s15, col_s13 = st.columns(2)
             col_s15.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:2px solid #0F6E56;padding:10px 14px;text-align:center">
-  <div style="font-size:12px;color:#888;margin-bottom:3px">滿分標的</div>
+  <div style="font-size:13px;color:#888;margin-bottom:5px">滿分標的</div>
   <div style="font-size:28px;font-weight:700;color:#0F6E56">{n}<span style="font-size:13px;color:#888;font-weight:400"> 檔</span></div>
   <div style="font-size:13px;color:#0F6E56">15 / 15 分</div>
 </div>""".format(n=len(df_15)), unsafe_allow_html=True)
             col_s13.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:2px solid #185FA5;padding:10px 14px;text-align:center">
-  <div style="font-size:12px;color:#888;margin-bottom:3px">A級標的</div>
+  <div style="font-size:13px;color:#888;margin-bottom:5px">A級標的</div>
   <div style="font-size:28px;font-weight:700;color:#185FA5">{n}<span style="font-size:13px;color:#888;font-weight:400"> 檔</span></div>
   <div style="font-size:13px;color:#185FA5">13–14 分</div>
 </div>""".format(n=len(df_13)), unsafe_allow_html=True)
@@ -4146,9 +4157,9 @@ with tab3:
             ]:
                 col.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
-  <div style="font-size:12px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:13px;color:#888;margin-bottom:5px">{lb}</div>
   <div style="font-size:22px;font-weight:700;color:#003781">{sc}<span style="font-size:13px;color:#888;font-weight:400"> /5</span></div>
-  <div style="font-size:12px;color:#888;margin-top:4px">{dt}</div>
+  <div style="font-size:13px;color:#888;margin-top:5px">{dt}</div>
 </div>""".format(lb=label, sc=score, dt=detail), unsafe_allow_html=True)
 
             if q_total is not None and isinstance(q_total, (int, float)):
@@ -4156,14 +4167,14 @@ with tab3:
                 sc_color = "#0F6E56" if score_int >= 13 else ("#F86200" if score_int >= 9 else "#A32D2D")
                 col_qtotal.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:12px 14px;text-align:center">
-  <div style="font-size:12px;color:#888;margin-bottom:4px">體質總分</div>
+  <div style="font-size:13px;color:#888;margin-bottom:5px">體質總分</div>
   <div style="font-size:26px;font-weight:700;color:{c}">{sc}<span style="font-size:13px;color:#888;font-weight:400"> /15</span></div>
   <div style="font-size:12px;color:{c};margin-top:4px;font-weight:600">{gr}</div>
 </div>""".format(c=sc_color, sc=score_int, gr=q_grade), unsafe_allow_html=True)
             else:
                 col_qtotal.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px;text-align:center">
-  <div style="font-size:12px;color:#888">體質總分</div>
+  <div style="font-size:13px;color:#888">體質總分</div>
   <div style="font-size:18px;color:#888;margin-top:8px">資料不足</div>
 </div>""", unsafe_allow_html=True)
             st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
@@ -4184,9 +4195,9 @@ with tab3:
                     def _fin_card(col, label, val_str, hint, val_color="#003781"):
                         col.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
-  <div style="font-size:12px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:13px;color:#888;margin-bottom:5px">{lb}</div>
   <div style="font-size:22px;font-weight:700;color:{vc}">{vl}</div>
-  <div style="font-size:12px;color:#888;margin-top:4px">{ht}</div>
+  <div style="font-size:13px;color:#888;margin-top:5px">{ht}</div>
 </div>""".format(lb=label, vc=val_color, vl=val_str, ht=hint), unsafe_allow_html=True)
 
                     roe_str  = "{}%".format(round(roe_q,  1)) if roe_q  else "—"
@@ -4234,15 +4245,15 @@ with tab3:
                         ]:
                             col_x.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
-  <div style="font-size:12px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:13px;color:#888;margin-bottom:5px">{lb}</div>
   <div style="font-size:22px;font-weight:700;color:#003781">{sc}<span style="font-size:13px;color:#888;font-weight:400"> /5</span></div>
-  <div style="font-size:12px;color:#888;margin-top:4px">{dt}</div>
+  <div style="font-size:13px;color:#888;margin-top:5px">{dt}</div>
 </div>""".format(lb=lbl, sc=scr, dt=det), unsafe_allow_html=True)
 
                         sc_color2 = "#0F6E56" if total_q >= 13 else ("#F86200" if total_q >= 9 else "#A32D2D")
                         col_qtotal2.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:12px 14px;text-align:center">
-  <div style="font-size:12px;color:#888;margin-bottom:4px">體質總分</div>
+  <div style="font-size:13px;color:#888;margin-bottom:5px">體質總分</div>
   <div style="font-size:26px;font-weight:700;color:{c}">{sc}<span style="font-size:13px;color:#888;font-weight:400"> /15</span></div>
   <div style="font-size:12px;color:{c};margin-top:4px;font-weight:600">{gr}</div>
 </div>""".format(c=sc_color2, sc=total_q, gr=grade_q), unsafe_allow_html=True)
@@ -4412,56 +4423,46 @@ with tab3:
         df_yearly, result_yr = build_yearly_table(prices, thr_val_f)
         if df_yearly is not None:
             st.markdown("### 年度明細 A：每年平均單次報酬%（門檻 " + thr_choice_f + "）")
-            st.caption("每年各筆報酬率算術平均。橘紅色框 = 該年報酬最高的持有天數。")
+            st.caption("每年各筆報酬率算術平均。★ = 該年報酬最高的持有天數（反白標記）。")
             yr_cols = [str(h) + "天平均%" for h in HORIZONS]
 
-            def _highlight_best_per_row_a(df, cols):
-                """每一行（每年）找報酬最高的格，加橘色粗框"""
-                styles = pd.DataFrame("", index=df.index, columns=df.columns)
-                for idx in df.index:
-                    best_col = None
-                    best_val = None
+            def _mark_best_per_row(df, cols):
+                """每行找最高正報酬格，在該格文字前加 ★ 反白標記"""
+                df_out = df.copy()
+                for idx in df_out.index:
+                    best_col, best_val = None, None
                     for c in cols:
                         try:
-                            v = float(str(df.at[idx, c]).replace("%", "").replace("待觀察", "").replace("---", ""))
+                            v = float(str(df_out.at[idx, c]).replace("%","").replace("待觀察","").replace("---","").strip())
                             if best_val is None or v > best_val:
-                                best_val = v
-                                best_col = c
+                                best_val, best_col = v, c
                         except Exception:
                             pass
                     if best_col and best_val is not None and best_val > 0:
-                        styles.at[idx, best_col] = "outline: 2px solid #F86200; outline-offset:-2px; font-weight:700"
-                return styles
+                        orig = str(df_out.at[idx, best_col])
+                        df_out.at[idx, best_col] = "★ " + orig
+                return df_out
 
-            styled_a = heatmap_positive(df_yearly, yr_cols)
-            styled_a = styled_a.apply(lambda _: _highlight_best_per_row_a(df_yearly, yr_cols), axis=None)
+            def _style_best_star(val):
+                """把含 ★ 的格子變深色背景白字"""
+                if isinstance(val, str) and val.startswith("★ "):
+                    return "background-color:#003781;color:#fff;font-weight:700"
+                return ""
+
+            df_yr_marked = _mark_best_per_row(df_yearly, yr_cols)
+            styled_a = heatmap_positive(df_yr_marked, yr_cols)
+            styled_a = styled_a.map(_style_best_star)
             show_html(styled_a)
 
             df_yearly_cum = build_yearly_cumulative_table(prices, thr_val_f)
             if df_yearly_cum is not None:
                 st.markdown("### 年度明細 B：每年實際累積損益%（門檻 " + thr_choice_f + "，按股價進場）")
-                st.caption("每年 Σ(出場價-進場價)/Σ進場價 × 100。橘紅色框 = 該年累積損益最高的持有天數。")
+                st.caption("每年 Σ(出場價-進場價)/Σ進場價 × 100。★ = 該年累積損益最高的持有天數（反白標記）。")
                 yr_cum_cols = [str(h) + "天累積%" for h in HORIZONS]
 
-                def _highlight_best_per_row_b(df, cols):
-                    styles = pd.DataFrame("", index=df.index, columns=df.columns)
-                    for idx in df.index:
-                        best_col = None
-                        best_val = None
-                        for c in cols:
-                            try:
-                                v = float(str(df.at[idx, c]).replace("%", "").replace("待觀察", "").replace("---", ""))
-                                if best_val is None or v > best_val:
-                                    best_val = v
-                                    best_col = c
-                            except Exception:
-                                pass
-                        if best_col and best_val is not None and best_val > 0:
-                            styles.at[idx, best_col] = "outline: 2px solid #F86200; outline-offset:-2px; font-weight:700"
-                    return styles
-
-                styled_b = heatmap_positive(df_yearly_cum, yr_cum_cols)
-                styled_b = styled_b.apply(lambda _: _highlight_best_per_row_b(df_yearly_cum, yr_cum_cols), axis=None)
+                df_cum_marked = _mark_best_per_row(df_yearly_cum, yr_cum_cols)
+                styled_b = heatmap_positive(df_cum_marked, yr_cum_cols)
+                styled_b = styled_b.map(_style_best_star)
                 show_html(styled_b)
 
         st.markdown("### 連續觸發分析")
@@ -4756,7 +4757,7 @@ with tab3:
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px">
 <div style="font-size:13px;color:#0F6E56;font-weight:600;margin-bottom:6px">首選　{t0}</div>
 <div style="font-size:13px;color:#003781">15年觸發 <strong>{t1}筆</strong>　{t5}</div>
-<div style="font-size:13px;color:#003781;margin-top:4px">100天勝率 <strong>{t2:.1f}%</strong>　平均報酬 <strong>{t3:.1f}%</strong></div>
+<div style="font-size:14px;color:#003781;margin-top:5px">100天勝率 <strong>{t2:.1f}%</strong>　平均報酬 <strong>{t3:.1f}%</strong></div>
 </div>""".format(t0=first_thr[0], t1=first_thr[1], t5=first_thr[5],
                 t2=first_thr[2], t3=first_thr[3]), unsafe_allow_html=True)
             with col_t2:
@@ -4765,17 +4766,17 @@ with tab3:
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px">
 <div style="font-size:13px;color:#185FA5;font-weight:600;margin-bottom:6px">次選　{t0}</div>
 <div style="font-size:13px;color:#003781">15年觸發 <strong>{t1}筆</strong>　{t5}</div>
-<div style="font-size:13px;color:#003781;margin-top:4px">100天勝率 <strong>{t2:.1f}%</strong>　平均報酬 <strong>{t3:.1f}%</strong></div>
+<div style="font-size:14px;color:#003781;margin-top:5px">100天勝率 <strong>{t2:.1f}%</strong>　平均報酬 <strong>{t3:.1f}%</strong></div>
 {cmp}
 </div>""".format(t0=second_thr[0], t1=second_thr[1], t5=second_thr[5],
                 t2=second_thr[2], t3=second_thr[3],
-                cmp='<div style="font-size:12px;color:#888;margin-top:6px">次選勝率較高（{:.1f}% vs {:.1f}%），但觸發機會較少（{}筆 vs {}筆）</div>'.format(
+                cmp='<div style="font-size:13px;color:#888;margin-top:6px">次選勝率較高（{:.1f}% vs {:.1f}%），但觸發機會較少（{}筆 vs {}筆）</div>'.format(
                     second_thr[2], first_thr[2], second_thr[1], first_thr[1])
                 if second_thr[2] > first_thr[2] else ""), unsafe_allow_html=True)
                 else:
                     st.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px">
-<div style="font-size:12px;color:#888;margin-bottom:6px">次選</div>
+<div style="font-size:13px;color:#888;margin-bottom:6px">次選</div>
 <div style="font-size:13px;color:#888">其餘門檻樣本不足 5 筆，不採用</div>
 </div>""", unsafe_allow_html=True)
             for sk in skipped_thrs:
@@ -4793,9 +4794,9 @@ with tab3:
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px">
 <div style="font-size:13px;color:#0F6E56;font-weight:600;margin-bottom:6px">建議持有　{h} 天</div>
 <div style="font-size:13px;color:#003781">歷史勝率　<strong>{wr:.1f}%</strong></div>
-<div style="font-size:13px;color:#003781;margin-top:3px">平均單次報酬　<strong>{avg:.1f}%</strong></div>
-<div style="font-size:13px;color:#003781;margin-top:3px">15年累積損益（按股數）　<strong>{cc}</strong></div>
-<div style="font-size:13px;color:#003781;margin-top:3px">15年累積損益（等金額）　<strong>{cd}</strong></div>
+<div style="font-size:14px;color:#003781;margin-top:5px">平均單次報酬　<strong>{avg:.1f}%</strong></div>
+<div style="font-size:14px;color:#003781;margin-top:5px">15年累積損益（按股數）　<strong>{cc}</strong></div>
+<div style="font-size:14px;color:#003781;margin-top:5px">15年累積損益（等金額）　<strong>{cd}</strong></div>
 </div>""".format(h=best_h_suggestion, wr=best_wr_val, avg=best_avg_ret,
                 cc=cum_c_str, cd=cum_d_str), unsafe_allow_html=True)
             with col_h2:
@@ -4804,9 +4805,9 @@ with tab3:
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px">
 <div style="font-size:13px;color:#F86200;font-weight:600;margin-bottom:6px">最大回撤參考</div>
 <div style="font-size:13px;color:#003781">歷史最深單筆回撤　<strong>{wd:.1f}%</strong></div>
-<div style="font-size:13px;color:#003781;margin-top:3px">平均最低點出現於進場後第　<strong>{dd:.0f} 天</strong></div>
-<div style="font-size:13px;color:#414141;margin-top:3px">進場後第 <strong>{dd:.0f} 天</strong>若浮虧仍超過 <strong>{lim:.1f}%</strong>，可評估是否停損</div>
-<div style="font-size:12px;color:#888;margin-top:6px">注意：歷史數據顯示忍住浮虧的整體報酬通常優於停損</div>
+<div style="font-size:14px;color:#003781;margin-top:5px">平均最低點出現於進場後第　<strong>{dd:.0f} 天</strong></div>
+<div style="font-size:14px;color:#414141;margin-top:5px">進場後第 <strong>{dd:.0f} 天</strong>若浮虧仍超過 <strong>{lim:.1f}%</strong>，可評估是否停損</div>
+<div style="font-size:13px;color:#888;margin-top:6px">注意：歷史數據顯示忍住浮虧的整體報酬通常優於停損</div>
 </div>""".format(wd=worst_dd_val, dd=avg_dd_day, lim=abs(worst_dd_val) * 0.8), unsafe_allow_html=True)
 
         # ── 綜合決策 ──
@@ -4862,7 +4863,7 @@ with tab3:
         with col_q2:
             st.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:16px;text-align:center">
-<div style="font-size:12px;color:#888;margin-bottom:8px">個股體質</div>
+<div style="font-size:13px;color:#888;margin-bottom:8px">個股體質</div>
 <div style="background:#e0e0e0;border-radius:4px;height:5px;margin-bottom:10px">
   <div style="background:{c};border-radius:4px;height:5px;width:{p}%"></div>
 </div>
@@ -4874,7 +4875,7 @@ with tab3:
         with col_w2:
             st.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:16px;text-align:center">
-<div style="font-size:12px;color:#888;margin-bottom:8px">歷史勝率（持有{d}天）</div>
+<div style="font-size:13px;color:#888;margin-bottom:8px">歷史勝率（持有{d}天）</div>
 <div style="background:#e0e0e0;border-radius:4px;height:5px;margin-bottom:10px">
   <div style="background:{c};border-radius:4px;height:5px;width:{p}%"></div>
 </div>
@@ -4886,7 +4887,7 @@ with tab3:
         with col_final2:
             st.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:16px;text-align:center">
-<div style="font-size:12px;color:#888;margin-bottom:12px">綜合建議</div>
+<div style="font-size:13px;color:#888;margin-bottom:12px">綜合建議</div>
 <div style="font-size:24px;font-weight:700;color:{c};margin-bottom:6px">{a}</div>
 <div style="font-size:12px;color:#666">{r}</div>
 </div>""".format(c=f_color, a=f_advice, r=f_reason), unsafe_allow_html=True)
@@ -4901,7 +4902,7 @@ with tab3:
   <div>
     <div style="font-size:13px;font-weight:600;color:#003781;margin-bottom:2px">尋找 15/15 滿分或高分標的？</div>
     <div style="font-size:14px;color:#414141">前往【<strong>合格標的池</strong>】頁籤 → 建立完整評分庫後，在「體質分數排行」中篩選 ≥13分（A級）或 15分（滿分）的標的清單。</div>
-    <div style="font-size:12px;color:#888;margin-top:2px">注意：合格標的池顯示的是「體質合格」清單，不代表目前已觸發進場信號。觸發信號請至【每日警示掃描】頁籤確認。</div>
+    <div style="font-size:13px;color:#888;margin-top:2px">注意：合格標的池顯示的是「體質合格」清單，不代表目前已觸發進場信號。觸發信號請至【每日警示掃描】頁籤確認。</div>
   </div>
 </div>""", unsafe_allow_html=True)
 
@@ -5612,7 +5613,7 @@ def _render_metric_card(col, data):
         col.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;
      padding:12px 14px;min-height:100px">
-  <div style="font-size:12px;color:#888;margin-bottom:4px">{name}</div>
+  <div style="font-size:13px;color:#888;margin-bottom:5px">{name}</div>
   <div style="font-size:18px;font-weight:600;color:#bbb">—</div>
   <div style="font-size:11px;color:#bbb;margin-top:4px">資料抓取中...</div>
 </div>""".format(name=data["name"]), unsafe_allow_html=True)
@@ -5639,10 +5640,10 @@ def _render_metric_card(col, data):
     col.markdown("""
 <div style="background:#ffffff;border-radius:8px;border:0.5px solid #e0e0e0;
      padding:12px 14px;min-height:110px">
-  <div style="font-size:12px;color:#888;margin-bottom:3px">{name}</div>
+  <div style="font-size:13px;color:#888;margin-bottom:5px">{name}</div>
   <div style="font-size:22px;font-weight:700;color:#003781">{val}</div>
   <div style="font-size:13px;font-weight:600;color:{cc};margin-top:2px">{arrow} {chg}</div>
-  <div style="font-size:13px;color:{sc};margin-top:5px;line-height:1.4">{sig}</div>
+  <div style="font-size:14px;color:{sc};margin-top:5px;line-height:1.4">{sig}</div>
 </div>""".format(
         name=data["name"], val=data["val"],
         cc=chg_color, arrow=arrow, chg=chg_str,
@@ -5701,7 +5702,7 @@ with tab_brief:
   <div style="width:22px;height:22px;border-radius:6px;background:#003781;color:#fff;
        font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center">1</div>
   <span style="font-size:14px;font-weight:600;color:#003781">今日盤前快訊</span>
-  <span style="font-size:12px;color:#888">每15分鐘自動更新 ｜ 資料源：Yahoo Finance</span>
+  <span style="font-size:13px;color:#888">每15分鐘自動更新 ｜ 資料源：Yahoo Finance</span>
 </div>""", unsafe_allow_html=True)
 
     with st.spinner("抓取盤前數據中..."):
@@ -5734,9 +5735,9 @@ with tab_brief:
             st.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;
      padding:10px 16px;display:flex;align-items:center;gap:16px;margin-top:4px">
-  <div style="font-size:12px;color:#888">外資買賣超（TWSE）</div>
+  <div style="font-size:13px;color:#888">外資買賣超（TWSE）</div>
   <div style="font-size:16px;font-weight:600;color:{c}">{dir} {val}{unit}</div>
-  <div style="font-size:12px;color:#888">{date}</div>
+  <div style="font-size:13px;color:#888">{date}</div>
 </div>""".format(c=net_color, dir=direction,
                 val=abs(round(net_v, 2)),
                 unit=" " + foreign["unit"],
@@ -5751,7 +5752,7 @@ with tab_brief:
   <div style="width:22px;height:22px;border-radius:6px;background:#003781;color:#fff;
        font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center">2</div>
   <span style="font-size:14px;font-weight:600;color:#003781">重大財經事件解讀</span>
-  <span style="font-size:12px;color:#888">近72小時 ｜ Reuters RSS ＋ Yahoo Finance ＋ TWSE MoPS ｜ 自動中文化</span>
+  <span style="font-size:13px;color:#888">近72小時 ｜ Reuters RSS ＋ Yahoo Finance ＋ TWSE MoPS ｜ 自動中文化</span>
 </div>""", unsafe_allow_html=True)
     st.caption("關鍵字涵蓋：台積電・輝達・美光・博通・AMD・蘋果・FOMC・CPI・半導體・AI晶片")
 
@@ -5781,7 +5782,7 @@ with tab_brief:
   <div style="width:22px;height:22px;border-radius:6px;background:#003781;color:#fff;
        font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center">3</div>
   <span style="font-size:14px;font-weight:600;color:#003781">未來35天重大事件日曆</span>
-  <span style="font-size:12px;color:#888">Fed.gov ＋ BLS.gov ＋ Yahoo Finance ＋ 內建規則</span>
+  <span style="font-size:13px;color:#888">Fed.gov ＋ BLS.gov ＋ Yahoo Finance ＋ 內建規則</span>
 </div>""", unsafe_allow_html=True)
 
     CAT_BADGE = {
@@ -5822,12 +5823,12 @@ with tab_brief:
      background:{bg};opacity:{op}">
   <div style="width:52px;flex-shrink:0;text-align:center">
     <div style="font-size:17px;font-weight:700;color:#003781">{d}</div>
-    <div style="font-size:12px;color:#888">週{wd}</div>
+    <div style="font-size:13px;color:#888">週{wd}</div>
   </div>
   <div style="width:8px;height:8px;border-radius:50%;background:{cc};flex-shrink:0"></div>
   <div style="flex:1">
     <div style="font-size:13px;font-weight:600;color:#003781">{title}</div>
-    <div style="font-size:12px;color:#888;margin-top:1px">{sub}</div>
+    <div style="font-size:13px;color:#888;margin-top:1px">{sub}</div>
   </div>
   <div style="flex-shrink:0;background:{bb};color:{bf};font-size:10px;
        font-weight:600;padding:2px 8px;border-radius:4px;white-space:nowrap">{cat}</div>
@@ -5849,7 +5850,7 @@ with tab_brief:
 <div style="display:flex;align-items:center;gap:5px">
   <div style="background:{bb};color:{bf};font-size:12px;font-weight:600;
        padding:2px 8px;border-radius:4px">{cat}</div>
-  <span style="font-size:12px;color:#888">{desc}</span>
+  <span style="font-size:13px;color:#888">{desc}</span>
 </div>""".format(bb=bb, bf=bf, cat=cat, desc=CAT_DESC.get(cat, ""))
         legend_html += "</div>"
         st.markdown(legend_html, unsafe_allow_html=True)
