@@ -86,40 +86,101 @@ def load_pool_from_disk():
 
 st.set_page_config(page_title="台股滾動10日跌幅系統 v14", layout="wide")
 
-# ── 全域 CSS：字型大小統一 + 圓框 SVG icon 系統 ──
+# ── 全域 CSS：完整字型體系，覆蓋 Streamlit Cloud 所有元件 ──
 st.markdown("""
 <style>
-/* ── 全域字型基準：放大至舒適閱讀尺寸 ── */
-html, body, [class*="css"] { font-size: 15px !important; }
+/* ══ 基準字型 ══ */
+*, *::before, *::after { box-sizing: border-box; }
+section[data-testid="stMain"] { font-size: 15px; }
 
-/* Streamlit caption 放大 */
-.stCaption, [data-testid="stCaptionContainer"] p { font-size: 13px !important; color: #555 !important; }
+/* ══ 正文段落 / markdown ══ */
+.stMarkdown p,
+.stMarkdown li,
+div[data-testid="stMarkdownContainer"] p,
+div[data-testid="stMarkdownContainer"] li { font-size: 15px !important; line-height: 1.7; }
 
-/* Streamlit metric 數值放大 */
-[data-testid="stMetricValue"] { font-size: 26px !important; font-weight: 700 !important; }
-[data-testid="stMetricLabel"] { font-size: 13px !important; color: #888 !important; }
+/* ══ 標題 ══ */
+.stMarkdown h1, div[data-testid="stMarkdownContainer"] h1 { font-size: 24px !important; font-weight: 700 !important; }
+.stMarkdown h2, div[data-testid="stMarkdownContainer"] h2 { font-size: 20px !important; font-weight: 700 !important; }
+.stMarkdown h3, div[data-testid="stMarkdownContainer"] h3 { font-size: 17px !important; font-weight: 600 !important; }
 
-/* Tab 文字放大 */
-.stTabs [data-baseweb="tab"] { font-size: 14px !important; font-weight: 500 !important; }
+/* ══ Caption ══ */
+.stCaptionContainer p,
+div[data-testid="stCaptionContainer"] p,
+small { font-size: 13px !important; color: #666 !important; }
 
-/* DataFrame / HTML 表格字型 */
-.stbl td { font-size: 14px !important; padding: 7px 12px !important; }
-.stbl th { font-size: 13px !important; padding: 8px 12px !important; }
+/* ══ Metric 元件 ══ */
+div[data-testid="stMetricValue"]  > div { font-size: 26px !important; font-weight: 700 !important; }
+div[data-testid="stMetricLabel"]  > div { font-size: 13px !important; color: #888 !important; }
+div[data-testid="stMetricDelta"]  > div { font-size: 13px !important; }
 
-/* info/warning/error/success 框字型 */
-[data-testid="stAlert"] p { font-size: 14px !important; }
+/* ══ Alert (info/warning/error/success) ══ */
+div[data-testid="stAlert"] div[data-testid="stMarkdownContainer"] p { font-size: 14px !important; }
 
-/* selectbox / text_input 字型 */
-[data-baseweb="select"] span { font-size: 14px !important; }
-[data-baseweb="input"] input { font-size: 14px !important; }
+/* ══ Tab 標籤列 ══ */
+button[data-baseweb="tab"] p,
+button[role="tab"] { font-size: 14px !important; font-weight: 500 !important; }
 
-/* expander 標題 */
-details summary p { font-size: 14px !important; }
+/* ══ Selectbox ══ */
+div[data-baseweb="select"] div[class*="ValueContainer"] div,
+div[data-baseweb="select"] span { font-size: 14px !important; }
+ul[data-testid="stSelectboxVirtualDropdown"] li span { font-size: 14px !important; }
 
-/* 自訂 HTML 卡片內 label 最小字號 */
-.card-label { font-size: 12px !important; }
+/* ══ Text input ══ */
+input[type="text"], input[type="number"],
+div[data-baseweb="input"] input { font-size: 15px !important; }
+
+/* ══ Slider ══ */
+div[data-testid="stSlider"] div[data-testid="stTickBarMin"],
+div[data-testid="stSlider"] div[data-testid="stTickBarMax"] { font-size: 13px !important; }
+
+/* ══ Expander ══ */
+div[data-testid="stExpander"] summary p { font-size: 14px !important; font-weight: 500 !important; }
+
+/* ══ Button ══ */
+button[kind="primary"] p, button[kind="secondary"] p,
+div[data-testid="stBaseButton-primary"] p,
+div[data-testid="stBaseButton-secondary"] p { font-size: 14px !important; font-weight: 600 !important; }
+
+/* ══ Checkbox / Radio ══ */
+label[data-testid="stWidgetLabel"] p { font-size: 14px !important; }
+
+/* ══ DataFrame 表格 (Streamlit 原生) ══ */
+div[data-testid="stDataFrame"] td, div[data-testid="stDataFrame"] th { font-size: 14px !important; }
+
+/* ══ 自訂 .stbl 表格 ══ */
+.stbl { border-collapse: collapse; width: 100%; }
+.stbl th {
+  background: #003781; color: #fff;
+  padding: 9px 14px; font-size: 13px; font-weight: 600;
+  white-space: nowrap; text-align: center;
+}
+.stbl td {
+  padding: 8px 14px; font-size: 14px;
+  border-bottom: 1px solid #e8e8e8;
+  white-space: nowrap; text-align: center;
+}
+.stbl tr:nth-child(even) td { background: #fafafa; }
+.stbl tr:hover td { background: #f0f5ff; }
+
+/* ══ 自訂卡片統一字型 ══ */
+.v14-card-label { font-size: 12px; color: #888; margin-bottom: 4px; }
+.v14-card-value { font-size: 22px; font-weight: 700; }
+.v14-card-hint  { font-size: 12px; color: #888; margin-top: 4px; }
+
+/* ══ Sidebar ══ */
+section[data-testid="stSidebar"] p { font-size: 14px !important; }
+
+/* ══ Progress bar label ══ */
+div[data-testid="stProgress"] p { font-size: 13px !important; }
+
+/* ══ Download button ══ */
+a[data-testid="stDownloadButton"] span { font-size: 14px !important; }
 </style>
+""", unsafe_allow_html=True)
 
+# ── 圓框 SVG icon 全域定義 ──
+st.markdown("""
 <!-- 圓框 SVG icon 定義（全域，與你提供的設計風格一致） -->
 <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
   <symbol id="icon-chart" viewBox="0 0 48 48">
@@ -861,11 +922,11 @@ def _tab_icon(icon_id, label, sub=""):
   </div>
 </div>""".format(icon=icon_id, label=label, sub=sub_html)
     """統一區塊標題樣式：藍色數字徽章 + 標題文字"""
-    sub_html = '<span style="font-size:11px;color:#888;font-weight:400;margin-left:6px">{}</span>'.format(sub) if sub else ""
+    sub_html = '<span style="font-size:12px;color:#888;font-weight:400;margin-left:6px">{}</span>'.format(sub) if sub else ""
     st.markdown("""
 <div style="display:flex;align-items:center;gap:8px;margin:8px 0 10px">
   <div style="width:24px;height:24px;border-radius:6px;background:#003781;color:#fff;
-       font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0">{num}</div>
+       font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0">{num}</div>
   <span style="font-size:15px;font-weight:600;color:#003781">{text}</span>{sub}
 </div>""".format(num=num, text=text, sub=sub_html), unsafe_allow_html=True)
 
@@ -1016,9 +1077,9 @@ def _render_decision_table_v14(best_thr, best_h, second_h, worst_dd, worst_dd_si
         bg = "#f8f9fa" if i % 2 else "#ffffff"
         rows_html += """
 <tr style="background:{bg};border-bottom:0.5px solid #e0e0e0">
-  <td style="padding:9px 14px;font-size:12px;color:#888;white-space:nowrap;width:90px">{lb}</td>
+  <td style="padding:9px 14px;font-size:13px;color:#888;white-space:nowrap;width:90px">{lb}</td>
   <td style="padding:9px 14px;font-size:13px;font-weight:600;color:#003781;width:200px">{vl}</td>
-  <td style="padding:9px 14px;font-size:12px;color:#414141">{ds}</td>
+  <td style="padding:9px 14px;font-size:14px;color:#414141">{ds}</td>
 </tr>""".format(bg=bg, lb=label, vl=val, ds=desc)
 
     st.markdown("""
@@ -1038,9 +1099,9 @@ def _render_decision_table_v14(best_thr, best_h, second_h, worst_dd, worst_dd_si
     def _card(col, label, value, sub, val_color="#003781"):
         col.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;padding:14px 16px;border:0.5px solid #e0e0e0">
-  <div style="font-size:11px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:12px;color:#888;margin-bottom:4px">{lb}</div>
   <div style="font-size:20px;font-weight:600;color:{vc}">{vl}</div>
-  <div style="font-size:11px;color:#888;margin-top:3px">{sb}</div>
+  <div style="font-size:12px;color:#888;margin-top:3px">{sb}</div>
 </div>""".format(lb=label, vl=value, sb=sub, vc=val_color), unsafe_allow_html=True)
 
     _card(c1, "首選持有天數", "{}天".format(best_h) if best_h else "—",
@@ -1138,7 +1199,7 @@ def _render_exit_strategy_v14(prices_dict, best_thr, best_h, code):
     def _stat(col, label, val, color="#003781"):
         col.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;padding:10px 12px;border:0.5px solid #e0e0e0;text-align:center">
-  <div style="font-size:11px;color:#888;margin-bottom:3px">{lb}</div>
+  <div style="font-size:12px;color:#888;margin-bottom:3px">{lb}</div>
   <div style="font-size:17px;font-weight:600;color:{c}">{vl}%</div>
 </div>""".format(lb=label, vl=val, c=color), unsafe_allow_html=True)
     _stat(col1, "最差25%（P25）", p25, "#0F6E56" if p25 >= 0 else "#A32D2D")
@@ -1223,7 +1284,7 @@ def _render_exit_strategy_v14(prices_dict, best_thr, best_h, code):
 
     st.markdown("""
 <div style="background:#E6F1FB;border-left:3px solid #003781;border-radius:0 6px 6px 0;
-     padding:10px 14px;font-size:12px;color:#414141;margin-top:8px">
+     padding:10px 14px;font-size:14px;color:#414141;margin-top:8px">
 ⚡ <strong>出場策略優先序建議</strong>：若無特殊判斷，優先用「策略二標準出場（+{p75:.1f}%）」
 ＋「時間到期（{bh}天）」雙重觸發——哪個先到就先出。這樣兼顧了獲利鎖定與時間紀律，
 歷史上能有效避免「拿到頂點又吐回去」的情況。
@@ -1258,11 +1319,11 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
     def _mini_card(col, label, value, hint="", val_color="#003781"):
         col.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
-  <div style="font-size:11px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:12px;color:#888;margin-bottom:4px">{lb}</div>
   <div style="font-size:22px;font-weight:700;color:{vc}">{vl}</div>
   {hint_html}
 </div>""".format(lb=label, vc=val_color, vl=value,
-        hint_html='<div style="font-size:11px;color:#888;margin-top:4px">{}</div>'.format(hint) if hint else ""),
+        hint_html='<div style="font-size:12px;color:#888;margin-top:4px">{}</div>'.format(hint) if hint else ""),
         unsafe_allow_html=True)
 
     level_val = twii_now["level"] if twii_now else None
@@ -3578,15 +3639,15 @@ with tab6:
             col_s15, col_s13 = st.columns(2)
             col_s15.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:2px solid #0F6E56;padding:10px 14px;text-align:center">
-  <div style="font-size:11px;color:#888;margin-bottom:3px">滿分標的</div>
+  <div style="font-size:12px;color:#888;margin-bottom:3px">滿分標的</div>
   <div style="font-size:28px;font-weight:700;color:#0F6E56">{n}<span style="font-size:13px;color:#888;font-weight:400"> 檔</span></div>
-  <div style="font-size:11px;color:#0F6E56">15 / 15 分</div>
+  <div style="font-size:13px;color:#0F6E56">15 / 15 分</div>
 </div>""".format(n=len(df_15)), unsafe_allow_html=True)
             col_s13.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:2px solid #185FA5;padding:10px 14px;text-align:center">
-  <div style="font-size:11px;color:#888;margin-bottom:3px">A級標的</div>
+  <div style="font-size:12px;color:#888;margin-bottom:3px">A級標的</div>
   <div style="font-size:28px;font-weight:700;color:#185FA5">{n}<span style="font-size:13px;color:#888;font-weight:400"> 檔</span></div>
-  <div style="font-size:11px;color:#185FA5">13–14 分</div>
+  <div style="font-size:13px;color:#185FA5">13–14 分</div>
 </div>""".format(n=len(df_13)), unsafe_allow_html=True)
 
             st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
@@ -4085,9 +4146,9 @@ with tab3:
             ]:
                 col.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
-  <div style="font-size:11px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:12px;color:#888;margin-bottom:4px">{lb}</div>
   <div style="font-size:22px;font-weight:700;color:#003781">{sc}<span style="font-size:13px;color:#888;font-weight:400"> /5</span></div>
-  <div style="font-size:11px;color:#888;margin-top:4px">{dt}</div>
+  <div style="font-size:12px;color:#888;margin-top:4px">{dt}</div>
 </div>""".format(lb=label, sc=score, dt=detail), unsafe_allow_html=True)
 
             if q_total is not None and isinstance(q_total, (int, float)):
@@ -4095,14 +4156,14 @@ with tab3:
                 sc_color = "#0F6E56" if score_int >= 13 else ("#F86200" if score_int >= 9 else "#A32D2D")
                 col_qtotal.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:12px 14px;text-align:center">
-  <div style="font-size:11px;color:#888;margin-bottom:4px">體質總分</div>
+  <div style="font-size:12px;color:#888;margin-bottom:4px">體質總分</div>
   <div style="font-size:26px;font-weight:700;color:{c}">{sc}<span style="font-size:13px;color:#888;font-weight:400"> /15</span></div>
   <div style="font-size:12px;color:{c};margin-top:4px;font-weight:600">{gr}</div>
 </div>""".format(c=sc_color, sc=score_int, gr=q_grade), unsafe_allow_html=True)
             else:
                 col_qtotal.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px;text-align:center">
-  <div style="font-size:11px;color:#888">體質總分</div>
+  <div style="font-size:12px;color:#888">體質總分</div>
   <div style="font-size:18px;color:#888;margin-top:8px">資料不足</div>
 </div>""", unsafe_allow_html=True)
             st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
@@ -4123,9 +4184,9 @@ with tab3:
                     def _fin_card(col, label, val_str, hint, val_color="#003781"):
                         col.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
-  <div style="font-size:11px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:12px;color:#888;margin-bottom:4px">{lb}</div>
   <div style="font-size:22px;font-weight:700;color:{vc}">{vl}</div>
-  <div style="font-size:11px;color:#888;margin-top:4px">{ht}</div>
+  <div style="font-size:12px;color:#888;margin-top:4px">{ht}</div>
 </div>""".format(lb=label, vc=val_color, vl=val_str, ht=hint), unsafe_allow_html=True)
 
                     roe_str  = "{}%".format(round(roe_q,  1)) if roe_q  else "—"
@@ -4173,15 +4234,15 @@ with tab3:
                         ]:
                             col_x.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
-  <div style="font-size:11px;color:#888;margin-bottom:4px">{lb}</div>
+  <div style="font-size:12px;color:#888;margin-bottom:4px">{lb}</div>
   <div style="font-size:22px;font-weight:700;color:#003781">{sc}<span style="font-size:13px;color:#888;font-weight:400"> /5</span></div>
-  <div style="font-size:11px;color:#888;margin-top:4px">{dt}</div>
+  <div style="font-size:12px;color:#888;margin-top:4px">{dt}</div>
 </div>""".format(lb=lbl, sc=scr, dt=det), unsafe_allow_html=True)
 
                         sc_color2 = "#0F6E56" if total_q >= 13 else ("#F86200" if total_q >= 9 else "#A32D2D")
                         col_qtotal2.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:12px 14px;text-align:center">
-  <div style="font-size:11px;color:#888;margin-bottom:4px">體質總分</div>
+  <div style="font-size:12px;color:#888;margin-bottom:4px">體質總分</div>
   <div style="font-size:26px;font-weight:700;color:{c}">{sc}<span style="font-size:13px;color:#888;font-weight:400"> /15</span></div>
   <div style="font-size:12px;color:{c};margin-top:4px;font-weight:600">{gr}</div>
 </div>""".format(c=sc_color2, sc=total_q, gr=grade_q), unsafe_allow_html=True)
@@ -4693,7 +4754,7 @@ with tab3:
             with col_t1:
                 st.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px">
-<div style="font-size:12px;color:#0F6E56;font-weight:600;margin-bottom:6px">首選　{t0}</div>
+<div style="font-size:13px;color:#0F6E56;font-weight:600;margin-bottom:6px">首選　{t0}</div>
 <div style="font-size:13px;color:#003781">15年觸發 <strong>{t1}筆</strong>　{t5}</div>
 <div style="font-size:13px;color:#003781;margin-top:4px">100天勝率 <strong>{t2:.1f}%</strong>　平均報酬 <strong>{t3:.1f}%</strong></div>
 </div>""".format(t0=first_thr[0], t1=first_thr[1], t5=first_thr[5],
@@ -4702,13 +4763,13 @@ with tab3:
                 if second_thr:
                     st.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px">
-<div style="font-size:12px;color:#185FA5;font-weight:600;margin-bottom:6px">次選　{t0}</div>
+<div style="font-size:13px;color:#185FA5;font-weight:600;margin-bottom:6px">次選　{t0}</div>
 <div style="font-size:13px;color:#003781">15年觸發 <strong>{t1}筆</strong>　{t5}</div>
 <div style="font-size:13px;color:#003781;margin-top:4px">100天勝率 <strong>{t2:.1f}%</strong>　平均報酬 <strong>{t3:.1f}%</strong></div>
 {cmp}
 </div>""".format(t0=second_thr[0], t1=second_thr[1], t5=second_thr[5],
                 t2=second_thr[2], t3=second_thr[3],
-                cmp='<div style="font-size:11px;color:#888;margin-top:6px">次選勝率較高（{:.1f}% vs {:.1f}%），但觸發機會較少（{}筆 vs {}筆）</div>'.format(
+                cmp='<div style="font-size:12px;color:#888;margin-top:6px">次選勝率較高（{:.1f}% vs {:.1f}%），但觸發機會較少（{}筆 vs {}筆）</div>'.format(
                     second_thr[2], first_thr[2], second_thr[1], first_thr[1])
                 if second_thr[2] > first_thr[2] else ""), unsafe_allow_html=True)
                 else:
@@ -4730,7 +4791,7 @@ with tab3:
                 cum_d_str = "{:.1f}%".format(best_cum_ret_d) if best_cum_ret_d is not None else "—"
                 st.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px">
-<div style="font-size:12px;color:#0F6E56;font-weight:600;margin-bottom:6px">建議持有　{h} 天</div>
+<div style="font-size:13px;color:#0F6E56;font-weight:600;margin-bottom:6px">建議持有　{h} 天</div>
 <div style="font-size:13px;color:#003781">歷史勝率　<strong>{wr:.1f}%</strong></div>
 <div style="font-size:13px;color:#003781;margin-top:3px">平均單次報酬　<strong>{avg:.1f}%</strong></div>
 <div style="font-size:13px;color:#003781;margin-top:3px">15年累積損益（按股數）　<strong>{cc}</strong></div>
@@ -4741,11 +4802,11 @@ with tab3:
                 if avg_dd_day and worst_dd_val:
                     st.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 18px">
-<div style="font-size:12px;color:#F86200;font-weight:600;margin-bottom:6px">最大回撤參考</div>
+<div style="font-size:13px;color:#F86200;font-weight:600;margin-bottom:6px">最大回撤參考</div>
 <div style="font-size:13px;color:#003781">歷史最深單筆回撤　<strong>{wd:.1f}%</strong></div>
 <div style="font-size:13px;color:#003781;margin-top:3px">平均最低點出現於進場後第　<strong>{dd:.0f} 天</strong></div>
 <div style="font-size:13px;color:#414141;margin-top:3px">進場後第 <strong>{dd:.0f} 天</strong>若浮虧仍超過 <strong>{lim:.1f}%</strong>，可評估是否停損</div>
-<div style="font-size:11px;color:#888;margin-top:6px">注意：歷史數據顯示忍住浮虧的整體報酬通常優於停損</div>
+<div style="font-size:12px;color:#888;margin-top:6px">注意：歷史數據顯示忍住浮虧的整體報酬通常優於停損</div>
 </div>""".format(wd=worst_dd_val, dd=avg_dd_day, lim=abs(worst_dd_val) * 0.8), unsafe_allow_html=True)
 
         # ── 綜合決策 ──
@@ -4839,7 +4900,7 @@ with tab3:
   <div style="font-size:20px">📋</div>
   <div>
     <div style="font-size:13px;font-weight:600;color:#003781;margin-bottom:2px">尋找 15/15 滿分或高分標的？</div>
-    <div style="font-size:12px;color:#414141">前往【<strong>合格標的池</strong>】頁籤 → 建立完整評分庫後，在「體質分數排行」中篩選 ≥13分（A級）或 15分（滿分）的標的清單。</div>
+    <div style="font-size:14px;color:#414141">前往【<strong>合格標的池</strong>】頁籤 → 建立完整評分庫後，在「體質分數排行」中篩選 ≥13分（A級）或 15分（滿分）的標的清單。</div>
     <div style="font-size:12px;color:#888;margin-top:2px">注意：合格標的池顯示的是「體質合格」清單，不代表目前已觸發進場信號。觸發信號請至【每日警示掃描】頁籤確認。</div>
   </div>
 </div>""", unsafe_allow_html=True)
@@ -5551,7 +5612,7 @@ def _render_metric_card(col, data):
         col.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;
      padding:12px 14px;min-height:100px">
-  <div style="font-size:11px;color:#888;margin-bottom:4px">{name}</div>
+  <div style="font-size:12px;color:#888;margin-bottom:4px">{name}</div>
   <div style="font-size:18px;font-weight:600;color:#bbb">—</div>
   <div style="font-size:11px;color:#bbb;margin-top:4px">資料抓取中...</div>
 </div>""".format(name=data["name"]), unsafe_allow_html=True)
@@ -5578,10 +5639,10 @@ def _render_metric_card(col, data):
     col.markdown("""
 <div style="background:#ffffff;border-radius:8px;border:0.5px solid #e0e0e0;
      padding:12px 14px;min-height:110px">
-  <div style="font-size:11px;color:#888;margin-bottom:3px">{name}</div>
-  <div style="font-size:18px;font-weight:600;color:#003781">{val}</div>
+  <div style="font-size:12px;color:#888;margin-bottom:3px">{name}</div>
+  <div style="font-size:22px;font-weight:700;color:#003781">{val}</div>
   <div style="font-size:13px;font-weight:600;color:{cc};margin-top:2px">{arrow} {chg}</div>
-  <div style="font-size:11px;color:{sc};margin-top:5px;line-height:1.4">{sig}</div>
+  <div style="font-size:13px;color:{sc};margin-top:5px;line-height:1.4">{sig}</div>
 </div>""".format(
         name=data["name"], val=data["val"],
         cc=chg_color, arrow=arrow, chg=chg_str,
@@ -5591,28 +5652,36 @@ def _render_metric_card(col, data):
 
 def _render_news_item(item):
     """渲染單一新聞解讀卡片"""
+    import html as _html
     impact, bg, fg = item["impact"], item["bg"], item["fg"]
     url = item.get("url", "")
-    link_html = ' <a href="{}" target="_blank" style="color:#185FA5;font-size:11px">[原文]</a>'.format(url) if url else ""
+    link_html = ' <a href="{u}" target="_blank" style="color:#185FA5;font-size:13px;font-weight:400">[原文]</a>'.format(u=url) if url else ""
+
+    # 安全跳脫：避免 summary 內含 HTML 標籤破壞卡片結構
+    title_safe   = _html.escape(str(item.get("title",   "")))
+    summary_safe = _html.escape(str(item.get("summary", ""))) if item.get("summary") else ""
+    source_safe  = _html.escape(str(item.get("source",  "")))
+
+    summary_block = '<div style="font-size:14px;color:#414141;line-height:1.6;margin-top:4px">{}</div>'.format(
+        summary_safe) if summary_safe else ""
 
     st.markdown("""
-<div style="border-radius:8px;border:0.5px solid #e0e0e0;padding:10px 14px;
-     display:flex;align-items:flex-start;gap:12px;margin-bottom:6px">
-  <div style="flex-shrink:0;background:{bg};color:{fg};font-size:10px;font-weight:600;
-       padding:3px 8px;border-radius:4px;white-space:nowrap;margin-top:2px">{impact}</div>
-  <div style="flex:1">
-    <div style="font-size:13px;font-weight:600;color:#003781;margin-bottom:3px">
+<div style="border-radius:8px;border:0.5px solid #e0e0e0;padding:14px 16px;
+     display:flex;align-items:flex-start;gap:14px;margin-bottom:8px;background:#fff">
+  <div style="flex-shrink:0;background:{bg};color:{fg};font-size:12px;font-weight:600;
+       padding:4px 10px;border-radius:4px;white-space:nowrap;margin-top:2px;min-width:48px;text-align:center">{impact}</div>
+  <div style="flex:1;min-width:0">
+    <div style="font-size:15px;font-weight:600;color:#003781;margin-bottom:4px;line-height:1.4">
       {title}{link}
     </div>
-    {summary_html}
-    <div style="font-size:10px;color:#888;margin-top:3px">來源：{src}</div>
+    {summary}
+    <div style="font-size:12px;color:#aaa;margin-top:6px">來源：{src}</div>
   </div>
 </div>""".format(
         bg=bg, fg=fg, impact=impact,
-        title=item["title"], link=link_html,
-        summary_html='<div style="font-size:12px;color:#414141;line-height:1.5">{}</div>'.format(
-            item["summary"]) if item.get("summary") else "",
-        src=item["source"]
+        title=title_safe, link=link_html,
+        summary=summary_block,
+        src=source_safe,
     ), unsafe_allow_html=True)
 
 
@@ -5632,7 +5701,7 @@ with tab_brief:
   <div style="width:22px;height:22px;border-radius:6px;background:#003781;color:#fff;
        font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center">1</div>
   <span style="font-size:14px;font-weight:600;color:#003781">今日盤前快訊</span>
-  <span style="font-size:11px;color:#888">每15分鐘自動更新 ｜ 資料源：Yahoo Finance</span>
+  <span style="font-size:12px;color:#888">每15分鐘自動更新 ｜ 資料源：Yahoo Finance</span>
 </div>""", unsafe_allow_html=True)
 
     with st.spinner("抓取盤前數據中..."):
@@ -5667,7 +5736,7 @@ with tab_brief:
      padding:10px 16px;display:flex;align-items:center;gap:16px;margin-top:4px">
   <div style="font-size:12px;color:#888">外資買賣超（TWSE）</div>
   <div style="font-size:16px;font-weight:600;color:{c}">{dir} {val}{unit}</div>
-  <div style="font-size:11px;color:#888">{date}</div>
+  <div style="font-size:12px;color:#888">{date}</div>
 </div>""".format(c=net_color, dir=direction,
                 val=abs(round(net_v, 2)),
                 unit=" " + foreign["unit"],
@@ -5682,7 +5751,7 @@ with tab_brief:
   <div style="width:22px;height:22px;border-radius:6px;background:#003781;color:#fff;
        font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center">2</div>
   <span style="font-size:14px;font-weight:600;color:#003781">重大財經事件解讀</span>
-  <span style="font-size:11px;color:#888">近72小時 ｜ Reuters RSS ＋ Yahoo Finance ＋ TWSE MoPS ｜ 自動中文化</span>
+  <span style="font-size:12px;color:#888">近72小時 ｜ Reuters RSS ＋ Yahoo Finance ＋ TWSE MoPS ｜ 自動中文化</span>
 </div>""", unsafe_allow_html=True)
     st.caption("關鍵字涵蓋：台積電・輝達・美光・博通・AMD・蘋果・FOMC・CPI・半導體・AI晶片")
 
@@ -5712,7 +5781,7 @@ with tab_brief:
   <div style="width:22px;height:22px;border-radius:6px;background:#003781;color:#fff;
        font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center">3</div>
   <span style="font-size:14px;font-weight:600;color:#003781">未來35天重大事件日曆</span>
-  <span style="font-size:11px;color:#888">Fed.gov ＋ BLS.gov ＋ Yahoo Finance ＋ 內建規則</span>
+  <span style="font-size:12px;color:#888">Fed.gov ＋ BLS.gov ＋ Yahoo Finance ＋ 內建規則</span>
 </div>""", unsafe_allow_html=True)
 
     CAT_BADGE = {
@@ -5752,13 +5821,13 @@ with tab_brief:
      display:flex;align-items:center;gap:12px;margin-bottom:5px;
      background:{bg};opacity:{op}">
   <div style="width:52px;flex-shrink:0;text-align:center">
-    <div style="font-size:16px;font-weight:600;color:#003781">{d}</div>
-    <div style="font-size:10px;color:#888">週{wd}</div>
+    <div style="font-size:17px;font-weight:700;color:#003781">{d}</div>
+    <div style="font-size:12px;color:#888">週{wd}</div>
   </div>
   <div style="width:8px;height:8px;border-radius:50%;background:{cc};flex-shrink:0"></div>
   <div style="flex:1">
     <div style="font-size:13px;font-weight:600;color:#003781">{title}</div>
-    <div style="font-size:11px;color:#888;margin-top:1px">{sub}</div>
+    <div style="font-size:12px;color:#888;margin-top:1px">{sub}</div>
   </div>
   <div style="flex-shrink:0;background:{bb};color:{bf};font-size:10px;
        font-weight:600;padding:2px 8px;border-radius:4px;white-space:nowrap">{cat}</div>
@@ -5778,9 +5847,9 @@ with tab_brief:
         for cat, (bb, bf) in CAT_BADGE.items():
             legend_html += """
 <div style="display:flex;align-items:center;gap:5px">
-  <div style="background:{bb};color:{bf};font-size:10px;font-weight:600;
+  <div style="background:{bb};color:{bf};font-size:12px;font-weight:600;
        padding:2px 8px;border-radius:4px">{cat}</div>
-  <span style="font-size:11px;color:#888">{desc}</span>
+  <span style="font-size:12px;color:#888">{desc}</span>
 </div>""".format(bb=bb, bf=bf, cat=cat, desc=CAT_DESC.get(cat, ""))
         legend_html += "</div>"
         st.markdown(legend_html, unsafe_allow_html=True)
