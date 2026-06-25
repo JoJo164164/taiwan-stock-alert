@@ -1049,7 +1049,7 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
         thr_val_int = int(best_thr.replace("%", ""))
 
         # 只取60天這個最有代表性的觀察期做進場時機分析
-        df_consec_60 = build_consec_analysis(prices_dict, thr_val_int, 60)
+        df_consec_60 = build_entry_timing_table(prices_dict, thr_val_int, 60)
 
         if df_consec_60 is not None:
             # 移除累積報酬欄
@@ -4225,24 +4225,23 @@ with tab3:
         col_q, col_w, col_t = st.columns(3)
 
         with col_q:
-            q_pct = score_quality_100 if score_quality_100 is not None else 0
-            q_color = "#1b5e20" if q_pct >= 35 else ("#e65100" if q_pct >= 20 else "#b71c1c")
+            q_color = "#1b5e20" if (q_score_bt and q_score_bt >= 13) else ("#e65100" if (q_score_bt and q_score_bt >= 9) else "#b71c1c")
+            q_val = int(q_score_bt) if q_score_bt is not None and isinstance(q_score_bt, (int, float)) else None
+            q_pct = round(q_val / 15 * 100) if q_val is not None else 0
             st.markdown("""
 <div style="background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:16px;text-align:center">
 <div style="font-size:12px;color:#888;margin-bottom:8px">個股體質</div>
-<div style="font-size:11px;color:#aaa;margin-bottom:8px">{raw}/15分 → 換算</div>
 <div style="background:#f0f0f0;border-radius:4px;height:8px;margin-bottom:8px">
   <div style="background:{color};border-radius:4px;height:8px;width:{pct}%"></div>
 </div>
 <div style="font-size:28px;font-weight:700;color:{color}">{score}</div>
-<div style="font-size:12px;color:#888">／ 50分</div>
+<div style="font-size:12px;color:#888">／ 15分</div>
 <div style="font-size:12px;color:{color};margin-top:4px">{grade}</div>
 </div>
 """.format(
-                raw=int(q_score_bt) if q_score_bt else "—",
                 color=q_color,
-                pct=q_pct*2,
-                score=q_pct if score_quality_100 is not None else "—",
+                pct=q_pct,
+                score=q_val if q_val is not None else "—",
                 grade=q_grade_bt if q_grade_bt else "未評分"
             ), unsafe_allow_html=True)
 
@@ -4269,45 +4268,39 @@ with tab3:
             ), unsafe_allow_html=True)
 
         with col_t:
-            if total_100 is not None:
-                t_color = "#1b5e20" if total_100 >= 75 else ("#e65100" if total_100 >= 50 else "#b71c1c")
-                if level >= 9:
-                    t_advice = "暫停進場"
-                    t_color_adv = "#b71c1c"
-                elif total_100 >= 75:
-                    t_advice = "可全倉進場"
-                    t_color_adv = "#1b5e20"
-                elif total_100 >= 60:
-                    t_advice = "建議75%倉位"
-                    t_color_adv = "#2e7d32"
-                elif total_100 >= 45:
-                    t_advice = "建議50%倉位"
-                    t_color_adv = "#e65100"
-                else:
-                    t_advice = "建議觀望"
-                    t_color_adv = "#b71c1c"
+            t_color = "#1b5e20" if score_wr_100 >= 40 else ("#e65100" if score_wr_100 >= 25 else "#b71c1c")
+            if level >= 9:
+                t_advice = "暫停進場"
+                t_color_adv = "#b71c1c"
+            elif score_wr_100 >= 40 and (q_score_bt and q_score_bt >= 9):
+                t_advice = "可進場"
+                t_color_adv = "#1b5e20"
+            elif score_wr_100 >= 30:
+                t_advice = "謹慎進場"
+                t_color_adv = "#e65100"
+            else:
+                t_advice = "建議觀望"
+                t_color_adv = "#b71c1c"
 
-                st.markdown("""
+            st.markdown("""
 <div style="background:#fff;border:2px solid {color};border-radius:8px;padding:16px;text-align:center">
-<div style="font-size:12px;color:#888;margin-bottom:8px">綜合得分</div>
+<div style="font-size:12px;color:#888;margin-bottom:8px">歷史勝率得分</div>
 <div style="background:#f0f0f0;border-radius:4px;height:8px;margin-bottom:8px">
   <div style="background:{color};border-radius:4px;height:8px;width:{pct}%"></div>
 </div>
 <div style="font-size:36px;font-weight:700;color:{color}">{score}</div>
-<div style="font-size:12px;color:#888">／ 100分</div>
+<div style="font-size:12px;color:#888">／ 50分</div>
 <div style="font-size:14px;font-weight:600;color:{color_adv};margin-top:8px;padding:4px 8px;background:#f8f8f8;border-radius:4px">{advice}</div>
 </div>
 """.format(
-                    color=t_color,
-                    pct=total_100,
-                    score=total_100,
-                    color_adv=t_color_adv,
-                    advice=t_advice
-                ), unsafe_allow_html=True)
-            else:
-                st.info("體質未評分，無法計算總分")
+                color=t_color,
+                pct=score_wr_100 * 2,
+                score=score_wr_100,
+                color_adv=t_color_adv,
+                advice=t_advice
+            ), unsafe_allow_html=True)
 
-        st.caption("體質評分：15分制換算為50分　｜　歷史勝率：建議持有{}天勝率，85%+得50分、75%+得40分、65%+得30分、55%+得20分、其餘10分　｜　市場熱度為獨立警示，不納入評分".format(best_h_suggestion or "—"))
+        st.caption("個股體質：15分制直接顯示　｜　歷史勝率：建議持有{}天勝率，85%+得50分、75%+得40分、65%+得30分、55%+得20分、其餘10分　｜　市場熱度為獨立警示，不納入評分".format(best_h_suggestion or "—"))
         st.caption("本分析基於歷史回測數據自動生成，不構成投資建議。歷史績效不代表未來報酬。")
 
         # 分析建議
