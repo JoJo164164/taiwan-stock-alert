@@ -2420,14 +2420,6 @@ def generate_pdf_backtest(code, prices, df_win, df_avg, df_dd, df_yearly, thr_va
 
 
 def generate_pdf_pool(df_pool):
-    return generate_html_report_pool(df_pool)
-
-def generate_pdf_scan(df_scan, threshold, scan_date):
-    return generate_html_report_scan(df_scan, threshold, scan_date)
-
-def generate_pdf_briefing(premarket_data, events):
-    return "<html><body><h1>每日市場簡報</h1></body></html>".encode("utf-8")
-def generate_pdf_pool(df_pool):
     """合格標的池 PDF 報告"""
     import io
     from reportlab.pdfgen import canvas as rl_canvas
@@ -2686,48 +2678,49 @@ with tab5:
             def check_twse():
                 url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
                 last_err = ""
-                for attempt in range(2):
+                for attempt in range(3):
                     try:
-                        res = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-                        # Streamlit Cloud network egress 封鎖
-                        if res.status_code == 403 and "allowlist" in res.text:
-                            return False, (
-                                "Streamlit Cloud 網路封鎖（需加入 egress 白名單）"
-                                " → 永遠使用內建靜態清單，見下方影響說明"
-                            )
+                        res = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
                         if res.status_code == 200 and len(res.text) > 100:
-                            data = res.json()
-                            if len(data) > 100:
-                                return True, "取得 {} 筆上市證券即時清單（第{}次嘗試成功）".format(len(data), attempt+1)
-                        last_err = "HTTP {} / body={}".format(res.status_code, res.text[:60])
+                            try:
+                                data = res.json()
+                                if len(data) > 100:
+                                    return True, "取得 {} 筆上市證券即時清單（第{}次嘗試成功）".format(len(data), attempt+1)
+                            except Exception as je:
+                                last_err = "JSON解析失敗: {}".format(str(je)[:40])
+                        elif res.status_code == 403:
+                            last_err = "403 封鎖（Streamlit Cloud 境外IP或 egress 設定）"
+                        else:
+                            last_err = "HTTP {} body長度={}".format(res.status_code, len(res.text))
                     except Exception as e:
                         last_err = str(e)[:60]
-                    if attempt < 1:
-                        time.sleep(1)
-                return False, "連線失敗（{}）→ 使用內建靜態清單，見下方影響說明".format(last_err)
+                    if attempt < 2:
+                        time.sleep(2)
+                return False, "連線失敗（{}）→ 自動改用內建靜態清單".format(last_err)
             run_check("證交所TWSE API", check_twse)
 
             def check_tpex():
                 last_err = ""
-                for attempt in range(2):
+                for attempt in range(3):
                     try:
                         res = requests.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes",
-                                         timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-                        if res.status_code == 403 and "allowlist" in res.text:
-                            return False, (
-                                "Streamlit Cloud 網路封鎖（需加入 egress 白名單）"
-                                " → 永遠使用內建靜態清單"
-                            )
+                                         timeout=15, headers={"User-Agent": "Mozilla/5.0"})
                         if res.status_code == 200 and len(res.text) > 100:
-                            data = res.json()
-                            if len(data) > 50:
-                                return True, "取得 {} 筆上櫃證券（第{}次嘗試成功）".format(len(data), attempt+1)
-                        last_err = "HTTP {} / body={}".format(res.status_code, res.text[:60])
+                            try:
+                                data = res.json()
+                                if len(data) > 50:
+                                    return True, "取得 {} 筆上櫃證券（第{}次嘗試成功）".format(len(data), attempt+1)
+                            except Exception as je:
+                                last_err = "JSON解析失敗: {}".format(str(je)[:40])
+                        elif res.status_code == 403:
+                            last_err = "403 封鎖"
+                        else:
+                            last_err = "HTTP {} body長度={}".format(res.status_code, len(res.text))
                     except Exception as e:
                         last_err = str(e)[:60]
-                    if attempt < 1:
-                        time.sleep(1)
-                return False, "連線失敗（{}）→ 使用內建靜態清單".format(last_err)
+                    if attempt < 2:
+                        time.sleep(2)
+                return False, "連線失敗（{}）→ 自動改用內建靜態清單".format(last_err)
             run_check("櫃買中心TPEX API", check_tpex)
 
             def check_yahoo():
@@ -4473,7 +4466,16 @@ with tab6:
                 "stock_grades.csv", "text/csv"
             )
         with col_dl2:
-            pass
+            try:
+                html_bytes = generate_html_report_pool(df_pool)
+                st.download_button(
+                    "📄 下載HTML報告（開啟後 Ctrl+P 存PDF）",
+                    html_bytes,
+                    "合格標的池_{}.html".format(datetime.now().strftime("%Y%m%d")),
+                    "text/html", key="dl_pool_html"
+                )
+            except Exception:
+                pass
 
     else:
         st.info(
@@ -4792,7 +4794,16 @@ with tab1:
             with col_scan_dl1:
                 st.download_button("📥 下載CSV", df_show.to_csv(index=False).encode("utf-8-sig"), "alert_scan.csv", "text/csv")
             with col_scan_dl2:
-                pass
+                try:
+                    html_bytes = generate_html_report_scan(df_show, threshold1, datetime.now().strftime("%Y-%m-%d"))
+                    st.download_button(
+                        "📄 下載HTML報告（開啟後 Ctrl+P 存PDF）",
+                        html_bytes,
+                        "每日警示_{}.html".format(datetime.now().strftime("%Y%m%d")),
+                        "text/html", key="dl_scan_html"
+                    )
+                except Exception:
+                    pass
             # ── 個股快評 ──
             st.divider()
             st.markdown("#### 🔎 個股快評")
@@ -5981,6 +5992,29 @@ with tab3:
         st.markdown("---")
         st.markdown("### 詳細回測分析報告")
         st.caption("以下為完整的七段式分析——觸發門檻、持有天數、歷史規律、風險提示、進場時機、綜合建議、出場策略")
+
+        # HTML 報告下載按鈕（下載後在瀏覽器開啟，可完整 Ctrl+P 存PDF）
+        try:
+            _twii_pdf = get_twii_heat()
+            _ml_pdf = _twii_pdf["level"] if _twii_pdf else None
+            _qs_pdf = st.session_state.get('df_pool', None)
+            _qscore = None; _qgrade = ""
+            if _qs_pdf is not None and not _qs_pdf.empty:
+                _pr = _qs_pdf[_qs_pdf['代碼'].astype(str).str.strip() == single_code.strip()]
+                if not _pr.empty:
+                    _qscore = _pr.iloc[0].get('體質分數')
+                    _qgrade = _pr.iloc[0].get('體質等級', '')
+            html_bytes = generate_pdf_backtest(
+                single_code, prices, df_win, df_avg, df_dd, df_yearly, thr_val,
+                q_score=_qscore, q_grade=_qgrade, market_level=_ml_pdf)
+            st.download_button(
+                "📄 下載完整分析報告 HTML（開啟後 Ctrl+P 可存PDF）",
+                html_bytes,
+                "回測分析_{}_{}.html".format(single_code, datetime.now().strftime("%Y%m%d")),
+                "text/html", key="dl_backtest_html"
+            )
+        except Exception:
+            pass
 
         render_analysis(single_code, df_win, df_avg, df_dd, df_yearly, thr_val, prices_dict=prices)
 
