@@ -2735,7 +2735,7 @@ with tab0:
 **1️⃣ 標的體質評分卡（15分制）**
 - 三大維度各5分：A獲利能力、B商業模式護城河、C市值與安全邊際
 - 類Coatue區分「好公司跌」vs「爛公司繼續跌」
-- ⭐⭐⭐ 核心（13+）｜⭐⭐ 可觀察（9-12）｜⭐ 高風險（5-8）｜💀 Broken Model（0-4）
+- ⭐⭐⭐ 核心（13+）｜⭐⭐ 可觀察（9-12）｜⭐ 高風險（5-8）｜⚠️ 資料不足（0-4，yfinance 財報欄位缺失）
 
 **2️⃣ 複合信號強度（每日警示掃描）**
 - 4條件同時評估：連續觸發天數、體質分數、宏觀環境、跌幅深度
@@ -3459,7 +3459,7 @@ def calc_quality_score_v2(code, stock, roe, debt, bvps, price, pb, eps_hist, val
     if total >= 13:   grade = "⭐⭐⭐ 核心";   grade_label = "核心標的"
     elif total >= 9:  grade = "⭐⭐ 可觀察";  grade_label = "可觀察"
     elif total >= 5:  grade = "⭐ 高風險";    grade_label = "高風險"
-    else:             grade = "💀 Broken";    grade_label = "Broken Model"
+    else:             grade = "⚠️ 資料不足";  grade_label = "資料不足"
 
     # KY 股警示（境外上市，財報可信度較低）
     name_str = stock.get('name', '') or ''
@@ -3718,6 +3718,14 @@ def get_twii_heat():
 
 with tab6:
     st.markdown(_tab_icon("icon-building", "合格標的池", "15分體質評分篩選 · 找出值得進場的好公司"), unsafe_allow_html=True)
+    import streamlit.components.v1 as _comp_print
+    _comp_print.html('''<button onclick="window.top.print()" style="
+      background:#003781;color:#fff;border:none;border-radius:8px;
+      padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+      font-family:inherit;float:right;margin:0 0 8px">
+      &#128438; 列印 / 存成 PDF
+    </button>''', height=46)
+
     st.markdown("""
 <div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
   <button onclick="window.print()"
@@ -4546,6 +4554,14 @@ with tab6:
 
 
 with tab1:
+    import streamlit.components.v1 as _comp_print
+    _comp_print.html('''<button onclick="window.top.print()" style="
+      background:#003781;color:#fff;border:none;border-radius:8px;
+      padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+      font-family:inherit;float:right;margin:0 0 8px">
+      &#128438; 列印 / 存成 PDF
+    </button>''', height=46)
+
     st.markdown("""
 <div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
   <button onclick="window.print()"
@@ -4636,9 +4652,12 @@ with tab1:
                 for _, pr in df_pool_now.iterrows():
                     c = str(pr.get('代碼', '')).strip()
                     pool_score_dict[c] = {
-                        'score': pr.get('體質分數'),
-                        'grade': pr.get('體質等級', ''),
+                        'score':    pr.get('體質分數'),
+                        'grade':    pr.get('體質等級', ''),
                         'industry': pr.get('產業別', ''),
+                        'score_a':  pr.get('▶A獲利(0-5)', 0),
+                        'score_b':  pr.get('▶B護城河(0-5)', 0),
+                        'score_c':  pr.get('▶C安全邊際(0-5)', 0),
                     }
 
             has_pool = len(pool_score_dict) > 0
@@ -4653,14 +4672,67 @@ with tab1:
                 industry = qi.get('industry') or r.get('產業別', '') or r.get('產業群組', '')
 
                 # 體質分數欄
+                # 判斷是否為 ETF
+                _is_etf_code = (len(code) == 6 and code.startswith('00')) or \
+                               any(kw in r.get('名稱','') for kw in ['ETF','指數','基金','債券'])
+
                 if not has_pool:
                     score_str = "未建池"
+                    grade_str = "未建池"
+                elif _is_etf_code:
+                    score_str = "ETF"
+                    grade_str = "不適用"
                 elif isinstance(q_score, (int, float)):
-                    score_str = "{}/15".format(int(q_score))
+                    import math as _math_scan
+                    if _math_scan.isnan(float(q_score)) or q_score == 0:
+                        # 嘗試從 pool 的子分數重算
+                        _sa = qi.get('score_a', 0) or 0
+                        _sb = qi.get('score_b', 0) or 0
+                        _sc = qi.get('score_c', 0) or 0
+                        _recalc = int(_sa) + int(_sb) + int(_sc)
+                        if _recalc > 0:
+                            score_str = "{}/15".format(_recalc)
+                            q_score   = _recalc
+                            grade_str = "核心標的" if _recalc >= 13 else ("可觀察" if _recalc >= 9 else ("高風險" if _recalc >= 5 else "資料不足"))
+                        else:
+                            score_str = "資料不足"
+                            grade_str = "資料不足"
+                    else:
+                        score_str = "{}/15".format(int(q_score))
+                        grade_str = q_grade if q_grade and q_grade not in ("Broken Model","查無","") else (
+                            "核心標的" if q_score >= 13 else ("可觀察" if q_score >= 9 else ("高風險" if q_score >= 5 else "資料不足")))
                 else:
-                    score_str = "查無"
-
-                grade_str = q_grade if isinstance(q_score, (int, float)) else ("未建池" if not has_pool else "查無")
+                    # 未在池中：即時用 yfinance 補充體質評分（只對個股，ETF跳過）
+                    if not _is_etf_code and has_pool:
+                        try:
+                            _fin_instant = get_fin_data_yfinance(code)
+                            import math as _mi
+                            def _vi(x):
+                                if x is None: return None
+                                try: return None if _mi.isnan(float(x)) else float(x)
+                                except: return None
+                            _ri = _vi(_fin_instant.get('roe'))
+                            _di = _vi(_fin_instant.get('debt_ratio'))
+                            _pi = _vi(_fin_instant.get('pb'))
+                            _ei = _vi(_fin_instant.get('trailing_eps'))
+                            _ehi = _fin_instant.get('eps_history', {})
+                            _vyi = sorted([y for y in _ehi if _ehi[y] is not None], reverse=True)
+                            _qi = calc_quality_score_v2(code, {'type':'個股'}, _ri, _di,
+                                                        _fin_instant.get('bvps'),
+                                                        _fin_instant.get('price'), _pi, _ehi, _vyi)
+                            if _qi and _qi['total'] > 0:
+                                q_score   = _qi['total']
+                                score_str = "{}/15*".format(q_score)  # * 代表即時計算
+                                grade_str = _qi['grade_label']
+                            else:
+                                score_str = "資料不足"
+                                grade_str = "資料不足"
+                        except Exception:
+                            score_str = "資料不足"
+                            grade_str = "資料不足"
+                    else:
+                        score_str = "ETF" if _is_etf_code else "未在池中"
+                        grade_str = "不適用" if _is_etf_code else "未在池中"
 
                 # 4個條件
                 c1_ok = r.get("連續觸發天數", 99) <= 3
@@ -4794,6 +4866,14 @@ with tab1:
 # ==============================
 with tab2:
     st.markdown(_tab_icon("icon-trend", "批次回測", "最長15年 · 多標的同時回測"), unsafe_allow_html=True)
+    import streamlit.components.v1 as _comp_print
+    _comp_print.html('''<button onclick="window.top.print()" style="
+      background:#003781;color:#fff;border:none;border-radius:8px;
+      padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+      font-family:inherit;float:right;margin:0 0 8px">
+      &#128438; 列印 / 存成 PDF
+    </button>''', height=46)
+
     st.markdown("""
 <div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
   <button onclick="window.print()"
@@ -4883,6 +4963,14 @@ with tab2:
 # ==============================
 with tab3:
     st.markdown(_tab_icon("icon-chart", "個股 / ETF 回測＋線圖", "15年回測 · 操作結論 · 出場策略"), unsafe_allow_html=True)
+    import streamlit.components.v1 as _comp_print
+    _comp_print.html('''<button onclick="window.top.print()" style="
+      background:#003781;color:#fff;border:none;border-radius:8px;
+      padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+      font-family:inherit;float:right;margin:0 0 8px">
+      &#128438; 列印 / 存成 PDF
+    </button>''', height=46)
+
     st.markdown("""
 <div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
   <button onclick="window.print()"
@@ -4963,7 +5051,7 @@ with tab3:
             q_grade = pr.get('體質等級', '')
             # 若 grade 也缺失，根據分數重建
             if not q_grade and q_total is not None:
-                q_grade = "核心標的" if q_total >= 13 else ("可觀察" if q_total >= 9 else ("高風險" if q_total >= 5 else "Broken Model"))
+                q_grade = "核心標的" if q_total >= 13 else ("可觀察" if q_total >= 9 else ("高風險" if q_total >= 5 else "資料不足"))
 
             st.markdown("""
 <div style="font-size:14px;font-weight:600;color:#003781;margin:4px 0 10px">{code} 體質評分卡</div>""".format(
@@ -5184,20 +5272,116 @@ with tab3:
                 ma120_now  = sum(price_list[-120:]) / 120
                 ma120_prev = sum(price_list[-140:-20]) / 120 if len(price_list) >= 140 else ma120_now
                 curr_price_now = price_list[-1]
-                ma120_falling = ma120_now < ma120_prev * 0.99  # 均線過去3個月下跌超過1%
+                ma120_falling = ma120_now < ma120_prev * 0.99
                 price_below_ma = curr_price_now < ma120_now
                 pct_below = (curr_price_now - ma120_now) / ma120_now * 100
-
                 if price_below_ma and ma120_falling:
                     _risk_flags.append({
-                        "level": "warning",
-                        "icon": "📉",
+                        "level": "warning", "icon": "📉",
                         "title": "均線空頭排列：股價低於下降中的120日均線",
                         "body": "現價 {:.1f}，120日均線 {:.1f}（現價低於均線 {:.1f}%），且均線方向向下。"
-                                "此型態代表中期趨勢偏空，超跌後的反彈力道通常比均線多頭時弱。"
                                 "建議等待股價站回120日均線後再考慮進場，或將觸發門檻提高至 -15% 以上。".format(
                                     curr_price_now, ma120_now, abs(pct_below))
                     })
+        except Exception:
+            pass
+
+        # ④ 公司面風險偵測：MOPS 重大訊息 + 月營收異動
+        # 原則：1786科妍/2233宇隆/2543皇昌類型的公司面地雷，在觸發時主動查詢
+        try:
+            import requests as _req
+            _code4 = single_code.strip()
+
+            # ── ④-A：MOPS 近30天重大訊息 ──
+            # TWSE OpenAPI：查詢近期重大訊息（免費公開）
+            _mops_danger_kw = [
+                "掏空", "侵占", "背信", "違約", "停業", "清算", "破產", "撤銷上市",
+                "警示", "全額交割", "異常", "調查", "起訴", "財務困難",
+                "會計師出具保留", "無法繼續", "重大虧損", "財報重編",
+                "董事長", "總經理", "財務長.*辭", "辭職.*董", "解任",
+                "質押.*超過", "大股東.*減持", "控制股東.*出售",
+            ]
+            _mops_warn_kw = [
+                "更換會計師", "更換簽證", "內控缺失", "內部稽核",
+                "相關人員異動", "主要客戶.*流失", "重大合約.*終止",
+            ]
+            try:
+                _mops_res = _req.get(
+                    "https://mops.twse.com.tw/mops/web/t05st01",
+                    params={"encodeURIComponent": "1", "step": "1",
+                            "firstin": "1", "off": "1",
+                            "co_id": _code4, "TYPEK": "sii"},
+                    timeout=6, headers={"User-Agent": "Mozilla/5.0"}
+                )
+                _mops_text = _mops_res.text if _mops_res.status_code == 200 else ""
+            except Exception:
+                _mops_text = ""
+
+            # 備援：TWSE 重訊 RSS
+            if not _mops_text or len(_mops_text) < 100:
+                try:
+                    _rss_res = _req.get(
+                        "https://mops.twse.com.tw/server-java/t05st01Export?co_id={}".format(_code4),
+                        timeout=5, headers={"User-Agent": "Mozilla/5.0"}
+                    )
+                    _mops_text = _rss_res.text if _rss_res.status_code == 200 else ""
+                except Exception:
+                    _mops_text = ""
+
+            if _mops_text:
+                import re as _re4
+                _stripped = _re4.sub(r'<[^>]+>', ' ', _mops_text)
+                _danger_found  = [kw for kw in _mops_danger_kw if _re4.search(kw, _stripped)]
+                _warn_found    = [kw for kw in _mops_warn_kw   if _re4.search(kw, _stripped)]
+                if _danger_found:
+                    _risk_flags.append({
+                        "level": "danger", "icon": "🚨",
+                        "title": "MOPS 公開資訊觀測站偵測到高風險關鍵字",
+                        "body": "近期重大訊息中出現以下關鍵字：{}。\n"
+                                "此類訊息通常代表公司面臨重大財務或法律問題，強烈建議暫停進場，"
+                                "並至公開資訊觀測站（mops.twse.com.tw）查閱完整公告後再評估。".format(
+                                    "、".join(_danger_found[:5]))
+                    })
+                elif _warn_found:
+                    _risk_flags.append({
+                        "level": "warning", "icon": "⚠️",
+                        "title": "MOPS 偵測到需留意的公司異動",
+                        "body": "近期公告出現以下關鍵字：{}。\n"
+                                "建議進場前至公開資訊觀測站查閱最新公告，確認公司營運無重大異常。".format(
+                                    "、".join(_warn_found[:3]))
+                    })
+
+            # ── ④-B：月營收異動警示（TWSE OpenAPI 公開資料）──
+            try:
+                _now_dt = datetime.now()
+                _yr_tw  = _now_dt.year - 1911
+                _mo     = _now_dt.month - 1 or 12
+                _yr_tw2 = _yr_tw if _mo > 1 else _yr_tw - 1
+                _rev_url = (
+                    "https://mops.twse.com.tw/nas/t21/sii/t21sc03_{}_{}_{}.html".format(
+                        _yr_tw2, str(_mo).zfill(2), 0)
+                )
+                _rev_res = _req.get(_rev_url, timeout=5,
+                                    headers={"User-Agent": "Mozilla/5.0"})
+                if _rev_res.status_code == 200:
+                    _rev_text = _rev_res.text
+                    # 找該代碼的當月YoY
+                    import re as _re4b
+                    _pat = r'{}.*?(-?\d+\.\d+)%'.format(_re4b.escape(_code4))
+                    _m = _re4b.search(_pat, _re4b.sub(r'<[^>]+>', ' ', _rev_text))
+                    if _m:
+                        _yoy = float(_m.group(1))
+                        if _yoy < -30:
+                            _risk_flags.append({
+                                "level": "warning", "icon": "📊",
+                                "title": "月營收年增率大幅衰退 {:.1f}%".format(_yoy),
+                                "body": "最近公布的月營收相較去年同期衰退 {:.1f}%（閾值：>-30% 觸發警示）。"
+                                        "月營收大幅衰退可能代表主要客戶流失或產業需求下滑，"
+                                        "請確認是否為一次性因素還是趨勢性惡化後再決定進場。".format(_yoy)
+                            })
+            except Exception:
+                pass
+
         except Exception:
             pass
 
@@ -5898,6 +6082,14 @@ with tab3:
 # ==============================
 with tab4:
     st.markdown(_tab_icon("icon-trophy", "全市場勝率排行", "各門檻前10名 · 多門檻交叉比較"), unsafe_allow_html=True)
+    import streamlit.components.v1 as _comp_print
+    _comp_print.html('''<button onclick="window.top.print()" style="
+      background:#003781;color:#fff;border:none;border-radius:8px;
+      padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+      font-family:inherit;float:right;margin:0 0 8px">
+      &#128438; 列印 / 存成 PDF
+    </button>''', height=46)
+
     st.markdown("""
 <div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
   <button onclick="window.print()"
@@ -6580,6 +6772,14 @@ def _brief_get_calendar():
 
 with tab_brief:
     st.markdown(_tab_icon("icon-news", "每日市場簡報", "盤前快訊 · 財經事件解讀 · 重大事件日曆"), unsafe_allow_html=True)
+    import streamlit.components.v1 as _comp_print
+    _comp_print.html('''<button onclick="window.top.print()" style="
+      background:#003781;color:#fff;border:none;border-radius:8px;
+      padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
+      font-family:inherit;float:right;margin:0 0 8px">
+      &#128438; 列印 / 存成 PDF
+    </button>''', height=46)
+
     st.markdown("""
 <div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
   <button onclick="window.print()"
