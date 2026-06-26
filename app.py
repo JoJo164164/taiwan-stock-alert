@@ -566,15 +566,15 @@ def fmt(v):
 
 
 def show_html(s):
-    """輸出 DataFrame 為 HTML 表格，表頭不斷行、字體 14px"""
+    """輸出 DataFrame 為 HTML 表格，表頭不斷行、字體 14px，文字靠左"""
     html = s.to_html(index=False)
     styled = """
 <style>
 .stbl { border-collapse: collapse; width: 100%; font-size: 14px; }
-.stbl th { background: #003781; color: white; padding: 8px 12px;
-           white-space: nowrap; text-align: center; font-size: 13px; font-weight: 600; }
-.stbl td { padding: 7px 12px; border-bottom: 1px solid #e0e0e0;
-           white-space: nowrap; text-align: center; font-size: 14px; }
+.stbl th { background: #003781; color: white; padding: 8px 14px;
+           white-space: nowrap; text-align: left; font-size: 13px; font-weight: 600; }
+.stbl td { padding: 8px 14px; border-bottom: 1px solid #e0e0e0;
+           white-space: nowrap; text-align: left; font-size: 14px; }
 .stbl tr:hover td { background: #f0f4ff; }
 </style>
 """ + html.replace('<table', '<table class="stbl"')
@@ -2641,7 +2641,18 @@ with tab5:
         def run_check(name, fn):
             try:
                 ok, detail = fn()
-                checks.append({"項目": name, "狀態": "✅ 正常" if ok else "❌ 異常", "說明": detail})
+                # 偵測「偶發性網路問題」→ 用警告而非錯誤
+                is_transient = any(kw in detail for kw in [
+                    "偶發性", "稍後再試", "Expecting value", "Connection", "Timeout",
+                    "JSONDecodeError", "ConnectionError", "ReadTimeout"
+                ])
+                if ok:
+                    status = "✅ 正常"
+                elif is_transient:
+                    status = "⚠️ 暫時異常"   # 橘色警告，不算系統失敗
+                else:
+                    status = "❌ 異常"
+                checks.append({"項目": name, "狀態": status, "說明": detail})
             except Exception as e:
                 checks.append({"項目": name, "狀態": "❌ 失敗", "說明": str(e)[:120]})
 
@@ -2754,8 +2765,12 @@ with tab5:
             "還原股價連續性驗證（0050除息）": "⛔ 受影響：除息前後的回測數據可能失真，長期回測勝率可能偏高\n⚠️ 建議優先看最近5年的回測數據",
         }
 
-        if all("✅" in c["狀態"] for c in checks):
-            st.success("✅ 所有系統檢核通過！所有功能正常可用。")
+        if all("✅" in c["狀態"] or "⚠️" in c["狀態"] for c in checks):
+            warn_items = [c["項目"] for c in checks if "⚠️" in c["狀態"]]
+            if warn_items:
+                st.warning("⚠️ 系統核心正常，但部分外部API暫時不穩定（偶發性網路問題，稍後重試即可）：{}".format("、".join(warn_items)))
+            else:
+                st.success("✅ 所有系統檢核通過！所有功能正常可用。")
         else:
             failed_items = [c["項目"] for c in checks if "❌" in c["狀態"]]
             st.error("❌ 以下項目異常：" + "、".join(failed_items))
