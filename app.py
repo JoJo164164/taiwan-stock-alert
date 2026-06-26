@@ -6778,14 +6778,22 @@ def _render_metric_card(col, data):
     signal   = data.get("signal", "—")
     sig_color= data.get("color", "#888")
 
-    val_str  = "{:,.2f}".format(float(val)) if val not in (None, "—") else "—"
-    if chg_pct is not None:
-        arrow   = "▲" if chg_pct > 0 else ("▼" if chg_pct < 0 else "●")
-        chg_str = "{}{:.2f}%".format(arrow, abs(chg_pct))
-        chg_col = "#0F6E56" if chg_pct > 0 else ("#A32D2D" if chg_pct < 0 else "#888")
-    else:
-        chg_str = "—"
-        chg_col = "#888"
+    try:
+        val_f   = float(val) if val not in (None, "", "—") else None
+        val_str = "{:,.2f}".format(val_f) if val_f is not None else "—"
+    except (TypeError, ValueError):
+        val_str = str(val) if val else "—"
+
+    try:
+        chg_f   = float(chg_pct) if chg_pct not in (None, "", "—") else None
+        if chg_f is not None:
+            arrow   = "▲" if chg_f > 0 else ("▼" if chg_f < 0 else "●")
+            chg_str = "{}{:.2f}%".format(arrow, abs(chg_f))
+            chg_col = "#0F6E56" if chg_f > 0 else ("#A32D2D" if chg_f < 0 else "#888")
+        else:
+            chg_str = "—"; chg_col = "#888"
+    except (TypeError, ValueError):
+        chg_str = "—"; chg_col = "#888"
 
     col.markdown("""
 <div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
