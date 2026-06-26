@@ -6770,6 +6770,33 @@ def _brief_get_calendar():
 
 # ── Tab 主體 ──────────────────────────────────────────────
 
+def _render_metric_card(col, data):
+    """盤前快訊單格卡片"""
+    name     = data.get("name", "—")
+    val      = data.get("val")
+    chg_pct  = data.get("chg_pct")
+    signal   = data.get("signal", "—")
+    sig_color= data.get("color", "#888")
+
+    val_str  = "{:,.2f}".format(float(val)) if val not in (None, "—") else "—"
+    if chg_pct is not None:
+        arrow   = "▲" if chg_pct > 0 else ("▼" if chg_pct < 0 else "●")
+        chg_str = "{}{:.2f}%".format(arrow, abs(chg_pct))
+        chg_col = "#0F6E56" if chg_pct > 0 else ("#A32D2D" if chg_pct < 0 else "#888")
+    else:
+        chg_str = "—"
+        chg_col = "#888"
+
+    col.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:0.5px solid #e0e0e0;padding:12px 14px">
+  <div style="font-size:12px;color:#888;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{name}</div>
+  <div style="font-size:20px;font-weight:700;color:#003781">{val}</div>
+  <div style="font-size:13px;color:{chgc};margin-top:2px">{chg}</div>
+  <div style="font-size:12px;color:{sigc};margin-top:4px;line-height:1.4">{sig}</div>
+</div>""".format(name=name, val=val_str, chgc=chg_col, chg=chg_str,
+                sigc=sig_color, sig=signal), unsafe_allow_html=True)
+
+
 with tab_brief:
     st.markdown(_tab_icon("icon-news", "每日市場簡報", "盤前快訊 · 財經事件解讀 · 重大事件日曆"), unsafe_allow_html=True)
     import streamlit.components.v1 as _comp_print
