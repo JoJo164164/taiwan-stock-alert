@@ -5,6 +5,18 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import time
 import json
+import logging
+import warnings
+
+# ── 靜音 yfinance 的 "possibly delisted" 和其他 noisy warnings ──
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+logging.getLogger("peewee").setLevel(logging.CRITICAL)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+warnings.filterwarnings("ignore", message=".*possibly delisted.*")
+warnings.filterwarnings("ignore", message=".*no timezone.*")
+warnings.filterwarnings("ignore", message=".*No data found.*")
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning, module="yfinance")
 
 INDUSTRY_GROUP = {
     "被動ETF": [], "主動ETF": [],
