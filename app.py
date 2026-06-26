@@ -2568,6 +2568,22 @@ def generate_pdf_briefing(premarket_data, events):
 # ==============================
 with tab0:
     st.markdown(_tab_icon("icon-news", "系統使用說明", "操作流程 · 顏色說明 · 計算邏輯"), unsafe_allow_html=True)
+    import streamlit.components.v1 as _stc
+    _stc.html('''<div style="display:flex;justify-content:flex-end;padding:0 0 8px">
+      <button onclick="window.top.print()" style="
+        background:#003781;color:#fff;border:none;border-radius:8px;
+        padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;
+        font-family:inherit;display:inline-flex;align-items:center;gap:6px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2.5">
+          <polyline points="6 9 6 2 18 2 18 9"/>
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16
+                   a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+          <rect x="6" y="14" width="12" height="8"/>
+        </svg>
+        列印 / 存成 PDF
+      </button></div>''', height=46)
+
 
     st.info(
         "資料說明：\n"
@@ -2655,6 +2671,22 @@ with tab0:
 # ==============================
 with tab5:
     st.markdown(_tab_icon("icon-search", "系統檢核", "市場背景快照 · 整體環境判斷"), unsafe_allow_html=True)
+    import streamlit.components.v1 as _stc
+    _stc.html('''<div style="display:flex;justify-content:flex-end;padding:0 0 8px">
+      <button onclick="window.top.print()" style="
+        background:#003781;color:#fff;border:none;border-radius:8px;
+        padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;
+        font-family:inherit;display:inline-flex;align-items:center;gap:6px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2.5">
+          <polyline points="6 9 6 2 18 2 18 9"/>
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16
+                   a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+          <rect x="6" y="14" width="12" height="8"/>
+        </svg>
+        列印 / 存成 PDF
+      </button></div>''', height=46)
+
 
     st.info("點擊下方按鈕，自動驗證各項資料來源、API連線、計算邏輯與資料新鮮度")
 
@@ -3728,6 +3760,22 @@ def get_twii_heat():
 
 with tab6:
     st.markdown(_tab_icon("icon-building", "合格標的池", "15分體質評分篩選 · 找出值得進場的好公司"), unsafe_allow_html=True)
+    import streamlit.components.v1 as _stc
+    _stc.html('''<div style="display:flex;justify-content:flex-end;padding:0 0 8px">
+      <button onclick="window.top.print()" style="
+        background:#003781;color:#fff;border:none;border-radius:8px;
+        padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;
+        font-family:inherit;display:inline-flex;align-items:center;gap:6px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2.5">
+          <polyline points="6 9 6 2 18 2 18 9"/>
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16
+                   a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+          <rect x="6" y="14" width="12" height="8"/>
+        </svg>
+        列印 / 存成 PDF
+      </button></div>''', height=46)
+
 
 
     st.caption("體質評分系統：從ROE、EPS成長、負債比、估值三個維度為個股打分，找出「基本面紮實、值得在超跌時進場」的標的。合格標的池的用途是縮小候選範圍，觸發信號仍以每日警示掃描為準。")
@@ -4541,6 +4589,22 @@ with tab6:
 
 
 with tab1:
+    import streamlit.components.v1 as _stc
+    _stc.html('''<div style="display:flex;justify-content:flex-end;padding:0 0 8px">
+      <button onclick="window.top.print()" style="
+        background:#003781;color:#fff;border:none;border-radius:8px;
+        padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;
+        font-family:inherit;display:inline-flex;align-items:center;gap:6px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2.5">
+          <polyline points="6 9 6 2 18 2 18 9"/>
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16
+                   a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+          <rect x="6" y="14" width="12" height="8"/>
+        </svg>
+        列印 / 存成 PDF
+      </button></div>''', height=46)
+
 
 
     # ── df_pool_now：全 tab1 共用，必須在最頂部定義 ──
@@ -4821,6 +4885,22 @@ with tab1:
 # ==============================
 with tab2:
     st.markdown(_tab_icon("icon-trend", "批次回測", "最長15年 · 多標的同時回測"), unsafe_allow_html=True)
+    import streamlit.components.v1 as _stc
+    _stc.html('''<div style="display:flex;justify-content:flex-end;padding:0 0 8px">
+      <button onclick="window.top.print()" style="
+        background:#003781;color:#fff;border:none;border-radius:8px;
+        padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;
+        font-family:inherit;display:inline-flex;align-items:center;gap:6px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2.5">
+          <polyline points="6 9 6 2 18 2 18 9"/>
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16
+                   a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+          <rect x="6" y="14" width="12" height="8"/>
+        </svg>
+        列印 / 存成 PDF
+      </button></div>''', height=46)
+
 
 
     threshold2 = st.slider("觸發門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t2")
@@ -4894,6 +4974,22 @@ with tab2:
 # ==============================
 with tab3:
     st.markdown(_tab_icon("icon-chart", "個股 / ETF 回測＋線圖", "15年回測 · 操作結論 · 出場策略"), unsafe_allow_html=True)
+    import streamlit.components.v1 as _stc
+    _stc.html('''<div style="display:flex;justify-content:flex-end;padding:0 0 8px">
+      <button onclick="window.top.print()" style="
+        background:#003781;color:#fff;border:none;border-radius:8px;
+        padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;
+        font-family:inherit;display:inline-flex;align-items:center;gap:6px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2.5">
+          <polyline points="6 9 6 2 18 2 18 9"/>
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16
+                   a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+          <rect x="6" y="14" width="12" height="8"/>
+        </svg>
+        列印 / 存成 PDF
+      </button></div>''', height=46)
+
 
 
 
@@ -5971,6 +6067,19 @@ with tab3:
 
         render_analysis(single_code, df_win, df_avg, df_dd, df_yearly, thr_val, prices_dict=prices)
 
+        # 報告末尾列印按鈕
+        import streamlit.components.v1 as _stc_end
+        _stc_end.html('''<div style="text-align:center;padding:20px 0 8px">
+          <button onclick="window.top.print()" style="
+            background:#003781;color:#fff;border:none;border-radius:8px;
+            padding:12px 30px;font-size:15px;font-weight:600;cursor:pointer;
+            font-family:inherit">
+            &#128438; 列印完整報告 / 存成 PDF
+          </button>
+          <div style="font-size:12px;color:#888;margin-top:8px">
+            目標選「另存為PDF」&nbsp;·&nbsp;開啟「背景圖形」以保留顏色
+          </div></div>''', height=80)
+
         # 報告末尾再放一個列印按鈕（讀完不用滾回頂部）
 
 # ==============================
@@ -5978,6 +6087,22 @@ with tab3:
 # ==============================
 with tab4:
     st.markdown(_tab_icon("icon-trophy", "全市場勝率排行", "各門檻前10名 · 多門檻交叉比較"), unsafe_allow_html=True)
+    import streamlit.components.v1 as _stc
+    _stc.html('''<div style="display:flex;justify-content:flex-end;padding:0 0 8px">
+      <button onclick="window.top.print()" style="
+        background:#003781;color:#fff;border:none;border-radius:8px;
+        padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;
+        font-family:inherit;display:inline-flex;align-items:center;gap:6px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2.5">
+          <polyline points="6 9 6 2 18 2 18 9"/>
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16
+                   a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+          <rect x="6" y="14" width="12" height="8"/>
+        </svg>
+        列印 / 存成 PDF
+      </button></div>''', height=46)
+
 
 
     st.info(
@@ -6719,6 +6844,22 @@ def _render_metric_card(col, data):
 
 with tab_brief:
     st.markdown(_tab_icon("icon-news", "每日市場簡報", "盤前快訊 · 財經事件解讀 · 重大事件日曆"), unsafe_allow_html=True)
+    import streamlit.components.v1 as _stc
+    _stc.html('''<div style="display:flex;justify-content:flex-end;padding:0 0 8px">
+      <button onclick="window.top.print()" style="
+        background:#003781;color:#fff;border:none;border-radius:8px;
+        padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer;
+        font-family:inherit;display:inline-flex;align-items:center;gap:6px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2.5">
+          <polyline points="6 9 6 2 18 2 18 9"/>
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16
+                   a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+          <rect x="6" y="14" width="12" height="8"/>
+        </svg>
+        列印 / 存成 PDF
+      </button></div>''', height=46)
+
 
 
     st.caption(
