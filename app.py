@@ -2657,17 +2657,14 @@ def generate_pdf_briefing(premarket_data, events):
 with tab0:
     st.markdown(_tab_icon("icon-news", "系統使用說明", "操作流程 · 顏色說明 · 計算邏輯"), unsafe_allow_html=True)
     st.markdown("""
-<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
-  <button onclick="window.print()"
-    style="background:#003781;color:#fff;border:none;border-radius:8px;
-           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
-           display:flex;align-items:center;gap:6px">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
-      <rect x="6" y="14" width="12" height="8"/>
-    </svg>
-    列印 / 存成 PDF
-  </button>
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    &#128438;
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac: <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
 </div>""", unsafe_allow_html=True)
 
     st.info(
@@ -2757,17 +2754,14 @@ with tab0:
 with tab5:
     st.markdown(_tab_icon("icon-search", "系統檢核", "市場背景快照 · 整體環境判斷"), unsafe_allow_html=True)
     st.markdown("""
-<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
-  <button onclick="window.print()"
-    style="background:#003781;color:#fff;border:none;border-radius:8px;
-           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
-           display:flex;align-items:center;gap:6px">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
-      <rect x="6" y="14" width="12" height="8"/>
-    </svg>
-    列印 / 存成 PDF
-  </button>
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    &#128438;
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac: <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
 </div>""", unsafe_allow_html=True)
 
     st.info("點擊下方按鈕，自動驗證各項資料來源、API連線、計算邏輯與資料新鮮度")
@@ -3035,24 +3029,66 @@ def get_fin_data_yfinance(code):
         # ── trailing EPS（最新年度）──
         trailing_eps = eps_history.get(max(eps_history.keys())) if eps_history else None
 
+        # ── 產業別（yfinance info，最精確）──
+        industry_zh = ""
+        try:
+            info = ticker.info or {}
+            _ind_en = info.get('industry', '') or info.get('sector', '') or ''
+            IND_MAP = {
+                "Semiconductors": "半導體", "Semiconductor Equipment & Materials": "半導體設備",
+                "Electronic Components": "電子零組件", "Electronics Distribution": "電子通路",
+                "Computer Hardware": "電腦硬體", "Consumer Electronics": "消費電子",
+                "Communication Equipment": "通訊設備", "Information Technology Services": "資訊服務",
+                "Software—Application": "應用軟體", "Software—Infrastructure": "基礎軟體",
+                "Internet Content & Information": "網路內容",
+                "Specialty Chemicals": "特化材料", "Chemicals": "化學",
+                "Steel": "鋼鐵", "Aluminum": "鋁業", "Copper": "銅業",
+                "Specialty Industrial Machinery": "工業機械", "Electrical Equipment & Parts": "電氣設備",
+                "Scientific & Technical Instruments": "科學儀器",
+                "Auto Parts": "汽車零件", "Auto Manufacturers": "整車製造",
+                "Aerospace & Defense": "航太國防", "Contract Manufacturers": "代工製造",
+                "Optical Fiber": "光纖", "Fiber Optic & Cable": "光纖電纜",
+                "Telecom Services": "電信服務",
+                "Banks—Regional": "區域銀行", "Banks—Diversified": "銀行",
+                "Insurance—Life": "壽險", "Insurance—Property & Casualty": "產險",
+                "Asset Management": "資產管理", "Capital Markets": "資本市場",
+                "Real Estate—Diversified": "不動產", "REIT—Diversified": "REITs",
+                "Biotechnology": "生技", "Drug Manufacturers—General": "製藥",
+                "Medical Devices": "醫療器材", "Medical Care Facilities": "醫療服務",
+                "Diagnostics & Research": "診斷研究",
+                "Food Distribution": "食品", "Packaged Foods": "包裝食品",
+                "Beverages—Non-Alcoholic": "飲料", "Apparel Manufacturing": "成衣",
+                "Department Stores": "百貨", "Grocery Stores": "超市",
+                "Specialty Retail": "特殊零售", "Residential Construction": "住宅建設",
+                "Engineering & Construction": "工程建設",
+                "Airlines": "航空", "Marine Shipping": "海運", "Trucking": "陸運",
+                "Transportation": "運輸",
+                "Utilities—Regulated Electric": "電力", "Utilities—Diversified": "公用事業",
+                "Oil & Gas E&P": "石油天然氣", "Coal": "煤礦",
+                "Technology": "科技", "Financial Services": "金融服務",
+                "Healthcare": "醫療健康", "Industrials": "工業製造",
+                "Consumer Defensive": "民生消費", "Consumer Cyclical": "景氣消費",
+                "Communication Services": "通訊服務", "Energy": "能源",
+                "Real Estate": "不動產", "Utilities": "公用事業",
+                "Basic Materials": "基礎材料",
+            }
+            industry_zh = IND_MAP.get(_ind_en, _ind_en)
+        except Exception:
+            pass
+
         return {
             'code': code,
-            'roe': roe,
-            'debt_ratio': debt_ratio,
-            'bvps': bvps,
-            'price': price,
-            'pb': pb,
-            'trailing_eps': trailing_eps,
-            'eps_history': eps_history,
-            'net_income_history': net_income_history,
-            'equity_map': equity_map,
+            'roe': roe, 'debt_ratio': debt_ratio, 'bvps': bvps,
+            'price': price, 'pb': pb, 'trailing_eps': trailing_eps,
+            'eps_history': eps_history, 'net_income_history': net_income_history,
+            'equity_map': equity_map, 'industry': industry_zh,
         }
     except Exception:
         return {
             'code': code, 'roe': None, 'debt_ratio': None,
             'bvps': None, 'price': None, 'pb': None,
             'trailing_eps': None, 'eps_history': {},
-            'net_income_history': {}, 'equity_map': {},
+            'net_income_history': {}, 'equity_map': {}, 'industry': '',
         }
 
 
@@ -3718,26 +3754,30 @@ def get_twii_heat():
 
 with tab6:
     st.markdown(_tab_icon("icon-building", "合格標的池", "15分體質評分篩選 · 找出值得進場的好公司"), unsafe_allow_html=True)
-    import streamlit.components.v1 as _comp_print
-    _comp_print.html('''<button onclick="window.top.print()" style="
-      background:#003781;color:#fff;border:none;border-radius:8px;
-      padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
-      font-family:inherit;float:right;margin:0 0 8px">
-      &#128438; 列印 / 存成 PDF
-    </button>''', height=46)
-
     st.markdown("""
-<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
-  <button onclick="window.print()"
-    style="background:#003781;color:#fff;border:none;border-radius:8px;
-           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
-           display:flex;align-items:center;gap:6px">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <polyline points="6 9 6 2 18 2 18 9"/>
+      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
       <rect x="6" y="14" width="12" height="8"/>
     </svg>
-    列印 / 存成 PDF
-  </button>
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac 用 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘+P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    &#128438;
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac: <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
 </div>""", unsafe_allow_html=True)
 
     st.caption("體質評分系統：從ROE、EPS成長、負債比、估值三個維度為個股打分，找出「基本面紮實、值得在超跌時進場」的標的。合格標的池的用途是縮小候選範圍，觸發信號仍以每日警示掃描為準。")
@@ -4469,10 +4509,11 @@ with tab6:
                 "stock_grades.csv", "text/csv"
             )
         with col_dl2:
-            st.markdown("""<div class="no-print"><button onclick="window.print()"
-    style="background:#003781;color:#fff;border:none;border-radius:8px;
-           padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;width:100%">
-    🖨️ 列印 / 存成 PDF</button></div>""", unsafe_allow_html=True)
+            st.markdown("""<div class="no-print" style="margin-top:2px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 14px;
+       font-size:12px;font-weight:600;text-align:center">
+    &#128438; Ctrl+P → 另存為PDF
+  </div></div>""", unsafe_allow_html=True)
 
     else:
         st.info(
@@ -4554,26 +4595,30 @@ with tab6:
 
 
 with tab1:
-    import streamlit.components.v1 as _comp_print
-    _comp_print.html('''<button onclick="window.top.print()" style="
-      background:#003781;color:#fff;border:none;border-radius:8px;
-      padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
-      font-family:inherit;float:right;margin:0 0 8px">
-      &#128438; 列印 / 存成 PDF
-    </button>''', height=46)
-
     st.markdown("""
-<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
-  <button onclick="window.print()"
-    style="background:#003781;color:#fff;border:none;border-radius:8px;
-           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
-           display:flex;align-items:center;gap:6px">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <polyline points="6 9 6 2 18 2 18 9"/>
+      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
       <rect x="6" y="14" width="12" height="8"/>
     </svg>
-    列印 / 存成 PDF
-  </button>
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac 用 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘+P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    &#128438;
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac: <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
 </div>""", unsafe_allow_html=True)
 
     # ── df_pool_now：全 tab1 共用，必須在最頂部定義 ──
@@ -4668,7 +4713,7 @@ with tab1:
                 qi = pool_score_dict.get(code, {})
                 q_score = qi.get('score')
                 q_grade = qi.get('grade', '')
-                # 產業別：優先從 pool 取，其次從原始 scan 結果
+                # 產業別：優先從 pool 取（yfinance精確分類），其次原始掃描結果
                 industry = qi.get('industry') or r.get('產業別', '') or r.get('產業群組', '')
 
                 # 體質分數欄
@@ -4684,55 +4729,53 @@ with tab1:
                     grade_str = "不適用"
                 elif isinstance(q_score, (int, float)):
                     import math as _math_scan
-                    if _math_scan.isnan(float(q_score)) or q_score == 0:
-                        # 嘗試從 pool 的子分數重算
-                        _sa = qi.get('score_a', 0) or 0
-                        _sb = qi.get('score_b', 0) or 0
-                        _sc = qi.get('score_c', 0) or 0
-                        _recalc = int(_sa) + int(_sb) + int(_sc)
-                        if _recalc > 0:
-                            score_str = "{}/15".format(_recalc)
-                            q_score   = _recalc
-                            grade_str = "核心標的" if _recalc >= 13 else ("可觀察" if _recalc >= 9 else ("高風險" if _recalc >= 5 else "資料不足"))
+                    try:
+                        _qs_f = float(q_score)
+                        if _math_scan.isnan(_qs_f) or _qs_f == 0:
+                            _sa = int(qi.get('score_a', 0) or 0)
+                            _sb = int(qi.get('score_b', 0) or 0)
+                            _sc = int(qi.get('score_c', 0) or 0)
+                            _recalc = _sa + _sb + _sc
+                            q_score   = _recalc if _recalc > 0 else None
+                            score_str = "{}/15".format(_recalc) if _recalc > 0 else "資料不足"
+                            grade_str = ("核心標的" if _recalc >= 13 else "可觀察" if _recalc >= 9 else "高風險" if _recalc >= 5 else "資料不足") if _recalc > 0 else "資料不足"
                         else:
-                            score_str = "資料不足"
-                            grade_str = "資料不足"
-                    else:
-                        score_str = "{}/15".format(int(q_score))
-                        grade_str = q_grade if q_grade and q_grade not in ("Broken Model","查無","") else (
-                            "核心標的" if q_score >= 13 else ("可觀察" if q_score >= 9 else ("高風險" if q_score >= 5 else "資料不足")))
+                            score_str = "{}/15".format(int(_qs_f))
+                            grade_str = q_grade if q_grade and q_grade not in ("Broken Model","查無","","資料不足") else (
+                                "核心標的" if _qs_f >= 13 else "可觀察" if _qs_f >= 9 else "高風險" if _qs_f >= 5 else "資料不足")
+                    except Exception:
+                        score_str = "資料不足"; grade_str = "資料不足"
                 else:
-                    # 未在池中：即時用 yfinance 補充體質評分（只對個股，ETF跳過）
-                    if not _is_etf_code and has_pool:
+                    # 未在池中 或 無pool：只要是個股，一律即時用 yfinance 計算
+                    if not _is_etf_code:
                         try:
-                            _fin_instant = get_fin_data_yfinance(code)
-                            import math as _mi
-                            def _vi(x):
+                            _fin_i = get_fin_data_yfinance(code)
+                            # 用即時產業別補充（比TWSE分類更精確）
+                            if _fin_i.get('industry'):
+                                industry = _fin_i['industry']
+                            import math as _mi2
+                            def _vi2(x):
                                 if x is None: return None
-                                try: return None if _mi.isnan(float(x)) else float(x)
+                                try: return None if _mi2.isnan(float(x)) else float(x)
                                 except: return None
-                            _ri = _vi(_fin_instant.get('roe'))
-                            _di = _vi(_fin_instant.get('debt_ratio'))
-                            _pi = _vi(_fin_instant.get('pb'))
-                            _ei = _vi(_fin_instant.get('trailing_eps'))
-                            _ehi = _fin_instant.get('eps_history', {})
-                            _vyi = sorted([y for y in _ehi if _ehi[y] is not None], reverse=True)
-                            _qi = calc_quality_score_v2(code, {'type':'個股'}, _ri, _di,
-                                                        _fin_instant.get('bvps'),
-                                                        _fin_instant.get('price'), _pi, _ehi, _vyi)
-                            if _qi and _qi['total'] > 0:
-                                q_score   = _qi['total']
-                                score_str = "{}/15*".format(q_score)  # * 代表即時計算
-                                grade_str = _qi['grade_label']
+                            _qi2 = calc_quality_score_v2(
+                                code, {'type':'個股'},
+                                _vi2(_fin_i.get('roe')), _vi2(_fin_i.get('debt_ratio')),
+                                _fin_i.get('bvps'), _fin_i.get('price'),
+                                _vi2(_fin_i.get('pb')),
+                                _fin_i.get('eps_history', {}),
+                                sorted([y for y in _fin_i.get('eps_history',{}) if _fin_i['eps_history'][y] is not None], reverse=True)
+                            )
+                            if _qi2 and _qi2['total'] > 0:
+                                q_score   = _qi2['total']
+                                score_str = "{}/15{}".format(q_score, "" if has_pool else "*")
+                                grade_str = _qi2['grade_label']
                             else:
-                                score_str = "資料不足"
-                                grade_str = "資料不足"
+                                score_str = "資料不足"; grade_str = "資料不足"
                         except Exception:
-                            score_str = "資料不足"
-                            grade_str = "資料不足"
+                            score_str = "資料不足"; grade_str = "資料不足"
                     else:
-                        score_str = "ETF" if _is_etf_code else "未在池中"
-                        grade_str = "不適用" if _is_etf_code else "未在池中"
+                        score_str = "ETF"; grade_str = "不適用"
 
                 # 4個條件
                 c1_ok = r.get("連續觸發天數", 99) <= 3
@@ -4819,11 +4862,11 @@ with tab1:
             with col_scan_dl1:
                 st.download_button("📥 下載CSV", df_show.to_csv(index=False).encode("utf-8-sig"), "alert_scan.csv", "text/csv")
             with col_scan_dl2:
-                st.markdown("""<div class="no-print"><button onclick="window.print()"
-    style="background:#003781;color:#fff;border:none;border-radius:8px;
-           padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;width:100%">
-    🖨️ 列印 / 存成 PDF</button></div>""", unsafe_allow_html=True)
-
+                st.markdown("""<div class="no-print" style="margin-top:2px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 14px;
+       font-size:12px;font-weight:600;text-align:center">
+    &#128438; Ctrl+P → 另存為PDF
+  </div></div>""", unsafe_allow_html=True)
             # ── 個股快評 ──
             st.divider()
             st.markdown("#### 🔎 個股快評")
@@ -4866,26 +4909,30 @@ with tab1:
 # ==============================
 with tab2:
     st.markdown(_tab_icon("icon-trend", "批次回測", "最長15年 · 多標的同時回測"), unsafe_allow_html=True)
-    import streamlit.components.v1 as _comp_print
-    _comp_print.html('''<button onclick="window.top.print()" style="
-      background:#003781;color:#fff;border:none;border-radius:8px;
-      padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
-      font-family:inherit;float:right;margin:0 0 8px">
-      &#128438; 列印 / 存成 PDF
-    </button>''', height=46)
-
     st.markdown("""
-<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
-  <button onclick="window.print()"
-    style="background:#003781;color:#fff;border:none;border-radius:8px;
-           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
-           display:flex;align-items:center;gap:6px">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <polyline points="6 9 6 2 18 2 18 9"/>
+      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
       <rect x="6" y="14" width="12" height="8"/>
     </svg>
-    列印 / 存成 PDF
-  </button>
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac 用 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘+P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    &#128438;
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac: <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
 </div>""", unsafe_allow_html=True)
 
     threshold2 = st.slider("觸發門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t2")
@@ -4951,11 +4998,11 @@ with tab2:
             with col_bt_dl1:
                 st.download_button("📥 下載CSV", df_bt.to_csv(index=False).encode("utf-8-sig"), "backtest.csv", "text/csv")
             with col_bt_dl2:
-                st.markdown("""<div class="no-print"><button onclick="window.print()"
-    style="background:#003781;color:#fff;border:none;border-radius:8px;
-           padding:9px 18px;font-size:13px;font-weight:600;cursor:pointer;width:100%">
-    🖨️ 列印 / 存成 PDF</button></div>""", unsafe_allow_html=True)
-        else:
+                st.markdown("""<div class="no-print" style="margin-top:2px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 14px;
+       font-size:12px;font-weight:600;text-align:center">
+    &#128438; Ctrl+P → 另存為PDF
+  </div></div>""", unsafe_allow_html=True)
             st.warning("沒有找到任何觸發紀錄")
 
 # ==============================
@@ -4963,26 +5010,30 @@ with tab2:
 # ==============================
 with tab3:
     st.markdown(_tab_icon("icon-chart", "個股 / ETF 回測＋線圖", "15年回測 · 操作結論 · 出場策略"), unsafe_allow_html=True)
-    import streamlit.components.v1 as _comp_print
-    _comp_print.html('''<button onclick="window.top.print()" style="
-      background:#003781;color:#fff;border:none;border-radius:8px;
-      padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
-      font-family:inherit;float:right;margin:0 0 8px">
-      &#128438; 列印 / 存成 PDF
-    </button>''', height=46)
-
     st.markdown("""
-<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
-  <button onclick="window.print()"
-    style="background:#003781;color:#fff;border:none;border-radius:8px;
-           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
-           display:flex;align-items:center;gap:6px">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <polyline points="6 9 6 2 18 2 18 9"/>
+      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
       <rect x="6" y="14" width="12" height="8"/>
     </svg>
-    列印 / 存成 PDF
-  </button>
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac 用 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘+P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    &#128438;
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac: <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
 </div>""", unsafe_allow_html=True)
 
 
@@ -6061,20 +6112,15 @@ with tab3:
         render_analysis(single_code, df_win, df_avg, df_dd, df_yearly, thr_val, prices_dict=prices)
 
         # 報告末尾再放一個列印按鈕（讀完不用滾回頂部）
-        st.markdown("""
-<div class="no-print" style="text-align:center;padding:24px 0 8px">
-  <button onclick="window.print()"
-    style="background:#003781;color:#fff;border:none;border-radius:8px;
-           padding:12px 32px;font-size:15px;font-weight:600;cursor:pointer;
-           display:inline-flex;align-items:center;gap:8px">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <polyline points="6 9 6 2 18 2 18 9"/>
-      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
-      <rect x="6" y="14" width="12" height="8"/>
-    </svg>
-    列印完整報告 / 存成 PDF
-  </button>
-  <div style="font-size:12px;color:#888;margin-top:8px">印表機請選「另存為PDF」· 勾選「背景圖形」以保留顏色與表格底色</div>
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    &#128438;
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac: <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
 </div>""", unsafe_allow_html=True)
 
 # ==============================
@@ -6082,26 +6128,30 @@ with tab3:
 # ==============================
 with tab4:
     st.markdown(_tab_icon("icon-trophy", "全市場勝率排行", "各門檻前10名 · 多門檻交叉比較"), unsafe_allow_html=True)
-    import streamlit.components.v1 as _comp_print
-    _comp_print.html('''<button onclick="window.top.print()" style="
-      background:#003781;color:#fff;border:none;border-radius:8px;
-      padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
-      font-family:inherit;float:right;margin:0 0 8px">
-      &#128438; 列印 / 存成 PDF
-    </button>''', height=46)
-
     st.markdown("""
-<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
-  <button onclick="window.print()"
-    style="background:#003781;color:#fff;border:none;border-radius:8px;
-           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
-           display:flex;align-items:center;gap:6px">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <polyline points="6 9 6 2 18 2 18 9"/>
+      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
       <rect x="6" y="14" width="12" height="8"/>
     </svg>
-    列印 / 存成 PDF
-  </button>
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac 用 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘+P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    &#128438;
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac: <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
 </div>""", unsafe_allow_html=True)
 
     st.info(
@@ -6770,6 +6820,42 @@ def _brief_get_calendar():
 
 # ── Tab 主體 ──────────────────────────────────────────────
 
+def _render_news_item(item):
+    """渲染單一新聞卡片——分段 st.markdown 避免巢狀 HTML 解析問題"""
+    import html as _html
+    impact  = item.get("impact", "中性")
+    bg      = item.get("bg",     "#f0f0f0")
+    fg      = item.get("fg",     "#414141")
+    title   = _html.escape(str(item.get("title",   "")))
+    summary = _html.escape(str(item.get("summary", ""))).strip()
+    source  = _html.escape(str(item.get("source",  "")))
+    url     = item.get("url", "")
+    link    = ' <a href="{}" target="_blank" style="color:#185FA5;font-size:13px">[原文]</a>'.format(url) if url else ""
+
+    with st.container():
+        st.markdown(
+            '<div style="border-radius:8px;border:0.5px solid #e0e0e0;'
+            'padding:12px 16px;margin-bottom:8px;background:#fff">',
+            unsafe_allow_html=True)
+        st.markdown(
+            '<div style="display:flex;align-items:flex-start;gap:10px">'
+            '<span style="flex-shrink:0;background:{bg};color:{fg};font-size:12px;'
+            'font-weight:600;padding:3px 10px;border-radius:4px;margin-top:2px">{impact}</span>'
+            '<span style="font-size:15px;font-weight:600;color:#003781;line-height:1.4">'
+            '{title}{link}</span></div>'.format(
+                bg=bg, fg=fg, impact=impact, title=title, link=link),
+            unsafe_allow_html=True)
+        if summary:
+            st.markdown(
+                '<div style="font-size:14px;color:#555;line-height:1.6;'
+                'margin:6px 0 0 2px">{}</div>'.format(summary),
+                unsafe_allow_html=True)
+        st.markdown(
+            '<div style="font-size:12px;color:#aaa;margin-top:6px">來源：{}</div>'
+            '</div>'.format(source),
+            unsafe_allow_html=True)
+
+
 def _render_metric_card(col, data):
     """盤前快訊單格卡片"""
     name     = data.get("name", "—")
@@ -6807,26 +6893,30 @@ def _render_metric_card(col, data):
 
 with tab_brief:
     st.markdown(_tab_icon("icon-news", "每日市場簡報", "盤前快訊 · 財經事件解讀 · 重大事件日曆"), unsafe_allow_html=True)
-    import streamlit.components.v1 as _comp_print
-    _comp_print.html('''<button onclick="window.top.print()" style="
-      background:#003781;color:#fff;border:none;border-radius:8px;
-      padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
-      font-family:inherit;float:right;margin:0 0 8px">
-      &#128438; 列印 / 存成 PDF
-    </button>''', height=46)
-
     st.markdown("""
-<div class="no-print" style="display:flex;justify-content:flex-end;margin:-8px 0 10px">
-  <button onclick="window.print()"
-    style="background:#003781;color:#fff;border:none;border-radius:8px;
-           padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;
-           display:flex;align-items:center;gap:6px">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <polyline points="6 9 6 2 18 2 18 9"/>
+      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
       <rect x="6" y="14" width="12" height="8"/>
     </svg>
-    列印 / 存成 PDF
-  </button>
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac 用 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘+P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    &#128438;
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac: <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
 </div>""", unsafe_allow_html=True)
 
     st.caption(
@@ -7007,11 +7097,13 @@ with tab_brief:
         "若需立即刷新請點「重新整理」按鈕或重新整理頁面。"
         "本頁所有資料均來自公開免費資料源，不含任何付費API。"
     )
-    st.markdown("""<div class="no-print" style="margin:8px 0">
-  <button onclick="window.print()"
-    style="background:#003781;color:#fff;border:none;border-radius:8px;
-           padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer">
-    🖨️ 列印今日簡報 / 存成 PDF
-  </button>
-  <span style="font-size:12px;color:#888;margin-left:12px">選擇「另存為PDF」· 開啟「背景圖形」</span>
+    st.markdown("""
+<div class="no-print" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+  <div style="background:#003781;color:#fff;border-radius:8px;padding:8px 18px;
+       font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">
+    &#128438;
+    按 <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">Ctrl+P</kbd>
+    （Mac: <kbd style="background:#fff;color:#003781;border-radius:3px;padding:1px 6px;font-weight:700">⌘P</kbd>）
+    → 選「另存為PDF」→ 開啟「背景圖形」
+  </div>
 </div>""", unsafe_allow_html=True)
