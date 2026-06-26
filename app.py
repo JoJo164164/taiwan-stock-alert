@@ -7,16 +7,27 @@ import time
 import json
 import logging
 import warnings
+import os
 
-# ── 靜音 yfinance 的 "possibly delisted" 和其他 noisy warnings ──
-logging.getLogger("yfinance").setLevel(logging.CRITICAL)
-logging.getLogger("peewee").setLevel(logging.CRITICAL)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
+# ── 徹底靜音 yfinance 所有 noisy 輸出 ──
+os.environ["YFINANCE_LOG_LEVEL"] = "CRITICAL"  # yfinance 環境變數
+for _logger_name in ["yfinance", "yfinance.base", "yfinance.ticker",
+                      "yfinance.utils", "yfinance.scrapers",
+                      "peewee", "urllib3", "charset_normalizer"]:
+    logging.getLogger(_logger_name).setLevel(logging.CRITICAL)
+    logging.getLogger(_logger_name).propagate = False
+
 warnings.filterwarnings("ignore", message=".*possibly delisted.*")
 warnings.filterwarnings("ignore", message=".*no timezone.*")
 warnings.filterwarnings("ignore", message=".*No data found.*")
+warnings.filterwarnings("ignore", message=".*auto_adjust.*")
+warnings.filterwarnings("ignore", message=".*Ticker.*")
 warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=UserWarning, module="yfinance")
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+# root logger 也調整，避免 yfinance 用 print 以外的方式輸出
+logging.basicConfig(level=logging.ERROR)
 
 INDUSTRY_GROUP = {
     "被動ETF": [], "主動ETF": [],
@@ -2679,19 +2690,13 @@ with tab5:
                         if res.status_code == 200 and len(res.text) > 100:
                             data = res.json()
                             if len(data) > 100:
-                                return True, "取得 {} 筆上市證券（第{}次嘗試成功）".format(len(data), attempt+1)
-                        last_err = "HTTP {} / response len={}".format(res.status_code, len(res.text))
+                                return True, "取得 {} 筆上市證券即時清單（第{}次嘗試成功）".format(len(data), attempt+1)
+                        last_err = "HTTP {} / body len={}".format(res.status_code, len(res.text))
                     except Exception as e:
-                        last_err = str(e)
+                        last_err = str(e)[:60]
                     if attempt < 2:
                         time.sleep(2)
-                # 失敗時說明真實影響：系統有內建清單可 fallback
-                return False, (
-                    "TWSE API 無法連線（{}）。"
-                    "⚠️ 影響：股票清單改用內建備援清單（約2000檔），"
-                    "新上市/下市個股可能未包含，但掃描/回測功能仍可正常運作。"
-                    "若 Streamlit Cloud 境外IP被封，此為正常現象。".format(last_err[:50])
-                )
+                return False, "無法連線（{}）→ 自動改用內建靜態清單（見下方說明）".format(last_err)
             run_check("證交所TWSE API", check_twse)
 
             def check_tpex():
@@ -2774,56 +2779,96 @@ with tab5:
         show_html(pd.DataFrame(checks))
 
         # 各項目失敗時的影響說明
+        # ── 各頁籤功能影響與交易決策說明 ──
+        TWSE_FALLBACK_DETAIL = """
+**備援靜態清單說明**（當 TWSE/TPEX API 無法連線時）
+
+這份清單是程式碼內建的靜態股票代碼列表，約 2,000 檔主要個股。
+- **不是** 昨日的即時資料；**不是** 從任何 API 即時抓取的
+- 只包含代碼和名稱，**不含今日股價**（今日股價仍由 Yahoo Finance 即時提供）
+- 可能遺漏：近期新上市個股、近期下市個股、近期更名個股
+
+| 頁籤 | 狀態 | 交易決策建議 |
+|------|------|------------|
+| 🔍 每日警示掃描 | ✅ 可使用 | 股價訊號可信（Yahoo Finance 即時），但清單範圍略有缺漏 |
+| 🏆 全市場勝率排行 | ✅ 可使用 | 同上 |
+| 📋 合格標的池 | ✅ 可建立 | 可能遺漏近期新上市個股 |
+| 🔬 個股回測 | ✅ 完全正常 | 直接輸入代碼，不受影響 |
+| 📊 批次回測 | ✅ 完全正常 | 同上 |
+"""
+
         IMPACT_MAP = {
-            "證交所TWSE API": (
-                "📋 股票清單改用內建備援清單（約2000檔主要個股），掃描/回測/排行功能仍可正常運作。\n"
-                "⚠️ 新上市個股、近期更名個股可能未包含在清單中。\n"
-                "🌐 若 Streamlit Cloud 境外IP被TWSE封鎖，此為正常現象，不影響主要功能。"
-            ),
-            "櫃買中心TPEX API": (
-                "📋 上櫃股票清單改用內建備援清單，掃描/回測功能仍可正常運作。\n"
-                "⚠️ 新上櫃個股可能未包含。"
-            ),
-            "Yahoo Finance API（2330）": (
-                "⛔ 嚴重影響：個股回測、每日掃描、批次回測全部依賴 Yahoo Finance。\n"
-                "⚠️ 這是最嚴重的異常，需等 Yahoo Finance 恢復後才能使用。"
-            ),
-            "資料即時性（最新資料距今天數）": (
-                "⚠️ 今日掃描結果可能是舊資料，觸發訊號不準確。\n"
-                "建議等資料更新後再執行每日警示掃描（通常隔日盤後更新）。"
-            ),
-            "滾動10日報酬計算邏輯": (
-                "⛔ 程式層面的計算錯誤，所有回測數字不可信。\n"
-                "⚠️ 這是真正的程式問題，請截圖回報。"
-            ),
-            "還原後股價（0050 15年）": (
-                "⚠️ 15年回測資料不完整，個股回測/批次回測結果可能偏差。\n"
-                "✅ 每日掃描（只需60天近期資料）仍可正常使用。"
-            ),
-            "觸發計算驗證（2330 @-7%）": (
-                "⛔ 觸發判斷邏輯可能有誤，每日掃描和回測結果不可信。\n"
-                "⚠️ 這是真正的程式問題，請截圖回報。"
-            ),
-            "還原股價連續性驗證（0050除息）": (
-                "⚠️ 除息前後的回測數據可能失真，長期回測勝率可能偏高。\n"
-                "建議優先參考近5年的回測數據。"
-            ),
+            "證交所TWSE API":   ("warning", "股票清單使用內建靜態備援", TWSE_FALLBACK_DETAIL),
+            "櫃買中心TPEX API": ("warning", "上櫃清單使用內建靜態備援", TWSE_FALLBACK_DETAIL),
+            "Yahoo Finance API（2330）": ("error", "🚨 嚴重：所有頁籤股價資料失效", """
+**Yahoo Finance 是本系統唯一的股價資料源，若此項異常：**
+
+| 頁籤 | 狀態 | 交易決策建議 |
+|------|------|------------|
+| 🔍 每日警示掃描 | ❌ 不可使用 | 訊號完全不可信，勿下單 |
+| 🏆 全市場勝率排行 | ❌ 不可使用 | 同上 |
+| 📋 合格標的池 | ❌ 無法建立 | 同上 |
+| 🔬 個股回測 | ❌ 不可使用 | 同上 |
+| 📊 批次回測 | ❌ 不可使用 | 同上 |
+
+**⛔ 今日所有訊號暫停參考，不建議下單。等 Yahoo Finance 恢復後重試。**
+"""),
+            "資料即時性（最新資料距今天數）": ("warning", "股價資料可能延遲", """
+Yahoo Finance 台股資料通常於盤後（16:00 後）更新。
+若距今超過 2 天，今日掃描訊號的觸發價格可能是舊資料。
+
+**交易決策建議：資料延遲超過 2 天時，今日訊號暫停參考。**
+"""),
+            "滾動10日報酬計算邏輯": ("error", "🚨 程式計算錯誤", """
+計算邏輯驗證失敗，所有回測數字（勝率、報酬率）不可信。
+
+**⛔ 立即停止使用所有頁籤，截圖回報開發者修復後再使用。**
+"""),
+            "還原後股價（0050 15年）": ("warning", "歷史股價資料不完整", """
+15年歷史資料不足，長期回測結果可能偏差。
+
+| 頁籤 | 狀態 |
+|------|------|
+| 🔍 每日警示掃描 | ✅ 正常（只需近60天） |
+| 🔬 個股回測（近3年） | ✅ 可參考 |
+| 🔬 個股回測（15年） | ⚠️ 需謹慎，樣本可能不足 |
+"""),
+            "觸發計算驗證（2330 @-7%）": ("error", "🚨 觸發邏輯計算錯誤", """
+觸發判斷計算結果不符預期，每日掃描和回測的觸發訊號不可信。
+
+**⛔ 立即停止使用掃描和回測功能，截圖回報開發者。**
+"""),
+            "還原股價連續性驗證（0050除息）": ("warning", "除息還原可能失真", """
+除息前後股價還原有異常跳空，含除息期間的長期回測勝率可能偏高。
+
+**交易決策建議：優先參考近 2 年的回測數據，15年長期數據需謹慎解讀。**
+"""),
         }
 
-        if all("✅" in c["狀態"] or "⚠️" in c["狀態"] for c in checks):
-            warn_items = [c["項目"] for c in checks if "⚠️" in c["狀態"]]
-            if warn_items:
-                st.warning("⚠️ 系統核心正常，但部分外部API暫時不穩定（偶發性網路問題，稍後重試即可）：{}".format("、".join(warn_items)))
-            else:
-                st.success("✅ 所有系統檢核通過！所有功能正常可用。")
+        failed_items = [c["項目"] for c in checks if "❌" in c["狀態"]]
+        warn_items   = [c["項目"] for c in checks if "⚠️" in c["狀態"]]
+
+        if not failed_items and not warn_items:
+            st.success("✅ 所有系統檢核通過！各頁籤功能均正常，今日訊號可正常參考。")
         else:
-            failed_items = [c["項目"] for c in checks if "❌" in c["狀態"]]
-            st.error("❌ 以下項目異常：" + "、".join(failed_items))
-            st.markdown("### 異常影響範圍")
-            for item in failed_items:
-                impact = IMPACT_MAP.get(item, "影響範圍未知，請回報")
-                with st.expander("📌 " + item + " 異常的影響"):
-                    st.markdown(impact)
+            if failed_items:
+                st.error("❌ 程式錯誤，以下功能**不可信**：{}".format("、".join(failed_items)))
+            if warn_items:
+                st.warning("⚠️ 以下項目降級運作（點開查看各頁籤影響）：{}".format("、".join(warn_items)))
+
+        problem_items = failed_items + warn_items
+        if problem_items:
+            st.markdown("---")
+            st.markdown("### 📋 各頁籤功能影響說明 ＆ 今日交易決策建議")
+            for item in problem_items:
+                if item in IMPACT_MAP:
+                    level, short_desc, detail = IMPACT_MAP[item]
+                    icon = "🔴" if level == "error" else "🟡"
+                    with st.expander(
+                        "{} {}：{}".format(icon, item, short_desc),
+                        expanded=(level == "error")
+                    ):
+                        st.markdown(detail)
 
 
 # ==============================
