@@ -1888,6 +1888,76 @@ def _render_smart_analysis(code, prices_dict, df_win, df_avg):
 本解讀由系統根據15年回測數據自動生成，不構成投資建議。實際操作請結合基本面與市場環境判斷。
 </div></div>""", unsafe_allow_html=True)
 
+MOPS_DANGER_KW = [
+    "掏空", "侵占", "背信", "違約", "停業", "清算", "破產", "撤銷上市",
+    "警示", "全額交割", "異常", "調查", "起訴", "財務困難",
+    "會計師出具保留", "無法繼續", "重大虧損", "財報重編",
+]
+MOPS_WARN_KW = [
+    "更換會計師", "更換簽證", "內控缺失", "內部稽核",
+    "相關人員異動", "主要客戶.*流失", "重大合約.*終止",
+]
+
+@st.cache_data(ttl=3600)
+def query_mops_risk_detail(code):
+    """
+    查詢單一個股的 MOPS 重大訊息風險偵測完整結果。
+    回傳 dict：{ status, danger_kw, warn_kw, raw_excerpt, query_url, error }
+    status: 'danger' / 'warning' / 'clean' / 'no_data' / 'error'
+    """
+    import re as _re
+    result = {
+        "status": "no_data", "danger_kw": [], "warn_kw": [],
+        "raw_excerpt": "", "query_url": "", "error": ""
+    }
+    query_url = "https://mops.twse.com.tw/mops/web/t05st01?co_id={}".format(code)
+    result["query_url"] = query_url
+    try:
+        res = requests.get(
+            "https://mops.twse.com.tw/mops/web/t05st01",
+            params={"encodeURIComponent": "1", "step": "1",
+                    "firstin": "1", "off": "1",
+                    "co_id": code, "TYPEK": "sii"},
+            timeout=8, headers={"User-Agent": "Mozilla/5.0"}
+        )
+        if res.status_code != 200 or not res.text:
+            result["error"] = "MOPS 無回應或連線失敗（境外IP可能被限制）"
+            return result
+
+        stripped = _re.sub(r'<[^>]+>', ' ', res.text)
+        stripped = _re.sub(r'\s+', ' ', stripped).strip()
+
+        danger = [kw for kw in MOPS_DANGER_KW if _re.search(kw, stripped)]
+        warn   = [kw for kw in MOPS_WARN_KW if _re.search(kw, stripped)]
+
+        result["danger_kw"] = danger
+        result["warn_kw"] = warn
+
+        # 擷取關鍵字附近文字方便核實（前後各60字）
+        excerpts = []
+        for kw_list in (danger, warn):
+            for kw in kw_list:
+                m = _re.search(kw, stripped)
+                if m:
+                    start = max(0, m.start() - 60)
+                    end = min(len(stripped), m.end() + 60)
+                    excerpts.append("…{}…".format(stripped[start:end]))
+        result["raw_excerpt"] = "\n\n".join(excerpts[:5])  # 最多5段
+
+        if danger:
+            result["status"] = "danger"
+        elif warn:
+            result["status"] = "warning"
+        else:
+            result["status"] = "clean"
+
+    except Exception as e:
+        result["error"] = "查詢失敗：{}".format(str(e)[:80])
+        result["status"] = "error"
+
+    return result
+
+
 @st.cache_data(ttl=86400)
 def get_industry_lookup():
     """
@@ -2438,7 +2508,7 @@ def group_selector(key_prefix):
 # ==============================
 # 頁籤順序：使用說明→系統檢核→每日警示→批次回測→個股回測→全市場勝率
 # ==============================
-tab0, tab5, tab6, tab1, tab3, tab4, tab2, tab_brief = st.tabs([
+tab0, tab5, tab6, tab1, tab3, tab4, tab2, tab_mops, tab_brief = st.tabs([
     "📖 使用說明",
     "🔧 系統檢核",
     "📋 合格標的池",
@@ -2446,6 +2516,7 @@ tab0, tab5, tab6, tab1, tab3, tab4, tab2, tab_brief = st.tabs([
     "🔬 個股回測",
     "🏆 全市場勝率排行",
     "📊 批次回測",
+    "🛡️ 個股MOPS查詢",
     "📰 每日市場簡報",
 ])
 
@@ -2578,20 +2649,79 @@ def generate_html_report_scan(df_scan, threshold, scan_date, market_level=None):
     """
     生成每日警示掃描的獨立 HTML 報告（可在瀏覽器完整列印/存PDF）
     使用者下載後在瀏覽器開啟，Ctrl+P 即可完整輸出
+
+    排序邏輯（三方辯證後裁決）：
+      - ✅有效：組內按體質分數高→低（已過篩選，比的是體質）
+      - 🔶觀察：組內按跌幅深→淺（離進場甜蜜點的距離）
+      - ⚪弱／其他：組內按體質分數低→高（優先看最危險的）
+    信號組之間的順序固定：✅有效 → 🔶觀察 → ⚪弱
     """
     if df_scan is None or df_scan.empty:
         rows_html = "<tr><td colspan='99' style='text-align:center;color:#888;padding:20px'>無觸發標的</td></tr>"
+        headers = ""
     else:
+        df_sorted = df_scan.copy()
+
+        # 解析體質分數欄（可能是 "10/15*"、"ETF"、"資料不足" 等格式）
+        def _parse_score(v):
+            try:
+                s = str(v).replace("*", "").strip()
+                if "/" in s:
+                    return float(s.split("/")[0])
+                return -1  # ETF/資料不足 等非數字，排在最後
+            except Exception:
+                return -1
+
+        def _parse_pct(v):
+            try:
+                return float(str(v).replace("%", "").strip())
+            except Exception:
+                return 0.0
+
+        signal_col = df_sorted.columns[0] if len(df_sorted.columns) > 0 else None
+        score_col  = next((c for c in df_sorted.columns if "體質分數" in str(c)), None)
+        pct_col    = next((c for c in df_sorted.columns if "報酬" in str(c)), None)
+
+        if signal_col is not None:
+            df_sorted["_score_num"] = df_sorted[score_col].apply(_parse_score) if score_col else -1
+            df_sorted["_pct_num"]   = df_sorted[pct_col].apply(_parse_pct) if pct_col else 0.0
+
+            # 信號分組優先序
+            def _signal_group(v):
+                s = str(v)
+                if "有效" in s:   return 0
+                if "觀察" in s:   return 1
+                if "弱" in s:     return 2
+                return 3
+            df_sorted["_grp"] = df_sorted[signal_col].apply(_signal_group)
+
+            # 組內排序鍵：依裁決邏輯
+            def _sort_key(row):
+                grp = row["_grp"]
+                if grp == 0:   # 有效：體質分數高→低
+                    return (grp, -row["_score_num"])
+                elif grp == 1: # 觀察：跌幅深→淺（百分比本身是負的，所以數值小=跌更深）
+                    return (grp, row["_pct_num"])
+                else:          # 弱：體質分數低→高
+                    return (grp, row["_score_num"])
+
+            df_sorted["_sortkey"] = df_sorted.apply(_sort_key, axis=1)
+            df_sorted = df_sorted.sort_values("_sortkey", key=lambda col: col).drop(
+                columns=["_score_num", "_pct_num", "_grp", "_sortkey"])
+
         rows_html = ""
-        for _, row in df_scan.iterrows():
+        for _, row in df_sorted.iterrows():
             cells = "".join(
                 "<td style='padding:8px 12px;border-bottom:1px solid #eee;white-space:nowrap'>{}</td>".format(
                     str(v) if v is not None else "—") for v in row.values)
             rows_html += "<tr>{}</tr>".format(cells)
 
-    headers = "".join(
-        "<th style='background:#003781;color:#fff;padding:9px 12px;white-space:nowrap;text-align:center'>{}</th>".format(c)
-        for c in (df_scan.columns if df_scan is not None and not df_scan.empty else []))
+        headers = "".join(
+            "<th onclick='sortTable({idx})' style='background:#003781;color:#fff;padding:9px 12px;"
+            "white-space:nowrap;text-align:center;cursor:pointer;user-select:none' "
+            "title='點擊排序'>{name} <span style=\"font-size:10px;opacity:0.7\">⇕</span></th>".format(
+                idx=i, name=c)
+            for i, c in enumerate(df_sorted.columns))
 
     market_html = ""
     if market_level:
@@ -2620,8 +2750,11 @@ def generate_html_report_scan(df_scan, threshold, scan_date, market_level=None):
 </head><body>
 <h1>📊 每日警示掃描報告</h1>
 <p>掃描日期：{date}　｜　警示門檻：{thr}%　｜　生成時間：{date}</p>
+<p style="color:#888;font-size:12px">
+  排序說明：✅有效組按體質分數高→低；🔶觀察組按跌幅深→淺；⚪弱組按體質分數低→高。點擊表頭可自訂排序。
+</p>
 {market}
-<table>
+<table id="scanTable">
   <thead><tr>{headers}</tr></thead>
   <tbody>{rows}</tbody>
 </table>
@@ -2629,6 +2762,28 @@ def generate_html_report_scan(df_scan, threshold, scan_date, market_level=None):
   本報告由台股滾動10日跌幅系統自動生成，不構成投資建議。歷史績效不代表未來報酬。
 </p>
 <script>
+  // 點擊表頭排序（純前端，不影響原始樣式）
+  var sortDirs = {{}};
+  function sortTable(colIdx) {{
+    var table = document.getElementById("scanTable");
+    var tbody = table.tBodies[0];
+    var rows = Array.from(tbody.rows);
+    var dir = sortDirs[colIdx] = !sortDirs[colIdx];
+
+    rows.sort(function(a, b) {{
+      var av = a.cells[colIdx].innerText.trim();
+      var bv = b.cells[colIdx].innerText.trim();
+      var an = parseFloat(av.replace(/[^\\-0-9.]/g, ''));
+      var bn = parseFloat(bv.replace(/[^\\-0-9.]/g, ''));
+      var bothNum = !isNaN(an) && !isNaN(bn) && av.match(/[0-9]/) && bv.match(/[0-9]/);
+      if (bothNum) {{
+        return dir ? an - bn : bn - an;
+      }}
+      return dir ? av.localeCompare(bv, 'zh-TW') : bv.localeCompare(av, 'zh-TW');
+    }});
+    rows.forEach(function(r) {{ tbody.appendChild(r); }});
+  }}
+
   // 開啟即自動詢問列印
   window.onload = function() {{
     setTimeout(function() {{
@@ -5097,12 +5252,47 @@ with tab1:
                     "②體質合格": "✅" if c2_ok else ("—" if not has_pool else "❌"),
                     "③市場正常": "✅" if c3_ok else "❌",
                     "④深度超跌": "✅" if c4_ok else "❌",
+                    "_signal_raw": signal,  # 內部用，篩選 MOPS 查詢範圍
                 })
 
             df_show = pd.DataFrame(rows)
             signal_order = {"🔥 強烈": 0, "✅ 有效": 1, "🔶 觀察": 2, "⚪ 弱": 3}
             df_show["_rank"] = df_show["信號"].map(signal_order).fillna(9)
-            df_show = df_show.sort_values(["_rank", "10日報酬"]).drop(columns=["_rank"]).reset_index(drop=True)
+            df_show = df_show.sort_values(["_rank", "10日報酬"]).reset_index(drop=True)
+
+            # ── MOPS 公司面風險偵測：僅對「強烈／有效／觀察」組查詢 ──
+            # （弱組本來就要排除，不需要再花資源確認風險；地雷風險要擋在可能進場的標的上）
+            MOPS_CHECK_SIGNALS = {"🔥 強烈", "✅ 有效", "🔶 觀察"}
+            check_targets = df_show[df_show["_signal_raw"].isin(MOPS_CHECK_SIGNALS)]
+
+            if len(check_targets) > 0:
+                mops_progress = st.progress(0, text="風險偵測中：查詢 MOPS 重大訊息...")
+                risk_lookup = {}
+                n_check = len(check_targets)
+                for idx_c, (_, rr) in enumerate(check_targets.iterrows()):
+                    code_c = rr["代碼"]
+                    mops_progress.progress((idx_c + 1) / n_check,
+                                            text="風險偵測中：{} {}（{}/{}）".format(
+                                                code_c, rr["名稱"], idx_c + 1, n_check))
+                    detail = query_mops_risk_detail(code_c)
+                    if detail["status"] == "danger":
+                        risk_lookup[code_c] = "🚨 高風險：{}".format("、".join(detail["danger_kw"][:2]))
+                    elif detail["status"] == "warning":
+                        risk_lookup[code_c] = "⚠️ 留意：{}".format("、".join(detail["warn_kw"][:2]))
+                    elif detail["status"] == "clean":
+                        risk_lookup[code_c] = "✅ 無異常"
+                    else:
+                        risk_lookup[code_c] = "—"
+                mops_progress.empty()
+
+                df_show["MOPS風險"] = df_show["代碼"].map(
+                    lambda c: risk_lookup.get(c, "—（弱組不查）" if df_show.loc[df_show["代碼"]==c, "_signal_raw"].iloc[0] == "⚪ 弱" else "—")
+                )
+            else:
+                df_show["MOPS風險"] = "—"
+
+            df_show = df_show.drop(columns=["_rank", "_signal_raw"])
+            st.caption("💡 想看「MOPS風險」欄位的完整詳情？前往【🔍 個股MOPS查詢】頁籤輸入代碼即可查看完整關鍵字、原文摘錄與官方連結。")
 
             # ── 統計摘要 ──
             strong = (df_show["信號"] == "🔥 強烈").sum()
@@ -5142,7 +5332,7 @@ with tab1:
                 st.warning("⚠️ 市場目前{}，③條件全部標的均為❌。這代表大盤偏離長期均線過高，觸發往往是大趨勢下跌的開始，而非短暫超跌。建議等市場冷卻至7級以下再積極進場。".format(market_level_str))
 
             if not has_pool:
-                st.info("💡 體質分數即時計算中（標示 * 號）。建立【📋 合格標的池】後，評分更完整（含多年EPS歷史），信號更精確。")
+                st.caption("ℹ️ 標示「*」的體質分數為單檔即時計算；建立合格標的池後分數會被快取保存，重複掃描時不需重新呼叫 API（速度較快），但兩者使用的財務資料來源完全相同，準確度沒有差異。")
 
             # ── 表格 ──
             st.markdown(show_html.__doc__ or "")
@@ -7121,6 +7311,81 @@ def _render_metric_card(col, data):
   <div style="font-size:12px;color:{sigc};margin-top:4px;line-height:1.4">{sig}</div>
 </div>""".format(name=name, val=val_str, chgc=chg_col, chg=chg_str,
                 sigc=sig_color, sig=signal), unsafe_allow_html=True)
+
+
+with tab_mops:
+    st.markdown(_tab_icon("icon-search", "個股 MOPS 風險查詢", "輸入代碼即可查看完整異常關鍵字、原文摘錄與官方連結"), unsafe_allow_html=True)
+    st.caption(
+        "每日警示掃描裡的「MOPS風險」欄只顯示摘要（如「🚨 高風險：掏空、侵占」），"
+        "這裡可以查到完整細節：命中了哪些關鍵字、原文出現的位置、以及直接連結到公開資訊觀測站核實。"
+    )
+
+    col_mq1, col_mq2 = st.columns([1, 3])
+    with col_mq1:
+        mops_query_code = st.text_input("股票代碼", placeholder="例：2233", key="mops_query_input")
+        mops_query_btn = st.button("🔍 查詢 MOPS 風險", key="mops_query_btn", type="primary")
+
+    if mops_query_btn and mops_query_code.strip():
+        _code_q = mops_query_code.strip()
+        with st.spinner("查詢 MOPS 公開資訊觀測站中..."):
+            detail = query_mops_risk_detail(_code_q)
+
+        st.markdown("---")
+
+        if detail["error"]:
+            st.warning("⚠️ {}".format(detail["error"]))
+            st.caption("MOPS 在 Streamlit Cloud 環境偶爾會連線失敗，這不代表該股有問題，純粹是查詢技術限制。")
+
+        elif detail["status"] == "danger":
+            st.error("🚨 偵測到高風險關鍵字")
+            st.markdown("**命中關鍵字：** {}".format("、".join(detail["danger_kw"])))
+            if detail["raw_excerpt"]:
+                st.markdown("**原文摘錄（關鍵字前後文，方便核實）：**")
+                st.code(detail["raw_excerpt"], language=None)
+            st.markdown(
+                "**這代表什麼**：MOPS 重大訊息申報中出現了高風險用詞，通常與財務危機、"
+                "法律問題、董監事異常有關。**強烈建議在進場前親自至官方網站核實完整公告內容**，"
+                "不要只依賴關鍵字比對。"
+            )
+
+        elif detail["status"] == "warning":
+            st.warning("⚠️ 偵測到需留意的異動")
+            st.markdown("**命中關鍵字：** {}".format("、".join(detail["warn_kw"])))
+            if detail["raw_excerpt"]:
+                st.markdown("**原文摘錄：**")
+                st.code(detail["raw_excerpt"], language=None)
+            st.markdown(
+                "**這代表什麼**：出現會計師異動、內控缺失等用詞，未必是嚴重問題"
+                "（例如常規會計師輪調），但建議查看公告確認原因。"
+            )
+
+        elif detail["status"] == "clean":
+            st.success("✅ 未偵測到風險關鍵字")
+            st.caption(
+                "這代表近期 MOPS 重大訊息申報中沒有出現本系統設定的高風險/警示關鍵字，"
+                "**但不代表公司完全沒有風險**——關鍵字比對只能偵測已知模式，"
+                "建議仍搭配財報、月營收等其他資訊綜合判斷。"
+            )
+
+        else:
+            st.info("ℹ️ 查無相關資料（可能是近期無重大訊息申報，或代碼輸入有誤）")
+
+        st.markdown("---")
+        st.markdown(
+            "**🔗 官方查詢連結**：[{url}]({url})".format(url=detail["query_url"])
+        )
+        st.caption("點擊連結可直接前往公開資訊觀測站，查看該公司完整的重大訊息歷史記錄。")
+
+        with st.expander("📖 本系統偵測的關鍵字清單（點擊展開）"):
+            st.markdown("**🚨 高風險關鍵字**：{}".format("、".join(MOPS_DANGER_KW)))
+            st.markdown("**⚠️ 留意關鍵字**：{}".format("、".join(MOPS_WARN_KW)))
+            st.caption(
+                "這份清單是系統內建的關鍵字比對規則，命中代表近期公告文字中含有這些詞彙，"
+                "不代表自動判定公司有問題，僅作為提醒你進一步查證的線索。"
+            )
+
+    else:
+        st.info("💡 輸入股票代碼後點擊「查詢 MOPS 風險」，即可看到完整偵測結果。")
 
 
 with tab_brief:
