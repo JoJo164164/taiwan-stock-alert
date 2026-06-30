@@ -1899,50 +1899,99 @@ MOPS_WARN_KW = [
 ]
 
 @st.cache_data(ttl=3600)
-def query_mops_risk_detail(code):
+def get_all_mops_announcements():
     """
-    查詢單一個股的 MOPS 重大訊息風險偵測完整結果。
-    回傳 dict：{ status, danger_kw, warn_kw, raw_excerpt, query_url, error }
-    status: 'danger' / 'warning' / 'clean' / 'no_data' / 'error'
+    一次抓取全市場「重大訊息」清單（TWSE OpenAPI t187ap04_L，正式開放資料 API）。
+    比逐檔查詢可靠：不需要表單/session，單一 JSON 回應含全部上市公司近期重訊。
+    回傳：{ 'ok': bool, 'data': list, 'error': str, 'fetched_at': str }
+    """
+    result = {"ok": False, "data": [], "error": "", "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    try:
+        res = requests.get(
+            "https://openapi.twse.com.tw/v1/opendata/t187ap04_L",
+            timeout=15, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+        )
+        body  = res.text or ""
+        ctype = res.headers.get("Content-Type", "")
+        is_json = "application/json" in ctype or body.strip().startswith("[")
+        if res.status_code == 200 and is_json:
+            data = res.json()
+            if isinstance(data, list) and len(data) > 0:
+                result["ok"] = True
+                result["data"] = data
+            else:
+                result["error"] = "API 回傳空清單"
+        else:
+            result["error"] = "非JSON回應或連線失敗（HTTP{}）".format(res.status_code)
+    except Exception as e:
+        result["error"] = "連線例外：{}".format(str(e)[:80])
+    return result
+
+
+NEWS_DANGER_KW = [
+    "掏空", "侵占", "背信", "違約", "停業", "清算", "破產", "搜索", "搜索調查",
+    "檢調", "起訴", "羈押", "弊案", "詐欺", "違規", "證交所.*處置",
+    "全額交割", "下市", "閃辭", "無預警辭", "經營權.*爭", "大股東.*失和",
+    "法說會.*取消", "法說會.*喊卡", "財報.*重編", "會計師.*保留",
+]
+NEWS_WARN_KW = [
+    "董事長.*辭", "總經理.*辭", "高層.*異動", "人事.*震盪",
+    "股價.*重挫", "連續跌停", "外資.*調節", "大股東.*減持",
+    "內控.*缺失", "更換會計師",
+]
+
+@st.cache_data(ttl=1800)
+def search_news_risk(code, name):
+    """
+    用 Google News RSS 搜尋個股相關新聞，偵測市場傳聞/治理危機/檢調動態等
+    「未必有正式重大訊息，但媒體已經報導」的風險訊號。
+    這一層補足 MOPS 重大訊息只涵蓋法定揭露事項的盲區
+    （例如：經營權鬥爭、媒體調查報導、市場傳聞等公司不一定會主動發重訊的事件）。
+
+    回傳 dict：{ status, danger_kw, warn_kw, headlines, error }
     """
     import re as _re
     result = {
         "status": "no_data", "danger_kw": [], "warn_kw": [],
-        "raw_excerpt": "", "query_url": "", "error": ""
+        "headlines": [], "error": ""
     }
-    query_url = "https://mops.twse.com.tw/mops/web/t05st01?co_id={}".format(code)
-    result["query_url"] = query_url
+    query = "{} {}".format(code, name)
     try:
-        res = requests.get(
-            "https://mops.twse.com.tw/mops/web/t05st01",
-            params={"encodeURIComponent": "1", "step": "1",
-                    "firstin": "1", "off": "1",
-                    "co_id": code, "TYPEK": "sii"},
-            timeout=8, headers={"User-Agent": "Mozilla/5.0"}
-        )
+        import urllib.parse
+        q_encoded = urllib.parse.quote(query)
+        url = "https://news.google.com/rss/search?q={}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant".format(q_encoded)
+        res = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+
         if res.status_code != 200 or not res.text:
-            result["error"] = "MOPS 無回應或連線失敗（境外IP可能被限制）"
+            result["status"] = "error"
+            result["error"] = "新聞搜尋連線失敗（HTTP{}）".format(res.status_code)
             return result
 
-        stripped = _re.sub(r'<[^>]+>', ' ', res.text)
-        stripped = _re.sub(r'\s+', ' ', stripped).strip()
+        import feedparser
+        feed = feedparser.parse(res.text)
+        entries = feed.entries[:15] if feed.entries else []
 
-        danger = [kw for kw in MOPS_DANGER_KW if _re.search(kw, stripped)]
-        warn   = [kw for kw in MOPS_WARN_KW if _re.search(kw, stripped)]
+        if not entries:
+            result["status"] = "clean"
+            return result
 
+        headlines = []
+        all_titles_text = ""
+        for e in entries:
+            title = e.get("title", "")
+            pub = e.get("published", "")[:16]
+            source = ""
+            if " - " in title:
+                title, source = title.rsplit(" - ", 1)
+            headlines.append({"title": title.strip(), "date": pub, "source": source, "link": e.get("link", "")})
+            all_titles_text += " " + title
+
+        danger = [kw for kw in NEWS_DANGER_KW if _re.search(kw, all_titles_text)]
+        warn   = [kw for kw in NEWS_WARN_KW if _re.search(kw, all_titles_text)]
+
+        result["headlines"] = headlines
         result["danger_kw"] = danger
         result["warn_kw"] = warn
-
-        # 擷取關鍵字附近文字方便核實（前後各60字）
-        excerpts = []
-        for kw_list in (danger, warn):
-            for kw in kw_list:
-                m = _re.search(kw, stripped)
-                if m:
-                    start = max(0, m.start() - 60)
-                    end = min(len(stripped), m.end() + 60)
-                    excerpts.append("…{}…".format(stripped[start:end]))
-        result["raw_excerpt"] = "\n\n".join(excerpts[:5])  # 最多5段
 
         if danger:
             result["status"] = "danger"
@@ -1952,8 +2001,71 @@ def query_mops_risk_detail(code):
             result["status"] = "clean"
 
     except Exception as e:
-        result["error"] = "查詢失敗：{}".format(str(e)[:80])
         result["status"] = "error"
+        result["error"] = "新聞搜尋例外：{}".format(str(e)[:80])
+
+    return result
+
+
+def query_mops_risk_detail(code):
+    """
+    查詢單一個股的 MOPS 重大訊息風險偵測完整結果。
+    使用 TWSE OpenAPI t187ap04_L（全市場重訊清單）篩選出該代碼的記錄，
+    避免逐檔 GET 表單頁面（該方式無法取得真實資料，會導致假陰性）。
+
+    回傳 dict：{ status, danger_kw, warn_kw, matched_records, query_url, error, data_source_ok }
+    status: 'danger' / 'warning' / 'clean' / 'no_data' / 'error'
+    """
+    result = {
+        "status": "no_data", "danger_kw": [], "warn_kw": [],
+        "matched_records": [], "query_url": "", "error": "", "data_source_ok": False
+    }
+    query_url = "https://mops.twse.com.tw/mops/web/t05st01?co_id={}".format(code)
+    result["query_url"] = query_url
+
+    all_data = get_all_mops_announcements()
+
+    if not all_data["ok"]:
+        # ── 重要：資料源失敗時明確標示 error，絕不能誤判為「無異常」 ──
+        result["status"] = "error"
+        result["error"] = "MOPS 開放資料 API 無法取得（{}）。本次查詢不可信，請改用下方官方連結手動核實。".format(
+            all_data["error"])
+        return result
+
+    result["data_source_ok"] = True
+
+    # 從全市場清單篩選出該代碼的記錄
+    code_str = str(code).strip()
+    matched = [d for d in all_data["data"]
+               if str(d.get("公司代號", "")).strip() == code_str]
+
+    if not matched:
+        # 在這份重訊清單裡沒有該代碼的記錄 = 近期無重大訊息申報，這是「乾淨」的正確判斷
+        result["status"] = "clean"
+        return result
+
+    result["matched_records"] = matched
+
+    # 對每筆重訊的標題+事實內容做關鍵字比對
+    full_text = " ".join(
+        "{} {}".format(d.get("發言日期", ""), d.get("事實發生日", "") or "") +
+        " " + str(d.get("主旨", "")) for d in matched
+    )
+
+    danger = [kw for kw in MOPS_DANGER_KW if kw.replace(".*", "") in full_text or
+              __import__("re").search(kw, full_text)]
+    warn   = [kw for kw in MOPS_WARN_KW if kw.replace(".*", "") in full_text or
+              __import__("re").search(kw, full_text)]
+
+    result["danger_kw"] = danger
+    result["warn_kw"] = warn
+
+    if danger:
+        result["status"] = "danger"
+    elif warn:
+        result["status"] = "warning"
+    else:
+        result["status"] = "clean"
 
     return result
 
@@ -2516,7 +2628,7 @@ tab0, tab5, tab6, tab1, tab3, tab4, tab2, tab_mops, tab_brief = st.tabs([
     "🔬 個股回測",
     "🏆 全市場勝率排行",
     "📊 批次回測",
-    "🛡️ 個股MOPS查詢",
+    "🛡️ 個股風險查詢",
     "📰 每日市場簡報",
 ])
 
@@ -5260,39 +5372,54 @@ with tab1:
             df_show["_rank"] = df_show["信號"].map(signal_order).fillna(9)
             df_show = df_show.sort_values(["_rank", "10日報酬"]).reset_index(drop=True)
 
-            # ── MOPS 公司面風險偵測：僅對「強烈／有效／觀察」組查詢 ──
-            # （弱組本來就要排除，不需要再花資源確認風險；地雷風險要擋在可能進場的標的上）
+            # ── 風險偵測：MOPS 重大訊息 + Google News 新聞搜尋（雙層）──
+            # 僅對「強烈／有效／觀察」組查詢（弱組本來就要排除，不浪費資源）
+            # 雙層原因：重大訊息只涵蓋法定揭露事項，董座閃辭/經營權鬥爭/檢調動態等
+            # 未必會立即發重訊，但媒體通常已經報導，新聞搜尋補足這個盲區
             MOPS_CHECK_SIGNALS = {"🔥 強烈", "✅ 有效", "🔶 觀察"}
             check_targets = df_show[df_show["_signal_raw"].isin(MOPS_CHECK_SIGNALS)]
 
             if len(check_targets) > 0:
-                mops_progress = st.progress(0, text="風險偵測中：查詢 MOPS 重大訊息...")
-                risk_lookup = {}
-                n_check = len(check_targets)
-                for idx_c, (_, rr) in enumerate(check_targets.iterrows()):
-                    code_c = rr["代碼"]
-                    mops_progress.progress((idx_c + 1) / n_check,
-                                            text="風險偵測中：{} {}（{}/{}）".format(
-                                                code_c, rr["名稱"], idx_c + 1, n_check))
-                    detail = query_mops_risk_detail(code_c)
-                    if detail["status"] == "danger":
-                        risk_lookup[code_c] = "🚨 高風險：{}".format("、".join(detail["danger_kw"][:2]))
-                    elif detail["status"] == "warning":
-                        risk_lookup[code_c] = "⚠️ 留意：{}".format("、".join(detail["warn_kw"][:2]))
-                    elif detail["status"] == "clean":
-                        risk_lookup[code_c] = "✅ 無異常"
-                    else:
-                        risk_lookup[code_c] = "—"
-                mops_progress.empty()
+                with st.spinner("風險偵測中：查詢 MOPS 重大訊息 + 新聞搜尋..."):
+                    risk_lookup = {}
+                    mops_data_ok = None
+                    news_data_ok = None
+                    for _, rr in check_targets.iterrows():
+                        code_c = rr["代碼"]
+                        name_c = rr["名稱"]
+                        mops_detail = query_mops_risk_detail(code_c)
+                        news_detail = search_news_risk(code_c, name_c)
+                        mops_data_ok = mops_detail["data_source_ok"]
+                        news_data_ok = (news_detail["status"] != "error")
 
-                df_show["MOPS風險"] = df_show["代碼"].map(
+                        # 兩層任一偵測到 danger 就是最高優先級
+                        if mops_detail["status"] == "danger" or news_detail["status"] == "danger":
+                            kws = mops_detail.get("danger_kw", [])[:1] + news_detail.get("danger_kw", [])[:1]
+                            risk_lookup[code_c] = "🚨 高風險：{}".format("、".join(kws) or "詳見查詢頁")
+                        elif mops_detail["status"] == "warning" or news_detail["status"] == "warning":
+                            kws = mops_detail.get("warn_kw", [])[:1] + news_detail.get("warn_kw", [])[:1]
+                            risk_lookup[code_c] = "⚠️ 留意：{}".format("、".join(kws) or "詳見查詢頁")
+                        elif mops_detail["status"] == "error" and news_detail["status"] == "error":
+                            risk_lookup[code_c] = "❓ 雙重查詢失敗"
+                        elif mops_detail["status"] == "error" or news_detail["status"] == "error":
+                            risk_lookup[code_c] = "❓ 部分查詢失敗"
+                        else:
+                            risk_lookup[code_c] = "✅ 無異常"
+
+                if mops_data_ok is False or news_data_ok is False:
+                    failed_sources = []
+                    if mops_data_ok is False: failed_sources.append("MOPS重大訊息")
+                    if news_data_ok is False: failed_sources.append("新聞搜尋")
+                    st.warning("⚠️ {} 本次無法取得，標示「❓」的標的請改用【🛡️ 個股風險查詢】頁籤手動核實，不代表這些標的沒有風險。".format("、".join(failed_sources)))
+
+                df_show["風險偵測"] = df_show["代碼"].map(
                     lambda c: risk_lookup.get(c, "—（弱組不查）" if df_show.loc[df_show["代碼"]==c, "_signal_raw"].iloc[0] == "⚪ 弱" else "—")
                 )
             else:
-                df_show["MOPS風險"] = "—"
+                df_show["風險偵測"] = "—"
 
             df_show = df_show.drop(columns=["_rank", "_signal_raw"])
-            st.caption("💡 想看「MOPS風險」欄位的完整詳情？前往【🔍 個股MOPS查詢】頁籤輸入代碼即可查看完整關鍵字、原文摘錄與官方連結。")
+            st.caption("💡 想看「風險偵測」欄位的完整詳情（含新聞標題、重訊記錄）？前往【🛡️ 個股風險查詢】頁籤輸入代碼查看。")
 
             # ── 統計摘要 ──
             strong = (df_show["信號"] == "🔥 強烈").sum()
@@ -5774,64 +5901,56 @@ with tab3:
             import requests as _req
             _code4 = single_code.strip()
 
-            # ── ④-A：MOPS 近30天重大訊息 ──
-            # TWSE OpenAPI：查詢近期重大訊息（免費公開）
-            _mops_danger_kw = [
-                "掏空", "侵占", "背信", "違約", "停業", "清算", "破產", "撤銷上市",
-                "警示", "全額交割", "異常", "調查", "起訴", "財務困難",
-                "會計師出具保留", "無法繼續", "重大虧損", "財報重編",
-                "董事長", "總經理", "財務長.*辭", "辭職.*董", "解任",
-                "質押.*超過", "大股東.*減持", "控制股東.*出售",
-            ]
-            _mops_warn_kw = [
-                "更換會計師", "更換簽證", "內控缺失", "內部稽核",
-                "相關人員異動", "主要客戶.*流失", "重大合約.*終止",
-            ]
+            # ── ④-A：MOPS 重大訊息（共用函數，使用 TWSE OpenAPI t187ap04_L 正式資料）──
+            _mops_detail = query_mops_risk_detail(_code4)
+
+            if _mops_detail["status"] == "error":
+                _risk_flags.append({
+                    "level": "warning", "icon": "❓",
+                    "title": "MOPS 風險偵測本次查詢失敗",
+                    "body": "{}\n無法確認此股票是否有公司面風險，建議至【🛡️ 個股風險查詢】頁籤重試，或直接前往公開資訊觀測站（mops.twse.com.tw）核實。".format(
+                        _mops_detail["error"])
+                })
+            elif _mops_detail["status"] == "danger":
+                _risk_flags.append({
+                    "level": "danger", "icon": "🚨",
+                    "title": "MOPS 公開資訊觀測站偵測到高風險關鍵字",
+                    "body": "近期重大訊息中出現以下關鍵字：{}。\n"
+                            "此類訊息通常代表公司面臨重大財務或法律問題，強烈建議暫停進場，"
+                            "可至【🛡️ 個股風險查詢】頁籤查看完整記錄，或前往公開資訊觀測站核實。".format(
+                                "、".join(_mops_detail["danger_kw"][:5]))
+                })
+            elif _mops_detail["status"] == "warning":
+                _risk_flags.append({
+                    "level": "warning", "icon": "⚠️",
+                    "title": "MOPS 偵測到需留意的公司異動",
+                    "body": "近期公告出現以下關鍵字：{}。\n"
+                            "建議至【🛡️ 個股風險查詢】頁籤查看完整記錄，確認公司營運無重大異常。".format(
+                                "、".join(_mops_detail["warn_kw"][:3]))
+                })
+
+            # ── ④-A2：新聞搜尋（補足重大訊息未涵蓋的市場傳聞/治理危機）──
             try:
-                _mops_res = _req.get(
-                    "https://mops.twse.com.tw/mops/web/t05st01",
-                    params={"encodeURIComponent": "1", "step": "1",
-                            "firstin": "1", "off": "1",
-                            "co_id": _code4, "TYPEK": "sii"},
-                    timeout=6, headers={"User-Agent": "Mozilla/5.0"}
-                )
-                _mops_text = _mops_res.text if _mops_res.status_code == 200 else ""
+                _news_detail = search_news_risk(_code4, _code4)
+                if _news_detail["status"] == "danger":
+                    _risk_flags.append({
+                        "level": "danger", "icon": "📰",
+                        "title": "新聞搜尋偵測到高風險訊號",
+                        "body": "近期新聞標題中出現以下關鍵字：{}。\n"
+                                "重大訊息只涵蓋公司法定揭露事項，但經營權鬥爭、檢調動態等"
+                                "媒體報導未必會立即發正式重訊。可至【🛡️ 個股風險查詢】頁籤查看完整新聞列表。".format(
+                                    "、".join(_news_detail["danger_kw"][:5]))
+                    })
+                elif _news_detail["status"] == "warning":
+                    _risk_flags.append({
+                        "level": "warning", "icon": "📰",
+                        "title": "新聞搜尋偵測到需留意的訊號",
+                        "body": "近期新聞標題出現以下關鍵字：{}。\n"
+                                "建議至【🛡️ 個股風險查詢】頁籤查看完整新聞，確認是否為重大事件。".format(
+                                    "、".join(_news_detail["warn_kw"][:3]))
+                    })
             except Exception:
-                _mops_text = ""
-
-            # 備援：TWSE 重訊 RSS
-            if not _mops_text or len(_mops_text) < 100:
-                try:
-                    _rss_res = _req.get(
-                        "https://mops.twse.com.tw/server-java/t05st01Export?co_id={}".format(_code4),
-                        timeout=5, headers={"User-Agent": "Mozilla/5.0"}
-                    )
-                    _mops_text = _rss_res.text if _rss_res.status_code == 200 else ""
-                except Exception:
-                    _mops_text = ""
-
-            if _mops_text:
-                import re as _re4
-                _stripped = _re4.sub(r'<[^>]+>', ' ', _mops_text)
-                _danger_found  = [kw for kw in _mops_danger_kw if _re4.search(kw, _stripped)]
-                _warn_found    = [kw for kw in _mops_warn_kw   if _re4.search(kw, _stripped)]
-                if _danger_found:
-                    _risk_flags.append({
-                        "level": "danger", "icon": "🚨",
-                        "title": "MOPS 公開資訊觀測站偵測到高風險關鍵字",
-                        "body": "近期重大訊息中出現以下關鍵字：{}。\n"
-                                "此類訊息通常代表公司面臨重大財務或法律問題，強烈建議暫停進場，"
-                                "並至公開資訊觀測站（mops.twse.com.tw）查閱完整公告後再評估。".format(
-                                    "、".join(_danger_found[:5]))
-                    })
-                elif _warn_found:
-                    _risk_flags.append({
-                        "level": "warning", "icon": "⚠️",
-                        "title": "MOPS 偵測到需留意的公司異動",
-                        "body": "近期公告出現以下關鍵字：{}。\n"
-                                "建議進場前至公開資訊觀測站查閱最新公告，確認公司營運無重大異常。".format(
-                                    "、".join(_warn_found[:3]))
-                    })
+                pass
 
             # ── ④-B：月營收異動警示（TWSE OpenAPI 公開資料）──
             try:
@@ -7314,78 +7433,99 @@ def _render_metric_card(col, data):
 
 
 with tab_mops:
-    st.markdown(_tab_icon("icon-search", "個股 MOPS 風險查詢", "輸入代碼即可查看完整異常關鍵字、原文摘錄與官方連結"), unsafe_allow_html=True)
+    st.markdown(_tab_icon("icon-search", "個股風險查詢", "MOPS重大訊息 + 新聞搜尋雙層查證"), unsafe_allow_html=True)
     st.caption(
-        "每日警示掃描裡的「MOPS風險」欄只顯示摘要（如「🚨 高風險：掏空、侵占」），"
-        "這裡可以查到完整細節：命中了哪些關鍵字、原文出現的位置、以及直接連結到公開資訊觀測站核實。"
+        "每日警示掃描裡的「風險偵測」欄只顯示摘要，這裡提供完整雙層查證：\n"
+        "① **MOPS重大訊息**——公司法定揭露事項（資料源：TWSE OpenAPI t187ap04_L）\n"
+        "② **新聞搜尋**——市場傳聞、治理危機、檢調動態等未必會發正式重訊但媒體已報導的事件（資料源：Google News）\n\n"
+        "為什麼需要兩層：重大訊息只涵蓋公司主動揭露的法定事項，但像「董座無預警辭職」「經營權鬥爭」"
+        "這類事件，公司不一定第一時間發重訊，新聞搜尋能補上這個盲區。"
     )
 
-    col_mq1, col_mq2 = st.columns([1, 3])
+    col_mq1, col_mq2, col_mq3 = st.columns([1, 1, 2])
     with col_mq1:
         mops_query_code = st.text_input("股票代碼", placeholder="例：2233", key="mops_query_input")
-        mops_query_btn = st.button("🔍 查詢 MOPS 風險", key="mops_query_btn", type="primary")
+    with col_mq2:
+        mops_query_name = st.text_input("股票名稱（新聞搜尋用）", placeholder="例：宇隆", key="mops_query_name")
+    mops_query_btn = st.button("🔍 查詢風險（MOPS + 新聞）", key="mops_query_btn", type="primary")
 
     if mops_query_btn and mops_query_code.strip():
         _code_q = mops_query_code.strip()
-        with st.spinner("查詢 MOPS 公開資訊觀測站中..."):
-            detail = query_mops_risk_detail(_code_q)
+        _name_q = mops_query_name.strip() or _code_q
+
+        with st.spinner("查詢中：MOPS重大訊息 + 新聞搜尋..."):
+            mops_detail = query_mops_risk_detail(_code_q)
+            news_detail = search_news_risk(_code_q, _name_q)
 
         st.markdown("---")
 
-        if detail["error"]:
-            st.warning("⚠️ {}".format(detail["error"]))
-            st.caption("MOPS 在 Streamlit Cloud 環境偶爾會連線失敗，這不代表該股有問題，純粹是查詢技術限制。")
+        # ── 綜合判斷橫幅 ──
+        overall_danger = mops_detail["status"] == "danger" or news_detail["status"] == "danger"
+        overall_warn   = mops_detail["status"] == "warning" or news_detail["status"] == "warning"
+        both_failed    = mops_detail["status"] == "error" and news_detail["status"] == "error"
 
-        elif detail["status"] == "danger":
-            st.error("🚨 偵測到高風險關鍵字")
-            st.markdown("**命中關鍵字：** {}".format("、".join(detail["danger_kw"])))
-            if detail["raw_excerpt"]:
-                st.markdown("**原文摘錄（關鍵字前後文，方便核實）：**")
-                st.code(detail["raw_excerpt"], language=None)
-            st.markdown(
-                "**這代表什麼**：MOPS 重大訊息申報中出現了高風險用詞，通常與財務危機、"
-                "法律問題、董監事異常有關。**強烈建議在進場前親自至官方網站核實完整公告內容**，"
-                "不要只依賴關鍵字比對。"
-            )
-
-        elif detail["status"] == "warning":
-            st.warning("⚠️ 偵測到需留意的異動")
-            st.markdown("**命中關鍵字：** {}".format("、".join(detail["warn_kw"])))
-            if detail["raw_excerpt"]:
-                st.markdown("**原文摘錄：**")
-                st.code(detail["raw_excerpt"], language=None)
-            st.markdown(
-                "**這代表什麼**：出現會計師異動、內控缺失等用詞，未必是嚴重問題"
-                "（例如常規會計師輪調），但建議查看公告確認原因。"
-            )
-
-        elif detail["status"] == "clean":
-            st.success("✅ 未偵測到風險關鍵字")
-            st.caption(
-                "這代表近期 MOPS 重大訊息申報中沒有出現本系統設定的高風險/警示關鍵字，"
-                "**但不代表公司完全沒有風險**——關鍵字比對只能偵測已知模式，"
-                "建議仍搭配財報、月營收等其他資訊綜合判斷。"
-            )
-
+        if overall_danger:
+            st.error("🚨 偵測到高風險訊號（MOPS和/或新聞）")
+        elif overall_warn:
+            st.warning("⚠️ 偵測到需留意的訊號")
+        elif both_failed:
+            st.error("❌ 兩個資料源都查詢失敗，本次無法判斷風險，請務必手動核實")
         else:
-            st.info("ℹ️ 查無相關資料（可能是近期無重大訊息申報，或代碼輸入有誤）")
+            st.success("✅ 兩層查詢均未偵測到風險訊號")
 
+        # ── ① MOPS 重大訊息區塊 ──
+        st.markdown("### ① MOPS 重大訊息（官方法定揭露）")
+        if mops_detail["status"] == "error":
+            st.warning("⚠️ {}".format(mops_detail["error"]))
+            st.caption("資料源失敗，不代表「無異常」，請用下方官方連結手動核實。")
+        elif mops_detail["status"] == "danger":
+            st.markdown("**命中高風險關鍵字：** {}".format("、".join(mops_detail["danger_kw"])))
+        elif mops_detail["status"] == "warning":
+            st.markdown("**命中留意關鍵字：** {}".format("、".join(mops_detail["warn_kw"])))
+
+        if mops_detail.get("matched_records"):
+            st.markdown("**近期重大訊息記錄（共{}筆）：**".format(len(mops_detail["matched_records"])))
+            for rec in mops_detail["matched_records"][:10]:
+                st.markdown("- **{}** {}".format(
+                    rec.get("發言日期", "—"), rec.get("主旨", "（無標題）")))
+        elif mops_detail["status"] == "clean":
+            st.caption("近期無重大訊息申報記錄。")
+
+        st.markdown("🔗 [前往公開資訊觀測站查看完整記錄]({})".format(mops_detail["query_url"]))
+
+        # ── ② 新聞搜尋區塊 ──
         st.markdown("---")
-        st.markdown(
-            "**🔗 官方查詢連結**：[{url}]({url})".format(url=detail["query_url"])
+        st.markdown("### ② 新聞搜尋（市場傳聞 / 治理危機 / 檢調動態）")
+        if news_detail["status"] == "error":
+            st.warning("⚠️ {}".format(news_detail["error"]))
+            st.caption("新聞搜尋失敗，建議自行 Google 搜尋「{} {}」核實。".format(_code_q, _name_q))
+        elif news_detail["status"] == "danger":
+            st.markdown("**命中高風險關鍵字：** {}".format("、".join(news_detail["danger_kw"])))
+        elif news_detail["status"] == "warning":
+            st.markdown("**命中留意關鍵字：** {}".format("、".join(news_detail["warn_kw"])))
+
+        if news_detail.get("headlines"):
+            st.markdown("**近期相關新聞（共{}則）：**".format(len(news_detail["headlines"])))
+            for h in news_detail["headlines"][:10]:
+                st.markdown("- [{}]({})　<span style='color:#888;font-size:12px'>{} · {}</span>".format(
+                    h["title"], h["link"], h["source"], h["date"]), unsafe_allow_html=True)
+        elif news_detail["status"] == "clean":
+            st.caption("近期無相關新聞報導。")
+
+        st.caption(
+            "⚠️ **新聞搜尋為輔助線索**，關鍵字比對可能有誤判（例如新聞標題提到「跌停」但其實是利多消息），"
+            "請務必點開原文確認內容，不要只看關鍵字命中就下結論。"
         )
-        st.caption("點擊連結可直接前往公開資訊觀測站，查看該公司完整的重大訊息歷史記錄。")
 
         with st.expander("📖 本系統偵測的關鍵字清單（點擊展開）"):
-            st.markdown("**🚨 高風險關鍵字**：{}".format("、".join(MOPS_DANGER_KW)))
-            st.markdown("**⚠️ 留意關鍵字**：{}".format("、".join(MOPS_WARN_KW)))
-            st.caption(
-                "這份清單是系統內建的關鍵字比對規則，命中代表近期公告文字中含有這些詞彙，"
-                "不代表自動判定公司有問題，僅作為提醒你進一步查證的線索。"
-            )
+            st.markdown("**MOPS 高風險關鍵字**：{}".format("、".join(MOPS_DANGER_KW)))
+            st.markdown("**MOPS 留意關鍵字**：{}".format("、".join(MOPS_WARN_KW)))
+            st.markdown("**新聞 高風險關鍵字**：{}".format("、".join(NEWS_DANGER_KW)))
+            st.markdown("**新聞 留意關鍵字**：{}".format("、".join(NEWS_WARN_KW)))
+            st.caption("命中關鍵字僅作為線索提醒，不代表自動判定公司有問題，請務必查證原文。")
 
     else:
-        st.info("💡 輸入股票代碼後點擊「查詢 MOPS 風險」，即可看到完整偵測結果。")
+        st.info("💡 輸入股票代碼（建議同時填名稱，新聞搜尋準確度較高），點擊查詢按鈕即可看到雙層風險偵測結果。")
 
 
 with tab_brief:
