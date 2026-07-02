@@ -2954,28 +2954,32 @@ def generate_html_report_scan(df_scan, threshold, scan_date, market_level=None):
             df_sorted["_score_num"] = df_sorted[score_col].apply(_parse_score) if score_col else -1
             df_sorted["_pct_num"]   = df_sorted[pct_col].apply(_parse_pct) if pct_col else 0.0
 
-            # 信號分組優先序
+            # 信號分組優先序（加上強烈）
             def _signal_group(v):
                 s = str(v)
-                if "有效" in s:   return 0
-                if "觀察" in s:   return 1
-                if "弱" in s:     return 2
-                return 3
+                if "強烈" in s: return 0
+                if "有效" in s: return 1
+                if "觀察" in s: return 2
+                if "弱" in s:   return 3
+                return 4
             df_sorted["_grp"] = df_sorted[signal_col].apply(_signal_group)
 
-            # 組內排序鍵：依裁決邏輯
+            # 組內排序（全員辯證統一標準）：
+            # 強烈/有效/觀察：體質高→低，同分時跌幅深→淺
+            # 弱：跌幅深→淺（這組是警示，跌最深的放最上面）
             def _sort_key(row):
                 grp = row["_grp"]
-                if grp == 0:   # 有效：體質分數高→低
-                    return (grp, -row["_score_num"])
-                elif grp == 1: # 觀察：跌幅深→淺（百分比本身是負的，所以數值小=跌更深）
-                    return (grp, row["_pct_num"])
-                else:          # 弱：體質分數低→高
-                    return (grp, row["_score_num"])
+                if grp == 3:   # 弱組：跌幅深→淺
+                    return (grp, row["_pct_num"], -row["_score_num"])
+                else:           # 強烈/有效/觀察：體質高→低，同分時跌幅深→淺
+                    return (grp, -row["_score_num"], row["_pct_num"])
 
-            df_sorted["_sortkey"] = df_sorted.apply(_sort_key, axis=1)
-            df_sorted = df_sorted.sort_values("_sortkey", key=lambda col: col).drop(
-                columns=["_score_num", "_pct_num", "_grp", "_sortkey"])
+            df_sorted["_sortkey_a"] = df_sorted.apply(lambda r: _sort_key(r)[0], axis=1)
+            df_sorted["_sortkey_b"] = df_sorted.apply(lambda r: _sort_key(r)[1], axis=1)
+            df_sorted["_sortkey_c"] = df_sorted.apply(lambda r: _sort_key(r)[2], axis=1)
+            df_sorted = df_sorted.sort_values(["_sortkey_a", "_sortkey_b", "_sortkey_c"]).drop(
+                columns=["_score_num", "_pct_num", "_grp",
+                         "_sortkey_a", "_sortkey_b", "_sortkey_c"])
 
         rows_html = ""
         for _, row in df_sorted.iterrows():
@@ -3383,15 +3387,16 @@ with tab0:
 - **最低觸發次數**：自動標示 ⚠️，觸發次數 ≤ 5次代表樣本不足，勝率參考性有限
     """)
     st.divider()
-    st.markdown("### 🆕 v13 新功能（Coatue思維強化）")
+    st.markdown("### 🆕 v13 新功能（合格標的池篩選）")
     st.markdown("""
 **1️⃣ 標的體質評分卡（15分制）**
 - 三大維度各5分：A獲利能力、B商業模式護城河、C市值與安全邊際
-- 類Coatue區分「好公司跌」vs「爛公司繼續跌」
+- 六條件篩選區分「好公司短暫跌」vs「爛公司繼續跌」
 - ⭐⭐⭐ 核心（13+）｜⭐⭐ 可觀察（9-12）｜⭐ 高風險（5-8）｜⚠️ 資料不足（0-4，yfinance 財報欄位缺失）
 
 **2️⃣ 複合信號強度（每日警示掃描）**
 - 4條件同時評估：連續觸發天數、體質分數、宏觀環境、跌幅深度
+- ⚠️ 「Coatue」一詞僅在早期開發說明中提到其思維啟發，本系統的條件設計基於台股財務數據，非 Coatue 的實際選股框架
 - 🔥強烈｜✅有效｜🔶觀察｜⚪弱 四個等級，自動排序
 
 **3️⃣ 進場品質評估（個股回測）**
@@ -5002,7 +5007,7 @@ with tab6:
 
 
     # ── 六個條件說明 ──
-    with st.expander("📖 六個篩選條件說明"):
+    with st.expander("📖 六個篩選條件說明（價值投資財務門檻，非 Coatue 條件）"):
         st.markdown("""
 | 條件 | 門檻 | 目的 |
 |------|------|------|
@@ -5135,7 +5140,7 @@ with tab6:
         display_cols = [c for c in display_cols if c in df_pool.columns]
 
         # ── 體質評分說明 ──
-        st.markdown("### 📊 Coatue體質評分卡說明（15分制）")
+        st.markdown("### 📊 體質評分卡說明（15分制）")
         with st.expander("📖 評分邏輯說明（點擊展開）"):
             st.markdown("""
 | 維度 | 滿分 | 評分項目 | 滿分條件 |
@@ -5145,7 +5150,7 @@ with tab6:
 | **C 市值與安全邊際** | 5分 | C1 PB/ROE複合估值（0～3分）＋C2股價流動性（0～2分） | PB/ROE<0.10且股價>10 |
 
 **等級對照：**
-- ⭐⭐⭐ **核心標的**（13～15分）：Coatue最愛型，體質優秀，觸發時優先進場
+- ⭐⭐⭐ **核心標的**（13～15分）：體質優秀（ROE高+負債低+估值合理），觸發時優先進場
 - ⭐⭐ **可觀察**（9～12分）：體質尚可，可進場但倉位控制
 - ⭐ **高風險**（5～8分）：基本面偏弱，謹慎；市場過熱時不宜進場
 - 💀 **Broken Model**（0～4分）：類Robinhood/Lemonade，跌有原因，不宜進場
@@ -5497,14 +5502,23 @@ with tab1:
                 c4_ok = ret_val <= (threshold1 - 2)
                 cond_met = sum([c1_ok, c2_ok, c3_ok, c4_ok])
 
-                if cond_met == 4:
+                # 信號判斷邏輯（以體質分數為核心）：
+                # 體質分數 < 9 → 直接弱，不管其他條件
+                # 體質分數 ≥ 9（公司體質OK）才進一步看市場條件
+                #   強烈：體質好 + 市場正常 + 深度超跌 + 新進
+                #   有效：體質好 + 深度超跌（核心兩條，市場非必要）
+                #   觀察：體質好，但跌幅不夠深或市場偏熱
+                #   弱：體質分數 < 9，不建議進場
+                if not c2_ok:
+                    signal = "⚪ 弱"
+                elif cond_met == 4:
                     signal = "🔥 強烈"
-                elif cond_met == 3:
+                elif c2_ok and c4_ok and c3_ok:
                     signal = "✅ 有效"
-                elif cond_met == 2:
+                elif c2_ok and c4_ok:
                     signal = "🔶 觀察"
                 else:
-                    signal = "⚪ 弱"
+                    signal = "🔶 觀察"
 
                 rows.append({
                     "信號": signal,
@@ -5516,7 +5530,7 @@ with tab1:
                     "收盤價": r.get("最新收盤價", ""),
                     "10日報酬": r.get("滾動10日報酬率", ""),
                     "連續天數": r.get("連續觸發天數", ""),
-                    "①新進觸發": "✅" if c1_ok else "❌",
+
                     "②體質合格": "✅" if c2_ok else ("—" if not has_pool else "❌"),
                     "③市場正常": "✅" if c3_ok else "❌",
                     "④深度超跌": "✅" if c4_ok else "❌",
@@ -5526,7 +5540,32 @@ with tab1:
             df_show = pd.DataFrame(rows)
             signal_order = {"🔥 強烈": 0, "✅ 有效": 1, "🔶 觀察": 2, "⚪ 弱": 3}
             df_show["_rank"] = df_show["信號"].map(signal_order).fillna(9)
-            df_show = df_show.sort_values(["_rank", "10日報酬"]).reset_index(drop=True)
+
+            def _parse_score_sort(v):
+                try: return -float(str(v).replace("*","").split("/")[0])  # 負號讓高分在前
+                except: return 0
+
+            def _parse_pct_sort(v):
+                try: return float(str(v).replace("%",""))  # 越負越深，排在前
+                except: return 0
+
+            df_show["_score_sort"] = df_show["體質分數"].apply(_parse_score_sort)
+            df_show["_pct_sort"]   = df_show["10日報酬"].apply(_parse_pct_sort)
+
+            # 排序邏輯（全員辯證結論）：
+            # 強烈/有效/觀察：體質高→低（核心），同分時跌幅深→淺（次要）
+            # 弱：跌幅深→淺（提醒最危險的在最上面，這組是警示不是進場）
+            def _inner_sort_fn(r):
+                if r["_rank"] == 3:   # 弱組
+                    return r["_pct_sort"]          # 跌幅深→淺
+                else:                  # 強烈/有效/觀察
+                    return r["_score_sort"]         # 體質高→低（主鍵）
+
+            df_show["_inner_sort"] = df_show.apply(_inner_sort_fn, axis=1)
+
+            # 弱組次要鍵用跌幅，其他組次要鍵也用跌幅（同體質時跌更深的優先）
+            df_show = df_show.sort_values(
+                ["_rank", "_inner_sort", "_pct_sort"]).reset_index(drop=True)
 
             # ── 風險偵測：MOPS 重大訊息 + Google News 新聞搜尋（雙層）──
             # 僅對「強烈／有效／觀察」組查詢（弱組本來就要排除，不浪費資源）
@@ -5574,7 +5613,9 @@ with tab1:
             else:
                 df_show["風險偵測"] = "—"
 
-            df_show = df_show.drop(columns=["_rank", "_signal_raw"])
+            df_show = df_show.drop(columns=["_rank", "_signal_raw",
+                                             "_score_sort", "_pct_sort", "_inner_sort"],
+                                    errors="ignore")
             st.caption("💡 想看「風險偵測」欄位的完整詳情（含新聞標題、重訊記錄）？前往【🛡️ 個股風險查詢】頁籤輸入代碼查看。")
 
             # ── 統計摘要 ──
@@ -5599,7 +5640,7 @@ with tab1:
 股票剛開始觸發跌幅門檻，歷史數據顯示第1天進場的勝率最高。若已連續觸發超過3天，代表可能是持續下跌趨勢而非短暫超跌。
 
 **② 體質合格（體質分數 ≥ 9/15分）**
-類Coatue邏輯：區分「好公司短暫跌」vs「爛公司繼續跌」。9分以上代表獲利、護城河、安全邊際至少有兩項表現正常。需先建立合格標的池才會顯示分數。
+體質評分邏輯：區分「好公司短暫跌」vs「爛公司繼續跌」。9分以上代表獲利、護城河、安全邊際至少有兩項表現正常。評分以 ROE / EPS 穩定性 / 負債比 / 本淨比等財務指標為基礎，不需先建立標的池，可即時計算（標示 * 號）。
 
 **③ 市場環境正常（市場熱度 ≤ 7級/10）**
 台股大盤相對240日均線的偏離程度。7級以下代表市場在正常到輕微過熱範圍，觸發後均值回歸機率高。現在是{}級，{}。
@@ -5619,7 +5660,17 @@ with tab1:
 
             # ── 表格 ──
             st.markdown(show_html.__doc__ or "")
-            show_html(df_show)
+            # 網頁版：用 st.dataframe（有原生點擊排序功能）
+            # 先把下載用的欄位移除，只顯示有意義的欄
+            _display_cols = [c for c in df_show.columns
+                             if c not in ["_rank","_score_sort","_pct_sort","_inner_sort","_signal_raw"]]
+            _df_display = df_show[_display_cols].copy()
+            st.dataframe(
+                _df_display,
+                use_container_width=True,
+                hide_index=True,
+                height=min(50 + len(_df_display) * 35, 600),
+            )
             col_scan_dl1, col_scan_dl2 = st.columns(2)
             with col_scan_dl1:
                 st.download_button("📥 下載CSV", df_show.to_csv(index=False).encode("utf-8-sig"), "alert_scan.csv", "text/csv")
@@ -6973,11 +7024,24 @@ with tab4:
             rows.append(row)
 
         df_combined = pd.DataFrame(rows)
-        df_combined = df_combined.sort_values(
-            "-10%",
-            key=lambda col: col.map(lambda v: float(str(v).replace("%","").replace("⚠️","")) if v not in ["---", "未評"] else 0),
-            ascending=False
-        ).reset_index(drop=True)
+        # 排序：各標的在所有門檻裡的「最佳勝率」高→低
+        # 避免單一門檻偏見（有些標的 -15% 勝率極高但 -10% 普通）
+        def _best_wr(row):
+            best = 0
+            for col in thr_cols:
+                v = str(row.get(col, "0")).replace("%","").replace("⚠️","")
+                try:
+                    best = max(best, float(v))
+                except Exception:
+                    pass
+            return best
+        thr_cols_for_sort = [str(thr) + "%" for thr in THRESHOLDS]
+        df_combined["_best_wr"] = df_combined.apply(
+            lambda r: _best_wr(r) if set(thr_cols_for_sort).issubset(df_combined.columns) else 0,
+            axis=1
+        )
+        df_combined = df_combined.sort_values("_best_wr", ascending=False).drop(
+            columns=["_best_wr"]).reset_index(drop=True)
 
         thr_cols = [str(thr) + "%" for thr in THRESHOLDS]
 
@@ -7003,7 +7067,7 @@ with tab4:
         )
         st.caption(
             "橘色 ≥ 80%　淡黃色 ≥ 70%　紅色 ≥ 60%　⚠️ = 觸發次數 ≤ 5次樣本不足\n"
-            "依 -10% 門檻勝率排序｜橫向看同一檔在各門檻的表現，找在多個門檻都穩定高勝率的股票"
+            "依「最佳門檻勝率」高→低排序（取各門檻最高值），避免單一門檻偏見｜橫向看同一檔在各門檻的穩定性"
         )
         # 體質分數欄：未評分的先顯示
         display_rank_cols = ["代碼", "名稱", "產業別", "體質分數", "體質等級"] + thr_cols
