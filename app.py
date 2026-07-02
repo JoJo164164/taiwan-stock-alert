@@ -1888,21 +1888,113 @@ def _render_smart_analysis(code, prices_dict, df_win, df_avg):
 本解讀由系統根據15年回測數據自動生成，不構成投資建議。實際操作請結合基本面與市場環境判斷。
 </div></div>""", unsafe_allow_html=True)
 
+# ══════════════════════════════════════════════════════════
+# MOPS 重大訊息關鍵字（根據 MOPS 重訊主旨的實際用語設計）
+# 注意：這邊用詞要貼近「MOPS 主旨欄位的官方文字」，不是口語
+# ══════════════════════════════════════════════════════════
 MOPS_DANGER_KW = [
-    "掏空", "侵占", "背信", "違約", "停業", "清算", "破產", "撤銷上市",
-    "警示", "全額交割", "異常", "調查", "起訴", "財務困難",
-    "會計師出具保留", "無法繼續", "重大虧損", "財報重編",
+    # 財務危機
+    "掏空", "侵占", "背信", "詐欺", "違約", "停業",
+    "清算", "破產", "聲請重整", "無法繼續",
+    "財務困難", "財報重編", "重大虧損", "業績大幅衰退",
+    # 法律/監管
+    "撤銷上市", "廢止上市", "警示股票", "全額交割",
+    "配合檢調", "搜索調查", "司法調查", "遭檢察署",
+    "起訴", "聲請假扣押", "假處分",
+    # 會計師
+    "會計師出具保留", "會計師出具否定", "無法表示意見",
+    "會計師辭任", "更換會計師", "更換簽證會計師",
+    # 董監事/高管異動（MOPS 主旨用語）
+    "辭任董事長", "辭任總經理", "辭任財務長", "辭任執行長",
+    "解任董事", "撤換董事", "臨時董事會",
+    "董事長異動", "董事會改選", "重大人事異動",
+    # 股權/大股東
+    "申報轉讓", "強制執行", "股票質押遭強制",
+    "主要股東", "持股低於", "公開收購",
+    # 營運
+    "主要客戶終止", "重大合約終止", "工廠停工", "停產",
+    "裁員", "歇業", "暫停營業",
+    # 法說會異動（基金經理人特別強調）
+    "法說會取消", "法說會延期", "法說會暫停", "法人說明會取消",
 ]
+
 MOPS_WARN_KW = [
-    "更換會計師", "更換簽證", "內控缺失", "內部稽核",
-    "相關人員異動", "主要客戶.*流失", "重大合約.*終止",
+    # 治理
+    "內控缺失", "內部控制", "內部稽核異常",
+    "更換簽證", "更換審計", "會計師事務所變更",
+    # 人事
+    "發言人異動", "財務主管異動", "會計主管異動",
+    "董事辭任", "監察人辭任", "獨立董事辭任",
+    "代理董事長", "代理總經理",
+    # 合約/客戶
+    "主要客戶調整", "合約異動", "訂單調整",
+    # 財務
+    "現金增資", "可轉換公司債", "債務展期",
+    "流動比率", "速動比率", "負債比率偏高",
+    # 處置措施
+    "交易所公布", "注意股票", "異常股票",
 ]
+
+# ══════════════════════════════════════════════════════════
+# 新聞搜尋關鍵字（根據媒體實際報導用語設計，比 MOPS 更口語化）
+# 注意：這邊要貼近「媒體標題的口語化用詞」
+# ══════════════════════════════════════════════════════════
+NEWS_DANGER_KW = [
+    # 犯罪/法律（媒體用語）
+    "掏空", "侵占", "背信", "詐欺", "弊案",
+    "檢調", "搜索", "約談", "羈押", "起訴", "判刑",
+    "違規", "不法", "非法",
+    # 公司治理危機（媒體用語）
+    "閃辭", "無預警辭", "突然辭", "緊急辭",
+    "經營權爭", "大股東失和", "經營權糾紛",
+    "惡意收購", "強行入主", "粗暴", "奪權",
+    # 法說/溝通異常（媒體用語）
+    "法說會取消", "法說會喊卡", "法說會緊急取消",
+    "拒絕媒體", "不接受訪問",
+    # 股價異常（媒體用語）
+    "連續跌停", "跌停鎖死", "崩跌", "暴跌",
+    "股價腰斬", "股價崩潰",
+    # 財務危機（媒體用語）
+    "財報造假", "帳目不清", "財務黑洞",
+    "票據跳票", "現金危機",
+    # 監管處置
+    "全額交割", "下市", "停止買賣", "交易所處置",
+    "金管會", "證交所警示",
+    # 員工/供應商警訊
+    "員工欠薪", "供應商停供", "客戶出走",
+    "裁員潮", "大規模離職",
+    # KY/境外特別風險
+    "KY股疑雲", "境外公司不透明",
+]
+
+NEWS_WARN_KW = [
+    # 高管異動（媒體用語）
+    "董事長辭", "總經理辭", "執行長辭", "財務長辭",
+    "高層震盪", "人事大換血", "管理層異動",
+    "創辦人出走", "元老離職",
+    # 股東動向
+    "大股東減持", "大股東出脫", "外資大賣",
+    "外資連續賣超", "投信出清",
+    "融資斷頭", "融資強制回補",
+    # 市場訊號
+    "股價重挫", "單日暴跌", "跌破支撐",
+    "三大法人齊賣", "主力出貨",
+    # 財務警示（媒體角度）
+    "獲利大減", "虧損擴大", "毛利率崩跌",
+    "現金流轉負", "應收帳款暴增",
+    # 治理警示
+    "更換會計師", "審計師異動", "內控問題",
+    "董監持股質押", "質押比偏高",
+    # 業務警示
+    "失去大客戶", "主力客戶轉單", "訂單驟減",
+    "產能利用率暴跌",
+]
+
 
 @st.cache_data(ttl=3600)
 def get_all_mops_announcements():
     """
-    一次抓取全市場「重大訊息」清單（TWSE OpenAPI t187ap04_L，正式開放資料 API）。
-    比逐檔查詢可靠：不需要表單/session，單一 JSON 回應含全部上市公司近期重訊。
+    一次抓取全市場「重大訊息」清單（TWSE OpenAPI t187ap04_L）。
     回傳：{ 'ok': bool, 'data': list, 'error': str, 'fetched_at': str }
     """
     result = {"ok": False, "data": [], "error": "", "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
@@ -1928,17 +2020,54 @@ def get_all_mops_announcements():
     return result
 
 
-NEWS_DANGER_KW = [
-    "掏空", "侵占", "背信", "違約", "停業", "清算", "破產", "搜索", "搜索調查",
-    "檢調", "起訴", "羈押", "弊案", "詐欺", "違規", "證交所.*處置",
-    "全額交割", "下市", "閃辭", "無預警辭", "經營權.*爭", "大股東.*失和",
-    "法說會.*取消", "法說會.*喊卡", "財報.*重編", "會計師.*保留",
-]
-NEWS_WARN_KW = [
-    "董事長.*辭", "總經理.*辭", "高層.*異動", "人事.*震盪",
-    "股價.*重挫", "連續跌停", "外資.*調節", "大股東.*減持",
-    "內控.*缺失", "更換會計師",
-]
+@st.cache_data(ttl=3600)
+def get_director_holdings():
+    """t187ap03_L：董監事持股申報（最新快照），用於偵測董監事大量申報轉讓或持股比例異常"""
+    try:
+        res = requests.get(
+            "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+            timeout=15, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+        )
+        body  = res.text or ""
+        ctype = res.headers.get("Content-Type", "")
+        is_json = "application/json" in ctype or body.strip().startswith("[")
+        if res.status_code == 200 and is_json:
+            data = res.json()
+            if isinstance(data, list) and len(data) > 0:
+                lookup = {}
+                for d in data:
+                    code = str(d.get("公司代號", "")).strip()
+                    if code:
+                        lookup.setdefault(code, []).append(d)
+                return {"ok": True, "data": lookup}
+        return {"ok": False, "data": {}, "error": "連線失敗或空資料"}
+    except Exception as e:
+        return {"ok": False, "data": {}, "error": str(e)[:60]}
+
+
+@st.cache_data(ttl=3600)
+def get_major_shareholder_holdings():
+    """t187ap08_L：持股 5%+ 大股東申報（最新快照），用於偵測大股東大量轉讓"""
+    try:
+        res = requests.get(
+            "https://openapi.twse.com.tw/v1/opendata/t187ap08_L",
+            timeout=15, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+        )
+        body  = res.text or ""
+        ctype = res.headers.get("Content-Type", "")
+        is_json = "application/json" in ctype or body.strip().startswith("[")
+        if res.status_code == 200 and is_json:
+            data = res.json()
+            if isinstance(data, list) and len(data) > 0:
+                lookup = {}
+                for d in data:
+                    code = str(d.get("公司代號", "")).strip()
+                    if code:
+                        lookup.setdefault(code, []).append(d)
+                return {"ok": True, "data": lookup}
+        return {"ok": False, "data": {}, "error": "連線失敗或空資料"}
+    except Exception as e:
+        return {"ok": False, "data": {}, "error": str(e)[:60]}
 
 @st.cache_data(ttl=1800)
 def search_news_risk(code, name):
@@ -2009,63 +2138,90 @@ def search_news_risk(code, name):
 
 def query_mops_risk_detail(code):
     """
-    查詢單一個股的 MOPS 重大訊息風險偵測完整結果。
-    使用 TWSE OpenAPI t187ap04_L（全市場重訊清單）篩選出該代碼的記錄，
-    避免逐檔 GET 表單頁面（該方式無法取得真實資料，會導致假陰性）。
-
-    回傳 dict：{ status, danger_kw, warn_kw, matched_records, query_url, error, data_source_ok }
-    status: 'danger' / 'warning' / 'clean' / 'no_data' / 'error'
+    查詢單一個股的多層風險偵測完整結果：
+    ① MOPS 重大訊息（t187ap04_L）
+    ② 董監事持股申報（t187ap03_L）—偵測大量申報轉讓
+    ③ 大股東5%+持股（t187ap08_L）—偵測大股東換手
     """
+    import re as _re
     result = {
-        "status": "no_data", "danger_kw": [], "warn_kw": [],
-        "matched_records": [], "query_url": "", "error": "", "data_source_ok": False
+        "status": "no_data",
+        "danger_kw": [], "warn_kw": [],
+        "matched_records": [],
+        "director_flags": [],
+        "shareholder_flags": [],
+        "query_url": "https://mops.twse.com.tw/mops/web/t05st01?co_id={}".format(code),
+        "error": "", "data_source_ok": False
     }
-    query_url = "https://mops.twse.com.tw/mops/web/t05st01?co_id={}".format(code)
-    result["query_url"] = query_url
-
-    all_data = get_all_mops_announcements()
-
-    if not all_data["ok"]:
-        # ── 重要：資料源失敗時明確標示 error，絕不能誤判為「無異常」 ──
-        result["status"] = "error"
-        result["error"] = "MOPS 開放資料 API 無法取得（{}）。本次查詢不可信，請改用下方官方連結手動核實。".format(
-            all_data["error"])
-        return result
-
-    result["data_source_ok"] = True
-
-    # 從全市場清單篩選出該代碼的記錄
+    any_source_ok = False
     code_str = str(code).strip()
-    matched = [d for d in all_data["data"]
-               if str(d.get("公司代號", "")).strip() == code_str]
 
-    if not matched:
-        # 在這份重訊清單裡沒有該代碼的記錄 = 近期無重大訊息申報，這是「乾淨」的正確判斷
-        result["status"] = "clean"
-        return result
-
-    result["matched_records"] = matched
-
-    # 對每筆重訊的標題+事實內容做關鍵字比對
-    full_text = " ".join(
-        "{} {}".format(d.get("發言日期", ""), d.get("事實發生日", "") or "") +
-        " " + str(d.get("主旨", "")) for d in matched
-    )
-
-    danger = [kw for kw in MOPS_DANGER_KW if kw.replace(".*", "") in full_text or
-              __import__("re").search(kw, full_text)]
-    warn   = [kw for kw in MOPS_WARN_KW if kw.replace(".*", "") in full_text or
-              __import__("re").search(kw, full_text)]
-
-    result["danger_kw"] = danger
-    result["warn_kw"] = warn
-
-    if danger:
-        result["status"] = "danger"
-    elif warn:
-        result["status"] = "warning"
+    # ── ① MOPS 重大訊息 ──
+    all_data = get_all_mops_announcements()
+    if all_data["ok"]:
+        any_source_ok = True
+        matched = [d for d in all_data["data"]
+                   if str(d.get("公司代號", "")).strip() == code_str]
+        result["matched_records"] = matched
+        if matched:
+            full_text = " ".join(str(d.get("主旨", "")) for d in matched)
+            danger = [kw for kw in MOPS_DANGER_KW if _re.search(kw, full_text)]
+            warn   = [kw for kw in MOPS_WARN_KW   if _re.search(kw, full_text)]
+            result["danger_kw"] = danger
+            result["warn_kw"]   = warn
     else:
+        result["error"] += "重大訊息：{}；".format(all_data["error"])
+
+    # ── ② 董監事持股申報 ──
+    dir_data = get_director_holdings()
+    if dir_data["ok"]:
+        any_source_ok = True
+        flags = []
+        for rec in dir_data["data"].get(code_str, []):
+            transfer = str(rec.get("申報轉讓股數", "0") or "0").replace(",", "")
+            name = rec.get("職稱", "") or rec.get("姓名", "") or ""
+            try:
+                n = int(transfer)
+                if n > 100000:
+                    flags.append("{}申報轉讓{}張".format(name, n // 1000))
+            except Exception:
+                pass
+        if flags:
+            result["director_flags"] = flags
+            if "董監事申報轉讓" not in result["warn_kw"]:
+                result["warn_kw"].append("董監事申報轉讓")
+
+    # ── ③ 大股東5%+持股 ──
+    sh_data = get_major_shareholder_holdings()
+    if sh_data["ok"]:
+        any_source_ok = True
+        flags = []
+        for rec in sh_data["data"].get(code_str, []):
+            change = str(rec.get("本次申報增減股數", "0") or "0").replace(",","").replace("+","")
+            name = rec.get("持股人姓名", "") or rec.get("持股人名稱", "") or ""
+            try:
+                n = int(change)
+                if n < -500000:
+                    flags.append("大股東{}減持{}張".format(name, abs(n) // 1000))
+            except Exception:
+                pass
+        if flags:
+            result["shareholder_flags"] = flags
+            if "大股東大量減持" not in result["warn_kw"]:
+                result["warn_kw"].append("大股東大量減持")
+
+    result["data_source_ok"] = any_source_ok
+
+    # 綜合判斷
+    if result["danger_kw"]:
+        result["status"] = "danger"
+    elif result["warn_kw"] or result["director_flags"] or result["shareholder_flags"]:
+        result["status"] = "warning"
+    elif any_source_ok:
         result["status"] = "clean"
+    else:
+        result["status"] = "error"
+        result["error"] = result["error"] or "所有資料源均查詢失敗"
 
     return result
 
@@ -7490,6 +7646,12 @@ with tab_mops:
                     rec.get("發言日期", "—"), rec.get("主旨", "（無標題）")))
         elif mops_detail["status"] == "clean":
             st.caption("近期無重大訊息申報記錄。")
+
+        if mops_detail.get("director_flags"):
+            st.warning("📋 **董監事持股異動**：{}".format("；".join(mops_detail["director_flags"])))
+
+        if mops_detail.get("shareholder_flags"):
+            st.warning("📋 **大股東持股異動**：{}".format("；".join(mops_detail["shareholder_flags"])))
 
         st.markdown("🔗 [前往公開資訊觀測站查看完整記錄]({})".format(mops_detail["query_url"]))
 
