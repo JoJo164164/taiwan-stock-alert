@@ -2285,9 +2285,8 @@ def get_industry_lookup():
 def get_all_tw_stocks():
     """
     取得台股全市場股票清單。
-    方法1：TWSE openapi（上市）/ TPEX openapi（上櫃）
-    方法2：TWSE 失敗時，用 yfinance 批次掃描台股代碼區間（動態抓完整清單）
-    方法3：最終備援，內建靜態清單
+    方法1：TWSE openapi（上市）/ TPEX openapi（上櫃）—正常情況取得約 1368 + 1012 = 2380 檔
+    方法2：TWSE/TPEX 失敗時，fallback 到內建靜態清單（約 745 上市 + 24 上櫃）
     """
     import yfinance as yf
     industry_lookup = get_industry_lookup()
@@ -2316,83 +2315,12 @@ def get_all_tw_stocks():
     except Exception:
         pass
 
-    # ── 上市方法2：TWSE 失敗時，用 yfinance 批次掃描動態建清單 ──
-    if not listed_stocks:
-        try:
-            # 台股代碼區間：主要個股 1101-9999，ETF 0050-00999
-            # 每次批次下載 50 檔，yfinance 會自動過濾無效代碼
-            import itertools
-
-            # 產生候選代碼（含已知主要區間）
-            candidate_codes = []
-            # 主要個股區間
-            for n in range(1101, 4000):
-                candidate_codes.append(f"{n:04d}.TW")
-            for n in range(4100, 4200):
-                candidate_codes.append(f"{n:04d}.TW")
-            for n in range(4500, 4600):
-                candidate_codes.append(f"{n:04d}.TW")
-            for n in range(5000, 5600):
-                candidate_codes.append(f"{n:04d}.TW")
-            for n in range(6000, 6800):
-                candidate_codes.append(f"{n:04d}.TW")
-            for n in range(8000, 8400):
-                candidate_codes.append(f"{n:04d}.TW")
-            for n in range(9000, 9999):
-                candidate_codes.append(f"{n:04d}.TW")
-            # ETF
-            for n in range(50, 100):
-                candidate_codes.append(f"00{n}.TW")
-            for n in range(600, 1000):
-                candidate_codes.append(f"00{n}B.TW")
-                candidate_codes.append(f"00{n}L.TW")
-                candidate_codes.append(f"00{n}R.TW")
-                candidate_codes.append(f"00{n}.TW")
-
-            # 批次下載（每批100個，超時8秒）
-            valid_codes = set()
-            BATCH = 100
-            MAX_BATCHES = 40  # 最多掃 4000 個代碼，避免太慢
-
-            for i in range(0, min(len(candidate_codes), BATCH * MAX_BATCHES), BATCH):
-                batch = candidate_codes[i:i+BATCH]
-                try:
-                    df_batch = yf.download(
-                        batch, period="1d", progress=False,
-                        auto_adjust=True, timeout=8
-                    )
-                    if not df_batch.empty:
-                        # 有收盤價的才是有效代碼
-                        if hasattr(df_batch.columns, 'levels'):
-                            # MultiIndex columns
-                            close_cols = df_batch.get('Close', df_batch.get('close', None))
-                            if close_cols is not None:
-                                for col in close_cols.columns:
-                                    if close_cols[col].dropna().shape[0] > 0:
-                                        valid_codes.add(str(col))
-                        else:
-                            for col in df_batch.columns:
-                                valid_codes.add(str(col))
-                except Exception:
-                    continue
-
-            # 轉成 stocks 格式
-            for full_code in sorted(valid_codes):
-                code = full_code.replace(".TW", "").replace(".TWO", "")
-                market = "上市" if full_code.endswith(".TW") else "上櫃"
-                # 從 yfinance info 取名稱
-                name = code  # 先用代碼當名稱
-                t = classify_code(code)
-                industry = industry_lookup.get(code, "")
-                group = get_industry_group(industry, t)
-                listed_stocks.append({
-                    "code": code, "name": name, "market": market,
-                    "type": t, "industry": industry, "group": group
-                })
-        except Exception:
-            pass
-
-    # ── 上市方法3：最終 fallback，用內建靜態清單 ──
+    # ── 上市方法2：TWSE 失敗時，直接用內建靜態清單（745個主要個股）──
+    # 移除了原本的 yfinance 批次掃描方案，原因：
+    # 1. 批次掃描耗時數分鐘，在 Streamlit Cloud 上不穩定
+    # 2. 每批超時失敗導致只掃到部分代碼，反而比內建清單少
+    # 3. 掃到的代碼名稱只有代碼本身，沒有中文名稱
+    # 內建清單745個 + TPEX的1010個上櫃 = 共約1755檔，已覆蓋主要標的
     if not listed_stocks:
         builtin = _get_builtin_stock_list()
         for code, name, market in builtin:
