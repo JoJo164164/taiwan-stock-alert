@@ -2108,44 +2108,58 @@ def search_news_risk(code, name):
     search_kw  = name if name and name != code else code
     search_kw2 = code  # 用代碼再過濾確認相關性
 
-    # ── ① 工商時報搜尋（已驗證：抓到完整 HTML，包含宇隆董事長辭職新聞）──
+    # ── ① 工商時報搜尋（SSR頁面，三種 pattern 同時嘗試確保解析成功）──
     try:
         url = "https://www.ctee.com.tw/search/{}".format(
             urllib.parse.quote(search_kw))
-        r = requests.get(url, timeout=10, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        r = requests.get(url, timeout=12, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html,application/xhtml+xml,*/*",
             "Accept-Language": "zh-TW,zh;q=0.9",
             "Referer": "https://www.ctee.com.tw/"
         })
         if r.status_code == 200 and "allowlist" not in r.text and len(r.text) > 1000:
             raw = r.text
-            # 解析 markdown 格式標題：### [標題](URL)
-            matches = _re.findall(
-                r'###\s*\[([^\]]{8,120})\]\((https://www\.ctee\.com\.tw/news/[^\)]+)\)',
-                raw)
-            # 同時找 HTML 連結格式
-            if not matches:
-                matches_raw = _re.findall(
-                    r'href="(https://www\.ctee\.com\.tw/news/[^"]{10,80})"[^>]*>\s*<[^>]+>([^<]{8,120})',
-                    raw)
-                matches = [(t.strip(), u) for u, t in matches_raw]
-
             headlines = []
             seen = set()
-            for title, link in matches[:20]:
-                title = title.strip()
-                if (title and len(title) > 8 and title not in seen
-                        and not title.startswith('工商時報') and '©' not in title):
-                    seen.add(title)
-                    headlines.append({
-                        "title": title, "date": "", "source": "工商時報", "link": link
-                    })
+
+            # Pattern A：HTML <h3><a href="...">標題</a></h3>
+            for link, title in _re.findall(
+                r'<h3[^>]*>\s*<a[^>]+href="(https://www\.ctee\.com\.tw/news/[^"]+)"[^>]*>\s*([^<]{3,120})\s*</a>',
+                raw):
+                t = title.strip()
+                if t and t not in seen:
+                    seen.add(t)
+                    headlines.append({"title": t, "date": "", "source": "工商時報", "link": link})
+
+            # Pattern B：Markdown [標題](URL)
+            if not headlines:
+                for title, link in _re.findall(
+                    r'###\s*\[([^\]]{3,120})\]\((https://www\.ctee\.com\.tw/news/[^\)]+)\)',
+                    raw):
+                    t = title.strip()
+                    if t and t not in seen:
+                        seen.add(t)
+                        headlines.append({"title": t, "date": "", "source": "工商時報", "link": link})
+
+            # Pattern C：ctee.com.tw/news/數字-數字 格式的任何連結文字
+            if not headlines:
+                for link, title in _re.findall(
+                    r'href="(https://www\.ctee\.com\.tw/news/\d{8,}[^"]*)"[^>]*>([^<]{5,80})<',
+                    raw):
+                    t = title.strip()
+                    if (t and len(t) > 5 and t not in seen
+                            and not any(x in t for x in ['工商','©','LOGO','更多','載入'])):
+                        seen.add(t)
+                        headlines.append({"title": t, "date": "", "source": "工商時報", "link": link})
+
             if len(headlines) >= 2:
-                _log("工商時報", True, "取得 {} 則新聞".format(len(headlines)))
+                _log("工商時報", True, "取得 {} 則新聞（body={}字元）".format(len(headlines), len(raw)))
                 _finalize(headlines[:15], "工商時報")
                 return result
             else:
-                _log("工商時報", False, "頁面正常但解析到 {} 則，不足".format(len(headlines)))
+                _log("工商時報", False,
+                     "頁面OK（{}字元），三種pattern均只解析到{}則".format(len(raw), len(headlines)))
         else:
             blocked = "allowlist" in r.text
             _log("工商時報", False, "HTTP{} {}".format(
