@@ -2110,27 +2110,44 @@ def search_news_risk(code, name):
 
     # ── ① 鉅亨網 API ──
     try:
-        url = "https://api.cnyes.com/media/api/v1/search?keyword={}&limit=20&page=1".format(
-            requests.utils.quote("{} {}".format(code, name)))
-        r = requests.get(url, timeout=8, headers={
-            "User-Agent": "Mozilla/5.0", "Referer": "https://www.cnyes.com/"})
+        import time as _time
+        end_ts   = int(_time.time())
+        start_ts = end_ts - 90 * 86400  # 近90天
+        url = "https://api.cnyes.com/media/api/v1/newslist/category/tw_stock"
+        params = {
+            "startAt": start_ts,
+            "endAt":   end_ts,
+            "limit":   30,
+            "page":    1,
+        }
+        r = requests.get(url, params=params, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer":    "https://news.cnyes.com/"
+        })
         if r.status_code == 200 and "allowlist" not in r.text:
-            data = r.json()
+            data  = r.json()
             items = data.get("items", {}).get("data", []) or []
-            if items:
-                headlines = []
-                for item in items[:15]:
-                    title = item.get("title", "") or ""
-                    pub   = item.get("publishAt", "")
+            # 用代碼或名稱篩選相關新聞
+            keywords = [code, name] if name else [code]
+            matched = []
+            for item in items:
+                title   = item.get("title", "") or ""
+                content = item.get("summary", "") or item.get("content", "") or ""
+                if any(kw in title or kw in content for kw in keywords):
+                    pub = item.get("publishAt", "")
                     if isinstance(pub, (int, float)):
                         pub = _dt.fromtimestamp(pub).strftime("%Y-%m-%d")
-                    link  = "https://news.cnyes.com/news/id/{}".format(item.get("newsId", ""))
-                    headlines.append({"title": title, "date": str(pub)[:10], "source": "鉅亨網", "link": link})
-                _log("鉅亨網", True, "取得 {} 則新聞".format(len(headlines)))
-                _finalize(headlines, "鉅亨網")
+                    link = "https://news.cnyes.com/news/id/{}".format(item.get("newsId", ""))
+                    matched.append({"title": title, "date": str(pub)[:10],
+                                    "source": "鉅亨網", "link": link})
+            if matched:
+                _log("鉅亨網", True, "取得 {} 則相關新聞".format(len(matched)))
+                _finalize(matched, "鉅亨網")
                 return result
+            elif items:
+                _log("鉅亨網", False, "API 正常（取得{}則台股新聞），但無{}相關報導".format(len(items), code))
             else:
-                _log("鉅亨網", False, "API 回應正常但無新聞資料")
+                _log("鉅亨網", False, "API 回應正常但無資料")
         else:
             blocked = "allowlist" in r.text
             _log("鉅亨網", False, "HTTP{} {}".format(r.status_code, "（egress 封鎖）" if blocked else ""))
