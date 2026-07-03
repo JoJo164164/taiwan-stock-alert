@@ -2073,15 +2073,178 @@ def get_major_shareholder_holdings():
 @st.cache_data(ttl=1800)
 def search_news_risk(code, name):
     """
-    多來源新聞搜尋，依序嘗試以下資料源，第一個成功就用：
-    ① 鉅亨網 API (api.cnyes.com)
-    ② FinMind (finmindtrade.com)
-    ③ CMoney (cmoney.tw)
-    ④ MoneyDJ (moneydj.com)
-    ⑤ yfinance Ticker.news（備援）
+    多來源新聞搜尋。依序嘗試：
+    ① Goodinfo 個股頁面（整合公告+鉅亨+ETtoday，靜態HTML）
+    ② 自由財經個股新聞頁（靜態HTML）
+    ③ 鉅亨網台股新聞API（近90天，篩選個股相關）
+    ④ yfinance Ticker.news（備援）
     回傳 dict：{ status, danger_kw, warn_kw, headlines, error, source_used, source_log }
-    source_log：每個來源的嘗試結果，供診斷用
     """
+    import re as _re
+    from datetime import datetime as _dt
+
+    result = {
+        "status": "no_data", "danger_kw": [], "warn_kw": [],
+        "headlines": [], "error": "", "source_used": "",
+        "source_log": []
+    }
+
+    def _log(name, ok, reason=""):
+        result["source_log"].append({"name": name, "ok": ok, "reason": reason})
+
+    def _finalize(headlines_list, source_name):
+        all_text = " ".join(h.get("title", "") for h in headlines_list)
+        danger = [kw for kw in NEWS_DANGER_KW if _re.search(kw, all_text)]
+        warn   = [kw for kw in NEWS_WARN_KW   if _re.search(kw, all_text)]
+        result["headlines"]   = headlines_list
+        result["danger_kw"]   = danger
+        result["warn_kw"]     = warn
+        result["source_used"] = source_name
+        result["status"]      = "danger" if danger else ("warning" if warn else "clean")
+
+    # ── ① Goodinfo 個股頁面（整合多來源，靜態HTML）──
+    try:
+        url = "https://goodinfo.tw/tw/StockDetail.asp?STOCK_ID={}".format(code)
+        r = requests.get(url, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept-Language": "zh-TW,zh;q=0.9",
+            "Referer": "https://goodinfo.tw/"
+        })
+        if r.status_code == 200 and "allowlist" not in r.text and len(r.text) > 1000:
+            # 解析新聞列表：格式為 "標題 (來源 日期)"
+            raw = r.text
+            # 抓取新聞標題區塊
+            news_section = _re.search(
+                r'最新消息(.*?)(?:技術分析|配股配息|每月營收)', raw, _re.DOTALL)
+            if not news_section:
+                news_section = _re.search(r'(\d{2}/\d{2}.*?)(?:<table|</div>)', raw[:50000], _re.DOTALL)
+
+            headlines = []
+            # 用更寬鬆的方式找含有日期格式的新聞連結
+            pattern = r'(\d{2}/\d{2})\s*[）\)]?\s*([^<\n]{8,80}?)(?=\s*[\(<（\n]|$)'
+            matches = _re.findall(pattern, raw[:80000])
+            seen = set()
+            for date, title in matches:
+                title = title.strip().strip('•').strip()
+                if title and len(title) > 5 and title not in seen:
+                    seen.add(title)
+                    headlines.append({
+                        "title": title, "date": "2026-" + date.replace("/", "-"),
+                        "source": "Goodinfo", "link": url
+                    })
+            if len(headlines) >= 3:
+                _log("Goodinfo", True, "解析到 {} 則新聞".format(len(headlines)))
+                _finalize(headlines[:15], "Goodinfo")
+                return result
+            else:
+                _log("Goodinfo", False, "頁面取得但解析到新聞不足（{}則）".format(len(headlines)))
+        else:
+            blocked = "allowlist" in r.text
+            _log("Goodinfo", False, "HTTP{} {}".format(r.status_code, "（egress 封鎖）" if blocked else ""))
+    except Exception as e:
+        _log("Goodinfo", False, "例外：{}".format(str(e)[:60]))
+
+    # ── ② 自由財經個股新聞頁 ──
+    try:
+        url = "https://stock.ltn.com.tw/stock/{}/news".format(code)
+        r = requests.get(url, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://stock.ltn.com.tw/"
+        })
+        if r.status_code == 200 and "allowlist" not in r.text and len(r.text) > 500:
+            titles = _re.findall(
+                r'<(?:h[23]|a)[^>]*class="[^"]*(?:title|news)[^"]*"[^>]*>([^<]{8,100})<',
+                r.text)
+            if not titles:
+                titles = _re.findall(r'"title"\s*:\s*"([^"]{8,100})"', r.text)
+            if len(titles) >= 2:
+                headlines = [{"title": t.strip(), "date": "", "source": "自由財經", "link": url}
+                             for t in titles[:15]]
+                _log("自由財經", True, "解析到 {} 則新聞標題".format(len(headlines)))
+                _finalize(headlines, "自由財經")
+                return result
+            else:
+                _log("自由財經", False, "頁面取得但解析不到新聞（{}則）".format(len(titles)))
+        else:
+            blocked = "allowlist" in r.text
+            _log("自由財經", False, "HTTP{} {}".format(r.status_code, "（egress 封鎖）" if blocked else ""))
+    except Exception as e:
+        _log("自由財經", False, "例外：{}".format(str(e)[:60]))
+
+    # ── ③ 鉅亨網台股新聞API（近90天，篩選個股相關）──
+    try:
+        import time as _time
+        end_ts   = int(_time.time())
+        start_ts = end_ts - 90 * 86400
+        url      = "https://api.cnyes.com/media/api/v1/newslist/category/tw_stock"
+        params   = {"startAt": start_ts, "endAt": end_ts, "limit": 30, "page": 1}
+        r = requests.get(url, params=params, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0", "Referer": "https://news.cnyes.com/"
+        })
+        if r.status_code == 200 and "allowlist" not in r.text:
+            data  = r.json()
+            items = data.get("items", {}).get("data", []) or []
+            keywords = [code] + ([name] if name and name != code else [])
+            matched  = []
+            for item in items:
+                title   = item.get("title", "") or ""
+                summary = item.get("summary", "") or ""
+                if any(kw in title or kw in summary for kw in keywords):
+                    pub = item.get("publishAt", "")
+                    if isinstance(pub, (int, float)):
+                        pub = _dt.fromtimestamp(pub).strftime("%Y-%m-%d")
+                    link = "https://news.cnyes.com/news/id/{}".format(item.get("newsId", ""))
+                    matched.append({"title": title, "date": str(pub)[:10],
+                                    "source": "鉅亨網", "link": link})
+            if matched:
+                _log("鉅亨網API", True, "取得 {} 則相關新聞".format(len(matched)))
+                _finalize(matched, "鉅亨網API")
+                return result
+            else:
+                msg = "API正常（{}則台股新聞），但無{}相關".format(len(items), code) if items else "API無資料"
+                _log("鉅亨網API", False, msg)
+        else:
+            blocked = "allowlist" in r.text
+            _log("鉅亨網API", False, "HTTP{} {}".format(r.status_code, "（egress 封鎖）" if blocked else ""))
+    except Exception as e:
+        _log("鉅亨網API", False, "例外：{}".format(str(e)[:60]))
+
+    # ── ④ yfinance Ticker.news（備援）──
+    try:
+        import yfinance as yf
+        news_items = []
+        for suffix in [".TW", ".TWO"]:
+            try:
+                ticker = yf.Ticker(code + suffix)
+                news   = ticker.news
+                if news:
+                    news_items = news
+                    break
+            except Exception:
+                continue
+        if news_items:
+            headlines = []
+            for item in news_items[:15]:
+                title  = item.get("title", "") or ""
+                pub_ts = item.get("providerPublishTime", 0)
+                source = item.get("publisher", "Yahoo Finance")
+                link   = item.get("link", "")
+                try:
+                    pub = _dt.fromtimestamp(pub_ts).strftime("%Y-%m-%d") if pub_ts else ""
+                except Exception:
+                    pub = ""
+                headlines.append({"title": title, "date": pub, "source": source, "link": link})
+            _log("Yahoo Finance", True, "取得 {} 則（英文為主）".format(len(headlines)))
+            _finalize(headlines, "Yahoo Finance")
+            return result
+        else:
+            _log("Yahoo Finance", False, "無新聞資料")
+    except Exception as e:
+        _log("Yahoo Finance", False, "例外：{}".format(str(e)[:50]))
+
+    result["status"] = "error"
+    result["error"]  = "所有新聞來源均無法取得"
+    return result
     import re as _re
     from datetime import datetime as _dt
 
