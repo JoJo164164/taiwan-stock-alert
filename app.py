@@ -2070,57 +2070,59 @@ def get_major_shareholder_holdings():
         return {"ok": False, "data": {}, "error": str(e)[:60]}
 
 @st.cache_data(ttl=1800)
+@st.cache_data(ttl=1800)
 def search_news_risk(code, name):
     """
-    用 Google News RSS 搜尋個股相關新聞，偵測市場傳聞/治理危機/檢調動態等
-    「未必有正式重大訊息，但媒體已經報導」的風險訊號。
-    這一層補足 MOPS 重大訊息只涵蓋法定揭露事項的盲區
-    （例如：經營權鬥爭、媒體調查報導、市場傳聞等公司不一定會主動發重訊的事件）。
-
+    用 yfinance Ticker.news 取得個股相關新聞，偵測市場傳聞/治理危機/檢調動態等。
+    資料源：Yahoo Finance 新聞（透過 yfinance，Streamlit Cloud 已確認能通）。
+    Google News RSS 在 Streamlit Cloud 被封鎖，改用此方案。
     回傳 dict：{ status, danger_kw, warn_kw, headlines, error }
     """
     import re as _re
+    import yfinance as yf
     result = {
         "status": "no_data", "danger_kw": [], "warn_kw": [],
         "headlines": [], "error": ""
     }
-    query = "{} {}".format(code, name)
     try:
-        import urllib.parse
-        q_encoded = urllib.parse.quote(query)
-        url = "https://news.google.com/rss/search?q={}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant".format(q_encoded)
-        res = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        # 嘗試 .TW（上市）先，失敗再試 .TWO（上櫃）
+        news_items = []
+        for suffix in [".TW", ".TWO"]:
+            try:
+                ticker = yf.Ticker(code + suffix)
+                news = ticker.news
+                if news:
+                    news_items = news
+                    break
+            except Exception:
+                continue
 
-        if res.status_code != 200 or not res.text:
-            result["status"] = "error"
-            result["error"] = "新聞搜尋連線失敗（HTTP{}）".format(res.status_code)
-            return result
-
-        import feedparser
-        feed = feedparser.parse(res.text)
-        entries = feed.entries[:15] if feed.entries else []
-
-        if not entries:
+        if not news_items:
             result["status"] = "clean"
             return result
 
         headlines = []
         all_titles_text = ""
-        for e in entries:
-            title = e.get("title", "")
-            pub = e.get("published", "")[:16]
-            source = ""
-            if " - " in title:
-                title, source = title.rsplit(" - ", 1)
-            headlines.append({"title": title.strip(), "date": pub, "source": source, "link": e.get("link", "")})
+        for item in news_items[:15]:
+            title   = item.get("title", "") or ""
+            pub_ts  = item.get("providerPublishTime", 0)
+            source  = item.get("publisher", "")
+            link    = item.get("link", "")
+            # 時間戳轉日期
+            try:
+                from datetime import datetime as _dt
+                pub = _dt.fromtimestamp(pub_ts).strftime("%Y-%m-%d") if pub_ts else ""
+            except Exception:
+                pub = ""
+            headlines.append({"title": title, "date": pub, "source": source, "link": link})
             all_titles_text += " " + title
 
         danger = [kw for kw in NEWS_DANGER_KW if _re.search(kw, all_titles_text)]
-        warn   = [kw for kw in NEWS_WARN_KW if _re.search(kw, all_titles_text)]
+        warn   = [kw for kw in NEWS_WARN_KW   if _re.search(kw, all_titles_text)]
 
-        result["headlines"] = headlines
-        result["danger_kw"] = danger
-        result["warn_kw"] = warn
+        result["headlines"]  = headlines
+        result["danger_kw"]  = danger
+        result["warn_kw"]    = warn
 
         if danger:
             result["status"] = "danger"
@@ -2131,7 +2133,9 @@ def search_news_risk(code, name):
 
     except Exception as e:
         result["status"] = "error"
-        result["error"] = "新聞搜尋例外：{}".format(str(e)[:80])
+        result["error"]  = "yfinance 新聞查詢失敗：{}".format(str(e)[:80])
+
+    return result
 
     return result
 
@@ -4947,7 +4951,16 @@ with tab6:
         with st.spinner("步驟1/2：取得全市場股票清單..."):
             all_stocks = get_all_tw_stocks()
             individual_stocks = [s for s in all_stocks if s['type'] == '個股']
-            st.info("取得 {} 檔個股，透過 yfinance 抓取財務資料...".format(len(individual_stocks)))
+            n_total = len(all_stocks)
+            n_indiv = len(individual_stocks)
+            n_etf_p = sum(1 for s in all_stocks if s['type'] == '被動ETF')
+            n_etf_a = sum(1 for s in all_stocks if s['type'] == '主動ETF')
+            n_other = n_total - n_indiv - n_etf_p - n_etf_a
+            st.info(
+                "取得 {} 筆股票（個股 {} 檔 ｜ 被動ETF {} 檔 ｜ 主動ETF/含字母 {} 檔 ｜ 特別股/其他 {} 檔）\n"
+                "→ 合格標的池評分對象：{} 檔個股（ETF 與特別股不做體質評分）".format(
+                    n_total, n_indiv, n_etf_p, n_etf_a, n_other, n_indiv)
+            )
 
         est_min = round(len(individual_stocks) * 0.12 / 60, 1)
         with st.spinner("步驟2/2：yfinance 抓取財務資料與評分（預計約{}分鐘）...".format(est_min)):
@@ -5417,49 +5430,73 @@ with tab1:
                 ["_rank", "_inner_sort", "_pct_sort"]).reset_index(drop=True)
 
             # ── 風險偵測：MOPS 重大訊息 + Google News 新聞搜尋（雙層）──
-            # 僅對「強烈／有效／觀察」組查詢（弱組本來就要排除，不浪費資源）
-            # 雙層原因：重大訊息只涵蓋法定揭露事項，董座閃辭/經營權鬥爭/檢調動態等
-            # 未必會立即發重訊，但媒體通常已經報導，新聞搜尋補足這個盲區
+            # 僅對「強烈／有效／觀察」組查詢
+            # 設計原則：查詢失敗靜默顯示「—」，不顯示「❓」干擾判讀
+            # 只有真正偵測到風險或確認無異常時才顯示結果
             MOPS_CHECK_SIGNALS = {"🔥 強烈", "✅ 有效", "🔶 觀察"}
             check_targets = df_show[df_show["_signal_raw"].isin(MOPS_CHECK_SIGNALS)]
 
-            if len(check_targets) > 0:
-                with st.spinner("風險偵測中：查詢 MOPS 重大訊息 + 新聞搜尋..."):
-                    risk_lookup = {}
-                    mops_data_ok = None
-                    news_data_ok = None
-                    for _, rr in check_targets.iterrows():
-                        code_c = rr["代碼"]
-                        name_c = rr["名稱"]
-                        mops_detail = query_mops_risk_detail(code_c)
-                        news_detail = search_news_risk(code_c, name_c)
-                        mops_data_ok = mops_detail["data_source_ok"]
-                        news_data_ok = (news_detail["status"] != "error")
+            try:
+                if len(check_targets) > 0:
+                    with st.spinner("風險偵測中（MOPS + 新聞）..."):
+                        risk_lookup = {}
+                        any_news_ok = False
+                        any_mops_ok = False
 
-                        # 兩層任一偵測到 danger 就是最高優先級
-                        if mops_detail["status"] == "danger" or news_detail["status"] == "danger":
-                            kws = mops_detail.get("danger_kw", [])[:1] + news_detail.get("danger_kw", [])[:1]
-                            risk_lookup[code_c] = "🚨 高風險：{}".format("、".join(kws) or "詳見查詢頁")
-                        elif mops_detail["status"] == "warning" or news_detail["status"] == "warning":
-                            kws = mops_detail.get("warn_kw", [])[:1] + news_detail.get("warn_kw", [])[:1]
-                            risk_lookup[code_c] = "⚠️ 留意：{}".format("、".join(kws) or "詳見查詢頁")
-                        elif mops_detail["status"] == "error" and news_detail["status"] == "error":
-                            risk_lookup[code_c] = "❓ 雙重查詢失敗"
-                        elif mops_detail["status"] == "error" or news_detail["status"] == "error":
-                            risk_lookup[code_c] = "❓ 部分查詢失敗"
-                        else:
-                            risk_lookup[code_c] = "✅ 無異常"
+                        for _, rr in check_targets.iterrows():
+                            code_c = rr["代碼"]
+                            name_c = rr["名稱"]
 
-                if mops_data_ok is False or news_data_ok is False:
-                    failed_sources = []
-                    if mops_data_ok is False: failed_sources.append("MOPS重大訊息")
-                    if news_data_ok is False: failed_sources.append("新聞搜尋")
-                    st.warning("⚠️ {} 本次無法取得，標示「❓」的標的請改用【🛡️ 個股風險查詢】頁籤手動核實，不代表這些標的沒有風險。".format("、".join(failed_sources)))
+                            # MOPS 查詢
+                            mops_detail = query_mops_risk_detail(code_c)
+                            if mops_detail["data_source_ok"]:
+                                any_mops_ok = True
 
-                df_show["風險偵測"] = df_show["代碼"].map(
-                    lambda c: risk_lookup.get(c, "—（弱組不查）" if df_show.loc[df_show["代碼"]==c, "_signal_raw"].iloc[0] == "⚪ 弱" else "—")
-                )
-            else:
+                            # 新聞查詢（失敗就忽略，不影響 MOPS 結果）
+                            news_detail = search_news_risk(code_c, name_c)
+                            if news_detail["status"] != "error":
+                                any_news_ok = True
+
+                            # 判斷：只有真正查到結果才顯示，失敗靜默為「—」
+                            mops_ok = mops_detail["status"] != "error"
+                            news_ok = news_detail["status"] != "error"
+
+                            if not mops_ok and not news_ok:
+                                # 兩個都查不到：不顯示任何結論
+                                risk_lookup[code_c] = "—"
+                            elif mops_detail["status"] == "danger" or news_detail["status"] == "danger":
+                                # 任一層偵測到高風險
+                                kws = (mops_detail.get("danger_kw", [])[:1] +
+                                       news_detail.get("danger_kw", [])[:1])
+                                src_label = "MOPS" if mops_detail["status"] == "danger" else "新聞"
+                                risk_lookup[code_c] = "🚨 高風險[{}]：{}".format(
+                                    src_label, "、".join(kws) or "詳見查詢頁")
+                            elif mops_detail["status"] == "warning" or news_detail["status"] == "warning":
+                                kws = (mops_detail.get("warn_kw", [])[:1] +
+                                       news_detail.get("warn_kw", [])[:1])
+                                src_label = "MOPS" if mops_detail["status"] == "warning" else "新聞"
+                                risk_lookup[code_c] = "⚠️ 留意[{}]：{}".format(
+                                    src_label, "、".join(kws) or "詳見查詢頁")
+                            else:
+                                # 查到了，沒有風險
+                                risk_lookup[code_c] = "✅ 無異常"
+
+                    # 說明哪些資料源有成功（只在底部 caption 說，不占表格欄位）
+                    src_status = []
+                    if any_mops_ok: src_status.append("MOPS✅")
+                    else: src_status.append("MOPS❌")
+                    if any_news_ok: src_status.append("新聞✅")
+                    else: src_status.append("新聞❌（可能被網路封鎖）")
+
+                    df_show["風險偵測"] = df_show["代碼"].map(
+                        lambda c: risk_lookup.get(c, "—")
+                    )
+                    st.caption("風險偵測資料源：{}　｜　「—」= 查詢未成功，請至【🛡️ 個股風險查詢】頁籤手動查詢".format(
+                        "　".join(src_status)))
+                else:
+                    df_show["風險偵測"] = "—"
+
+            except Exception as _risk_err:
                 df_show["風險偵測"] = "—"
 
             df_show = df_show.drop(columns=["_rank", "_signal_raw",
