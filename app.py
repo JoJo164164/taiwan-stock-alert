@@ -2073,19 +2073,152 @@ def get_major_shareholder_holdings():
 @st.cache_data(ttl=1800)
 def search_news_risk(code, name):
     """
-    用 yfinance Ticker.news 取得個股相關新聞，偵測市場傳聞/治理危機/檢調動態等。
-    資料源：Yahoo Finance 新聞（透過 yfinance，Streamlit Cloud 已確認能通）。
-    Google News RSS 在 Streamlit Cloud 被封鎖，改用此方案。
-    回傳 dict：{ status, danger_kw, warn_kw, headlines, error }
+    多來源新聞搜尋，依序嘗試以下資料源，第一個成功就用：
+    ① 鉅亨網 API (api.cnyes.com)
+    ② FinMind (finmindtrade.com)
+    ③ CMoney (cmoney.tw)
+    ④ MoneyDJ (moneydj.com)
+    ⑤ yfinance Ticker.news（備援）
+    回傳 dict：{ status, danger_kw, warn_kw, headlines, error, source_used, source_log }
+    source_log：每個來源的嘗試結果，供診斷用
     """
     import re as _re
-    import yfinance as yf
+    from datetime import datetime as _dt
+
     result = {
         "status": "no_data", "danger_kw": [], "warn_kw": [],
-        "headlines": [], "error": ""
+        "headlines": [], "error": "", "source_used": "",
+        "source_log": []   # [{"name": "鉅亨網", "ok": True/False, "reason": "..."}]
     }
+
+    def _log(name, ok, reason=""):
+        result["source_log"].append({"name": name, "ok": ok, "reason": reason})
+
+    def _classify(headlines_list):
+        all_text = " ".join(h.get("title", "") for h in headlines_list)
+        danger = [kw for kw in NEWS_DANGER_KW if _re.search(kw, all_text)]
+        warn   = [kw for kw in NEWS_WARN_KW   if _re.search(kw, all_text)]
+        return danger, warn
+
+    def _finalize(headlines_list, source_name):
+        danger, warn = _classify(headlines_list)
+        result["headlines"]   = headlines_list
+        result["danger_kw"]   = danger
+        result["warn_kw"]     = warn
+        result["source_used"] = source_name
+        result["status"]      = "danger" if danger else ("warning" if warn else "clean")
+
+    # ── ① 鉅亨網 API ──
     try:
-        # 嘗試 .TW（上市）先，失敗再試 .TWO（上櫃）
+        url = "https://api.cnyes.com/media/api/v1/search?keyword={}&limit=20&page=1".format(
+            requests.utils.quote("{} {}".format(code, name)))
+        r = requests.get(url, timeout=8, headers={
+            "User-Agent": "Mozilla/5.0", "Referer": "https://www.cnyes.com/"})
+        if r.status_code == 200 and "allowlist" not in r.text:
+            data = r.json()
+            items = data.get("items", {}).get("data", []) or []
+            if items:
+                headlines = []
+                for item in items[:15]:
+                    title = item.get("title", "") or ""
+                    pub   = item.get("publishAt", "")
+                    if isinstance(pub, (int, float)):
+                        pub = _dt.fromtimestamp(pub).strftime("%Y-%m-%d")
+                    link  = "https://news.cnyes.com/news/id/{}".format(item.get("newsId", ""))
+                    headlines.append({"title": title, "date": str(pub)[:10], "source": "鉅亨網", "link": link})
+                _log("鉅亨網", True, "取得 {} 則新聞".format(len(headlines)))
+                _finalize(headlines, "鉅亨網")
+                return result
+            else:
+                _log("鉅亨網", False, "API 回應正常但無新聞資料")
+        else:
+            blocked = "allowlist" in r.text
+            _log("鉅亨網", False, "HTTP{} {}".format(r.status_code, "（egress 封鎖）" if blocked else ""))
+    except Exception as e:
+        _log("鉅亨網", False, "例外：{}".format(str(e)[:50]))
+
+    # ── ② FinMind ──
+    try:
+        from datetime import timedelta
+        start_date = (_dt.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+        url = "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockNews&stock_id={}&start_date={}".format(
+            code, start_date)
+        r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200 and "allowlist" not in r.text:
+            data = r.json()
+            items = data.get("data", []) or []
+            if items:
+                headlines = []
+                for item in items[-15:]:
+                    title = item.get("title", "") or item.get("description", "") or ""
+                    pub   = item.get("date", "")
+                    link  = item.get("link", "") or item.get("url", "")
+                    src   = item.get("source", "FinMind")
+                    headlines.append({"title": title, "date": str(pub)[:10], "source": src, "link": link})
+                _log("FinMind", True, "取得 {} 則新聞".format(len(headlines)))
+                _finalize(headlines, "FinMind")
+                return result
+            else:
+                _log("FinMind", False, "API 回應正常但無資料（代碼可能不在資料集）")
+        else:
+            blocked = "allowlist" in r.text
+            _log("FinMind", False, "HTTP{} {}".format(r.status_code, "（egress 封鎖）" if blocked else ""))
+    except Exception as e:
+        _log("FinMind", False, "例外：{}".format(str(e)[:50]))
+
+    # ── ③ CMoney ──
+    try:
+        url = "https://www.cmoney.tw/forum/api/v2/get-posts?stockId={}&page=1&size=20".format(code)
+        r = requests.get(url, timeout=8, headers={
+            "User-Agent": "Mozilla/5.0", "Referer": "https://www.cmoney.tw/"})
+        if r.status_code == 200 and "allowlist" not in r.text:
+            data = r.json()
+            items = data.get("data", data.get("posts", [])) or []
+            if items:
+                headlines = []
+                for item in items[:15]:
+                    title = item.get("title", "") or item.get("content", "")[:60] or ""
+                    pub   = item.get("createTime", "") or item.get("date", "")
+                    link  = "https://www.cmoney.tw/forum/stock/{}".format(code)
+                    headlines.append({"title": title, "date": str(pub)[:10], "source": "CMoney", "link": link})
+                _log("CMoney", True, "取得 {} 則".format(len(headlines)))
+                _finalize(headlines, "CMoney")
+                return result
+            else:
+                _log("CMoney", False, "無資料")
+        else:
+            blocked = "allowlist" in r.text
+            _log("CMoney", False, "HTTP{} {}".format(r.status_code, "（egress 封鎖）" if blocked else ""))
+    except Exception as e:
+        _log("CMoney", False, "例外：{}".format(str(e)[:50]))
+
+    # ── ④ MoneyDJ ──
+    try:
+        url = "https://www.moneydj.com/KMDJ/News/NewsViewer.aspx?a={}".format(code)
+        r = requests.get(url, timeout=8, headers={
+            "User-Agent": "Mozilla/5.0", "Referer": "https://www.moneydj.com/"})
+        if r.status_code == 200 and "allowlist" not in r.text and len(r.text) > 500:
+            import re as _re2
+            titles = _re2.findall(r'class="mt"[^>]*>([^<]{5,100})<', r.text)
+            if not titles:
+                titles = _re2.findall(r'<a[^>]+href="/KMDJ/News/[^"]*"[^>]*>([^<]{5,100})<', r.text)
+            if titles:
+                headlines = [{"title": t.strip(), "date": "", "source": "MoneyDJ", "link": url}
+                             for t in titles[:10]]
+                _log("MoneyDJ", True, "取得 {} 則新聞標題".format(len(headlines)))
+                _finalize(headlines, "MoneyDJ")
+                return result
+            else:
+                _log("MoneyDJ", False, "頁面取得但解析不到新聞標題")
+        else:
+            blocked = "allowlist" in r.text
+            _log("MoneyDJ", False, "HTTP{} {}".format(r.status_code, "（egress 封鎖）" if blocked else ""))
+    except Exception as e:
+        _log("MoneyDJ", False, "例外：{}".format(str(e)[:50]))
+
+    # ── ⑤ yfinance Ticker.news（備援） ──
+    try:
+        import yfinance as yf
         news_items = []
         for suffix in [".TW", ".TWO"]:
             try:
@@ -2096,34 +2229,52 @@ def search_news_risk(code, name):
                     break
             except Exception:
                 continue
-
-        if not news_items:
-            result["status"] = "clean"
+        if news_items:
+            headlines = []
+            for item in news_items[:15]:
+                title  = item.get("title", "") or ""
+                pub_ts = item.get("providerPublishTime", 0)
+                source = item.get("publisher", "Yahoo Finance")
+                link   = item.get("link", "")
+                try:
+                    pub = _dt.fromtimestamp(pub_ts).strftime("%Y-%m-%d") if pub_ts else ""
+                except Exception:
+                    pub = ""
+                headlines.append({"title": title, "date": pub, "source": source, "link": link})
+            _log("Yahoo Finance", True, "取得 {} 則（英文為主）".format(len(headlines)))
+            _finalize(headlines, "Yahoo Finance")
             return result
+        else:
+            _log("Yahoo Finance", False, "無新聞資料")
+    except Exception as e:
+        _log("Yahoo Finance", False, "例外：{}".format(str(e)[:50]))
 
-        headlines = []
-        all_titles_text = ""
-        for item in news_items[:15]:
-            title   = item.get("title", "") or ""
-            pub_ts  = item.get("providerPublishTime", 0)
-            source  = item.get("publisher", "")
-            link    = item.get("link", "")
-            # 時間戳轉日期
-            try:
-                from datetime import datetime as _dt
-                pub = _dt.fromtimestamp(pub_ts).strftime("%Y-%m-%d") if pub_ts else ""
-            except Exception:
-                pub = ""
-            headlines.append({"title": title, "date": pub, "source": source, "link": link})
-            all_titles_text += " " + title
+    # 全部失敗
+    result["status"] = "error"
+    result["error"]  = "所有新聞來源均無法取得"
+    return result
+    import re as _re
+    from datetime import datetime as _dt
 
-        danger = [kw for kw in NEWS_DANGER_KW if _re.search(kw, all_titles_text)]
-        warn   = [kw for kw in NEWS_WARN_KW   if _re.search(kw, all_titles_text)]
+    result = {
+        "status": "no_data", "danger_kw": [], "warn_kw": [],
+        "headlines": [], "error": "", "source_used": ""
+    }
 
-        result["headlines"]  = headlines
-        result["danger_kw"]  = danger
-        result["warn_kw"]    = warn
+    def _classify(headlines_list):
+        """對新聞標題做關鍵字比對，回傳 danger/warn/clean"""
+        all_text = " ".join(h.get("title", "") for h in headlines_list)
+        danger = [kw for kw in NEWS_DANGER_KW if _re.search(kw, all_text)]
+        warn   = [kw for kw in NEWS_WARN_KW   if _re.search(kw, all_text)]
+        return danger, warn, all_text
 
+    def _finalize(headlines_list, source_name):
+        """整理結果並設定 status"""
+        danger, warn, _ = _classify(headlines_list)
+        result["headlines"]   = headlines_list
+        result["danger_kw"]   = danger
+        result["warn_kw"]     = warn
+        result["source_used"] = source_name
         if danger:
             result["status"] = "danger"
         elif warn:
@@ -2131,12 +2282,131 @@ def search_news_risk(code, name):
         else:
             result["status"] = "clean"
 
-    except Exception as e:
-        result["status"] = "error"
-        result["error"]  = "yfinance 新聞查詢失敗：{}".format(str(e)[:80])
+    # ── ① 鉅亨網 API ──
+    try:
+        url = "https://api.cnyes.com/media/api/v1/search?keyword={}&limit=20&page=1".format(
+            requests.utils.quote("{} {}".format(code, name)))
+        r = requests.get(url, timeout=8, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.cnyes.com/"
+        })
+        if r.status_code == 200 and "allowlist" not in r.text:
+            data = r.json()
+            items = data.get("items", {}).get("data", []) or []
+            if items:
+                headlines = []
+                for item in items[:15]:
+                    title = item.get("title", "") or ""
+                    pub   = item.get("publishAt", "") or ""
+                    if isinstance(pub, int):
+                        pub = _dt.fromtimestamp(pub).strftime("%Y-%m-%d")
+                    link  = "https://news.cnyes.com/news/id/{}".format(item.get("newsId", ""))
+                    headlines.append({"title": title, "date": str(pub)[:10], "source": "鉅亨網", "link": link})
+                if headlines:
+                    _finalize(headlines, "鉅亨網")
+                    return result
+    except Exception:
+        pass
 
-    return result
+    # ── ② FinMind ──
+    try:
+        from datetime import timedelta
+        start_date = (_dt.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+        url = "https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockNews&stock_id={}&start_date={}".format(
+            code, start_date)
+        r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200 and "allowlist" not in r.text:
+            data = r.json()
+            items = data.get("data", []) or []
+            if items:
+                headlines = []
+                for item in items[-15:]:
+                    title = item.get("title", "") or item.get("description", "") or ""
+                    pub   = item.get("date", "")
+                    link  = item.get("link", "") or item.get("url", "")
+                    src   = item.get("source", "FinMind")
+                    headlines.append({"title": title, "date": str(pub)[:10], "source": src, "link": link})
+                if headlines:
+                    _finalize(headlines, "FinMind")
+                    return result
+    except Exception:
+        pass
 
+    # ── ③ CMoney ──
+    try:
+        url = "https://www.cmoney.tw/forum/api/v2/get-posts?stockId={}&page=1&size=20".format(code)
+        r = requests.get(url, timeout=8, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.cmoney.tw/"
+        })
+        if r.status_code == 200 and "allowlist" not in r.text:
+            data = r.json()
+            items = data.get("data", data.get("posts", [])) or []
+            if items:
+                headlines = []
+                for item in items[:15]:
+                    title = item.get("title", "") or item.get("content", "")[:60] or ""
+                    pub   = item.get("createTime", "") or item.get("date", "")
+                    link  = "https://www.cmoney.tw/forum/stock/{}".format(code)
+                    headlines.append({"title": title, "date": str(pub)[:10], "source": "CMoney", "link": link})
+                if headlines:
+                    _finalize(headlines, "CMoney")
+                    return result
+    except Exception:
+        pass
+
+    # ── ④ MoneyDJ ──
+    try:
+        url = "https://www.moneydj.com/KMDJ/News/NewsViewer.aspx?a={}".format(code)
+        r = requests.get(url, timeout=8, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.moneydj.com/"
+        })
+        if r.status_code == 200 and "allowlist" not in r.text and len(r.text) > 500:
+            import re as _re2
+            titles = _re2.findall(r'<title[^>]*>([^<]{5,100})</title>', r.text)
+            if titles:
+                headlines = [{"title": t.strip(), "date": "", "source": "MoneyDJ",
+                              "link": url} for t in titles[:10]]
+                _finalize(headlines, "MoneyDJ")
+                return result
+    except Exception:
+        pass
+
+    # ── ⑤ yfinance Ticker.news（備援，以英文新聞為主）──
+    try:
+        import yfinance as yf
+        news_items = []
+        for suffix in [".TW", ".TWO"]:
+            try:
+                ticker = yf.Ticker(code + suffix)
+                news = ticker.news
+                if news:
+                    news_items = news
+                    break
+            except Exception:
+                continue
+        if news_items:
+            headlines = []
+            for item in news_items[:15]:
+                title  = item.get("title", "") or ""
+                pub_ts = item.get("providerPublishTime", 0)
+                source = item.get("publisher", "Yahoo Finance")
+                link   = item.get("link", "")
+                try:
+                    pub = _dt.fromtimestamp(pub_ts).strftime("%Y-%m-%d") if pub_ts else ""
+                except Exception:
+                    pub = ""
+                headlines.append({"title": title, "date": pub, "source": source, "link": link})
+            if headlines:
+                _finalize(headlines, "Yahoo Finance")
+                return result
+    except Exception:
+        pass
+
+    # 全部失敗
+    result["status"] = "error"
+    result["error"]  = "所有新聞來源均無法取得（鉅亨網/FinMind/CMoney/MoneyDJ/Yahoo Finance）"
     return result
 
 
@@ -7617,15 +7887,29 @@ with tab_mops:
             st.markdown("**命中留意關鍵字：** {}".format("、".join(news_detail["warn_kw"])))
 
         if news_detail.get("headlines"):
-            st.markdown("**近期相關新聞（共{}則）：**".format(len(news_detail["headlines"])))
+            src_used = news_detail.get("source_used", "")
+            st.markdown("**近期相關新聞（共{}則，資料來源：{}）：**".format(
+                len(news_detail["headlines"]), src_used))
             for h in news_detail["headlines"][:10]:
                 st.markdown("- [{}]({})　<span style='color:#888;font-size:12px'>{} · {}</span>".format(
                     h["title"], h["link"], h["source"], h["date"]), unsafe_allow_html=True)
         elif news_detail["status"] == "clean":
-            st.caption("近期無相關新聞報導。")
+            st.caption("近期無相關新聞報導。（資料來源：{}）".format(
+                news_detail.get("source_used", "—")))
+
+        # ── 來源診斷（讓你知道哪些能通、哪些被封鎖）──
+        if news_detail.get("source_log"):
+            with st.expander("🔧 新聞來源診斷（點擊展開，確認哪些來源能通）"):
+                for log in news_detail["source_log"]:
+                    icon = "✅" if log["ok"] else "❌"
+                    st.markdown("{} **{}**：{}".format(icon, log["name"], log["reason"]))
+                if news_detail.get("source_used"):
+                    st.caption("本次使用：{}".format(news_detail["source_used"]))
+                else:
+                    st.caption("本次所有來源均失敗")
 
         st.caption(
-            "⚠️ **新聞搜尋為輔助線索**，關鍵字比對可能有誤判（例如新聞標題提到「跌停」但其實是利多消息），"
+            "⚠️ **新聞搜尋為輔助線索**，關鍵字比對可能有誤判，"
             "請務必點開原文確認內容，不要只看關鍵字命中就下結論。"
         )
 
