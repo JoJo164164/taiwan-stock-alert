@@ -1968,10 +1968,12 @@ NEWS_DANGER_KW = [
 ]
 
 NEWS_WARN_KW = [
-    # 高管異動（媒體用語）
+    # 高管異動（媒體用語）—— 注意：媒體標題常直接寫「人名辭職」不寫「董事長辭職」
     "董事長辭", "總經理辭", "執行長辭", "財務長辭",
-    "高層震盪", "人事大換血", "管理層異動",
-    "創辦人出走", "元老離職",
+    "辭職", "辭任", "請辭",                          # 寬鬆：任何辭職都留意
+    "接掌.*董座", "接任.*董事長", "新任董座", "新任董事長",
+    "高層震盪", "人事大換血", "管理層異動", "人事異動",
+    "創辦人出走", "元老離職", "董座異動",
     # 股東動向
     "大股東減持", "大股東出脫", "外資大賣",
     "外資連續賣超", "投信出清",
@@ -2108,7 +2110,9 @@ def search_news_risk(code, name):
     search_kw  = name if name and name != code else code
     search_kw2 = code  # 用代碼再過濾確認相關性
 
-    # ── ① 工商時報搜尋（SSR頁面，三種 pattern 同時嘗試確保解析成功）──
+    # ── ① 工商時報搜尋（Next.js SSR，href 為相對路徑 /news/xxx）──
+    # 關鍵修正：Next.js 頁面的 href 是相對路徑 /news/xxx，不是完整 URL
+    # 已用 Python regex 驗證：宇隆/台積電/大立光 三個股票均能正確解析
     try:
         url = "https://www.ctee.com.tw/search/{}".format(
             urllib.parse.quote(search_kw))
@@ -2122,36 +2126,26 @@ def search_news_risk(code, name):
             raw = r.text
             headlines = []
             seen = set()
+            base = "https://www.ctee.com.tw"
+            BAD = ['工商時報', '©', 'LOGO', '更多', '載入', '返回', '開闔', '首頁', 'menu']
 
-            # Pattern A：HTML <h3><a href="...">標題</a></h3>
-            for link, title in _re.findall(
-                r'<h3[^>]*>\s*<a[^>]+href="(https://www\.ctee\.com\.tw/news/[^"]+)"[^>]*>\s*([^<]{3,120})\s*</a>',
-                raw):
+            # Pattern A：相對路徑（Next.js SSR 的標準格式）
+            for href, title in _re.findall(
+                    r'href="(/(?:news|livenews)/[^"]{8,80})"[^>]*>([^<\n]{4,100})<', raw):
                 t = title.strip()
-                if t and t not in seen:
+                if t and len(t) > 4 and t not in seen and not any(w in t for w in BAD):
                     seen.add(t)
-                    headlines.append({"title": t, "date": "", "source": "工商時報", "link": link})
+                    headlines.append({"title": t, "date": "", "source": "工商時報",
+                                      "link": base + href})
 
-            # Pattern B：Markdown [標題](URL)
-            if not headlines:
-                for title, link in _re.findall(
-                    r'###\s*\[([^\]]{3,120})\]\((https://www\.ctee\.com\.tw/news/[^\)]+)\)',
+            # Pattern B：絕對路徑備援（部分連結可能是完整 URL）
+            for href, title in _re.findall(
+                    r'href="(https://www\.ctee\.com\.tw/(?:news|livenews)/[^"]{8,80})"[^>]*>([^<\n]{4,100})<',
                     raw):
-                    t = title.strip()
-                    if t and t not in seen:
-                        seen.add(t)
-                        headlines.append({"title": t, "date": "", "source": "工商時報", "link": link})
-
-            # Pattern C：ctee.com.tw/news/數字-數字 格式的任何連結文字
-            if not headlines:
-                for link, title in _re.findall(
-                    r'href="(https://www\.ctee\.com\.tw/news/\d{8,}[^"]*)"[^>]*>([^<]{5,80})<',
-                    raw):
-                    t = title.strip()
-                    if (t and len(t) > 5 and t not in seen
-                            and not any(x in t for x in ['工商','©','LOGO','更多','載入'])):
-                        seen.add(t)
-                        headlines.append({"title": t, "date": "", "source": "工商時報", "link": link})
+                t = title.strip()
+                if t and t not in seen and not any(w in t for w in BAD):
+                    seen.add(t)
+                    headlines.append({"title": t, "date": "", "source": "工商時報", "link": href})
 
             if len(headlines) >= 2:
                 _log("工商時報", True, "取得 {} 則新聞（body={}字元）".format(len(headlines), len(raw)))
@@ -2159,7 +2153,7 @@ def search_news_risk(code, name):
                 return result
             else:
                 _log("工商時報", False,
-                     "頁面OK（{}字元），三種pattern均只解析到{}則".format(len(raw), len(headlines)))
+                     "頁面OK（{}字元），只解析到{}則".format(len(raw), len(headlines)))
         else:
             blocked = "allowlist" in r.text
             _log("工商時報", False, "HTTP{} {}".format(
