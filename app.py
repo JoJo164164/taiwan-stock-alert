@@ -81,6 +81,23 @@ HORIZONS = [5, 10, 20, 40, 60, 80, 100, 120, 240]
 # ── Pool 磁碟快取：定義在最頂部，確保任何地方都能呼叫 ──
 import os as _os
 POOL_CACHE_PATH = "/tmp/tw_stock_pool_cache.parquet"
+JOURNAL_PATH = "/tmp/tw_signal_journal.csv"
+JOURNAL_COLS = ["代碼","名稱","信號","進場日","進場價","目標天數","目標報酬%","狀態","出場日","出場價","實際報酬%"]
+
+def load_journal():
+    try:
+        import pandas as _pd
+        # dtype=str + keep_default_na=False：避免空欄變 float64 導致結案寫入字串時 dtype 衝突
+        return _pd.read_csv(JOURNAL_PATH, dtype=str, keep_default_na=False)
+    except Exception:
+        import pandas as _pd
+        return _pd.DataFrame(columns=JOURNAL_COLS)
+
+def save_journal(df):
+    try:
+        df.to_csv(JOURNAL_PATH, index=False)
+    except Exception:
+        pass
 POOL_CACHE_META = "/tmp/tw_stock_pool_cache_meta.json"
 
 def save_pool_to_disk(df_pool):
@@ -248,6 +265,7 @@ def classify_code(code):
         return "其他"
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_yahoo_history(code, days=60):
     """
     抓台股歷史股價（adjclose）。
@@ -273,6 +291,69 @@ def get_yahoo_history(code, days=60):
         return prices
     except Exception:
         return {}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_yahoo_history_pv(code, days=110):
+    """
+    抓台股歷史股價＋成交量（供掃描的量能/乖離指標用）。
+    回傳 (prices_dict, volumes_dict)；失敗回傳 ({}, {})。
+    days=110 天曆日 ≈ 70+ 交易日，足夠計算 60 日乖離。
+    """
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(code + ".TW")
+        end = datetime.today()
+        start = end - timedelta(days=days + 10)
+        df = ticker.history(start=start.strftime("%Y-%m-%d"),
+                            end=end.strftime("%Y-%m-%d"),
+                            auto_adjust=True)
+        if df is None or df.empty:
+            return {}, {}
+        prices, volumes = {}, {}
+        for idx, row in df.iterrows():
+            date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, 'strftime') else str(idx)[:10]
+            close = row.get('Close')
+            vol   = row.get('Volume')
+            if close is not None and close > 0:
+                prices[date_str] = round(float(close), 2)
+                volumes[date_str] = float(vol) if vol is not None else 0.0
+        return prices, volumes
+    except Exception:
+        return {}, {}
+
+
+def calc_scan_extras(prices, volumes):
+    """
+    掃描附加指標（交易員辯證後採用）：
+    - vol_ratio：觸發日量能 / 前20日均量。≥1.5=恐慌爆量（賣壓宣洩，反彈率較高）；
+                 <0.8=量縮陰跌（無承接，接刀風險）
+    - avg_vol20：20日均量（張）。<500張=流動性不足，-10%可能是噪音且難成交
+    - bias60：現價相對60日均線乖離%。≤-15%=深度負乖離（均值回歸甜蜜區）
+    """
+    out = {"vol_ratio": None, "avg_vol20": None, "bias60": None}
+    try:
+        dates = sorted(prices.keys())
+        if len(dates) < 22:
+            return out
+        closes = [prices[d] for d in dates]
+        vols   = [volumes.get(d, 0.0) for d in dates]
+        # 量能比：今日量 vs 前20日均量（不含今日）
+        prev20 = vols[-21:-1]
+        avg20  = sum(prev20) / len(prev20) if prev20 else 0
+        if avg20 > 0 and vols[-1] > 0:
+            out["vol_ratio"] = round(vols[-1] / avg20, 2)
+        if avg20 > 0:
+            out["avg_vol20"] = int(avg20 / 1000)  # 股→張
+        # 60日乖離（不足60日用可得天數，最少30日）
+        n = min(60, len(closes))
+        if n >= 30:
+            ma = sum(closes[-n:]) / n
+            if ma > 0:
+                out["bias60"] = round((closes[-1] - ma) / ma * 100, 1)
+    except Exception:
+        pass
+    return out
 
 
 def get_yahoo_history_us(code, days=365):
@@ -301,6 +382,29 @@ def get_yahoo_history_us(code, days=365):
         return {}
 
 
+@st.cache_data(ttl=1800)
+def get_dxy_data():
+    """
+    美元指數 DXY：外資資金流向領先指標。
+    台股是外資盤（持股比重高），美元短期急升 = 外資撤出新興市場壓力，
+    此時個股觸發多為系統性資金撤出，非情緒性超跌，均值回歸勝率下降。
+    """
+    prices = get_yahoo_history_us("DX-Y.NYB", days=380)
+    if not prices or len(prices) < 30:
+        prices = get_yahoo_history_us("DX=F", days=380)
+    if not prices or len(prices) < 30:
+        return None
+    dates = sorted(prices.keys())
+    closes = [prices[d] for d in dates]
+    current = closes[-1]
+    ret_20d = round((current - closes[-21]) / closes[-21] * 100, 2) if len(closes) >= 21 else None
+    hi52, lo52 = max(closes), min(closes)
+    return {"current": current, "ret_20d": ret_20d,
+            "pct_from_high": round((current - hi52) / hi52 * 100, 1),
+            "pct_from_low": round((current - lo52) / lo52 * 100, 1)}
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
 def get_yahoo_history_15y(code):
     """
     抓台股最長15年歷史股價（用於回測）。
@@ -2792,11 +2896,13 @@ def group_selector(key_prefix):
 # ==============================
 # 頁籤順序：使用說明→系統檢核→每日警示→批次回測→個股回測→全市場勝率
 # ==============================
-tab0, tab5, tab6, tab1, tab3, tab4, tab2, tab_mops, tab_brief = st.tabs([
+tab0, tab5, tab6, tab_build, tab1, tab_journal, tab3, tab4, tab2, tab_mops, tab_brief = st.tabs([
     "📖 使用說明",
     "🔧 系統檢核",
     "📋 合格標的池",
+    "🛠️ 建池與個股快查",
     "🔍 每日警示掃描",
+    "📒 追蹤日誌",
     "🔬 個股回測",
     "🏆 全市場勝率排行",
     "📊 批次回測",
@@ -3423,6 +3529,25 @@ with tab0:
 **4️⃣ 全市場勝率排行加入體質分數**
 - 高勝率但體質差的標的自動標注，避免買到Broken Model
     """)
+    with st.expander("⚠️ 回測誠實度聲明（務必閱讀——這些偏誤讓實際勝率低於回測數字）"):
+        st.markdown("""
+**① 倖存者偏誤（Survivorship Bias）**
+15年回測的股票清單是「今天還存在」的股票。已下市、被打入全額交割後消失的公司
+（正是超跌後真的歸零的災難案例）不在樣本裡。**這代表回測勝率是被高估的**——
+真實世界裡，觸發後繼續跌到下市的機率沒有被算進去。系統的 MOPS＋新聞風險偵測
+就是為了在事前攔截這類標的，但無法保證全部攔到。
+
+**② T+1 進場落差**
+回測用「觸發日收盤價」進場，但你實際看到掃描信號時已收盤，最快隔天才能買。
+若隔天跳空（超跌股常見），你的實際成本會與回測不同——跳空下跌時你買得更便宜，
+跳空上漲時你錯過部分反彈。長期平均而言，**實際報酬會與回測有系統性落差**。
+
+**③ 交易成本未計入**
+回測報酬未扣手續費（約0.1425%×2）與證交稅（0.3%），來回約0.6%。
+持有期越短，成本佔比越高。
+
+**結論：把回測勝率打八折看待，並嚴格使用風險偵測與追蹤日誌驗證實績。**
+        """)
     st.warning("本系統為輔助研究工具，不構成投資建議。歷史回測不代表未來績效。")
 
 # ==============================
@@ -3584,6 +3709,138 @@ with tab5:
                 return False, "還原股價異常！最大單日跳空：{:.2f}%".format(max_jump)
             run_check("還原股價連續性驗證（0050除息）", check_adj_price)
 
+            # ══════════════════════════════════════════════
+            # 風險偵測資料管道檢核（8管道：MOPS官方3層 + 新聞5源）
+            # 檢核用 regex 與 search_news_risk 實戰邏輯完全相同
+            # ══════════════════════════════════════════════
+
+            def check_mops_ann():
+                data, err = _fetch_twse_opendata_with_retry("t187ap04_L")
+                if data is not None:
+                    return True, "取得 {} 筆全市場重大訊息".format(len(data))
+                return False, "連線失敗（{}）→ 掃描「風險偵測」欄該層顯示查詢失敗".format(err)
+            run_check("MOPS重大訊息（t187ap04_L）", check_mops_ann)
+
+            def check_mops_dir():
+                r = get_director_holdings()
+                if r.get("ok"):
+                    return True, "取得 {} 家公司董監事持股申報".format(len(r["data"]))
+                return False, "連線失敗（{}）".format(r.get("error", ""))
+            run_check("MOPS董監事持股（t187ap03_L）", check_mops_dir)
+
+            def check_mops_sh():
+                r = get_major_shareholder_holdings()
+                if r.get("ok"):
+                    return True, "取得 {} 家公司大股東(5%+)持股申報".format(len(r["data"]))
+                return False, "連線失敗（{}）".format(r.get("error", ""))
+            run_check("MOPS大股東持股（t187ap08_L）", check_mops_sh)
+
+            import urllib.parse as _up
+            _NEWS_BAD = ['工商時報', '©', 'LOGO', '更多', '載入', '返回', '開闔', '首頁', 'menu',
+                         '訂閱', '粉絲', 'APP', 'Facebook', 'Line']
+
+            def check_news_ctee():
+                url = "https://www.ctee.com.tw/search/{}".format(_up.quote("台積電"))
+                try:
+                    r = requests.get(url, timeout=10, headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Accept-Language": "zh-TW,zh;q=0.9",
+                        "Referer": "https://www.ctee.com.tw/"})
+                    if "allowlist" in (r.text or "")[:200]:
+                        return False, "egress 封鎖 → 新聞層 fallback 至下一來源"
+                    if r.status_code != 200:
+                        return False, "HTTP{}".format(r.status_code)
+                    import re as _r
+                    n = len(_r.findall(
+                        r'href="(/(?:news|livenews)/[^"]{8,80})"[^>]*>([^<\n]{4,100})<', r.text))
+                    n += len(_r.findall(
+                        r'href="(https://www\.ctee\.com\.tw/(?:news|livenews)/[^"]{8,80})"[^>]*>([^<\n]{4,100})<', r.text))
+                    if n >= 2:
+                        return True, "搜尋「台積電」解析到 {} 則新聞連結".format(n)
+                    return False, "頁面取得（{}字元）但解析到 {} 則，HTML結構可能已變".format(len(r.text), n)
+                except Exception as e:
+                    return False, "例外：{}".format(str(e)[:60])
+            run_check("新聞源①工商時報", check_news_ctee)
+
+            def check_news_ltn():
+                url = "https://ec.ltn.com.tw/m/search?keyword={}".format(_up.quote("2330 台積電"))
+                try:
+                    r = requests.get(url, timeout=10, headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                        "Referer": "https://ec.ltn.com.tw/",
+                        "Accept-Language": "zh-TW,zh;q=0.9"})
+                    if "allowlist" in (r.text or "")[:200]:
+                        return False, "egress 封鎖 → fallback 至下一來源"
+                    if r.status_code != 200:
+                        return False, "HTTP{}".format(r.status_code)
+                    import re as _r
+                    n = len(_r.findall(
+                        r'href="((?:https://ec\.ltn\.com\.tw)?/(?:article|m/article)/[^"]{5,90})"[^>]*>([^<]{8,120})</a>', r.text))
+                    if n >= 2:
+                        return True, "搜尋解析到 {} 則新聞連結".format(n)
+                    return False, "頁面取得（{}字元）但解析到 {} 則".format(len(r.text), n)
+                except Exception as e:
+                    return False, "例外：{}".format(str(e)[:60])
+            run_check("新聞源②自由財經", check_news_ltn)
+
+            def check_news_ebc():
+                url = "https://fnc.ebc.net.tw/search/{}".format(_up.quote("台積電"))
+                try:
+                    r = requests.get(url, timeout=10, headers={
+                        "User-Agent": "Mozilla/5.0",
+                        "Referer": "https://fnc.ebc.net.tw/"})
+                    if "allowlist" in (r.text or "")[:200]:
+                        return False, "egress 封鎖 → fallback 至下一來源"
+                    if r.status_code != 200:
+                        return False, "HTTP{}".format(r.status_code)
+                    import re as _r
+                    n = len(_r.findall(
+                        r'href="((?:https://fnc\.ebc\.net\.tw)?/fncnews/[a-z]+/\d+)"[^>]*>([^<]{8,120})<', r.text))
+                    if n >= 2:
+                        return True, "搜尋解析到 {} 則新聞連結".format(n)
+                    return False, "頁面取得（{}字元）但解析到 {} 則".format(len(r.text), n)
+                except Exception as e:
+                    return False, "例外：{}".format(str(e)[:60])
+            run_check("新聞源③東森財經", check_news_ebc)
+
+            def check_news_cnyes():
+                try:
+                    _now = int(time.time())
+                    r = requests.get(
+                        "https://api.cnyes.com/media/api/v1/newslist/category/tw_stock",
+                        params={"startAt": _now - 90*86400, "endAt": _now, "limit": 30, "page": 1},
+                        timeout=10, headers={"User-Agent": "Mozilla/5.0",
+                                             "Referer": "https://news.cnyes.com/"})
+                    if "allowlist" in (r.text or "")[:200]:
+                        return False, "egress 封鎖 → fallback 至下一來源"
+                    if r.status_code != 200:
+                        return False, "HTTP{}".format(r.status_code)
+                    items = r.json().get("items", {}).get("data", []) or []
+                    if items:
+                        return True, "取得近90天台股新聞 {} 則".format(len(items))
+                    return False, "API 回應正常但無資料"
+                except Exception as e:
+                    return False, "例外：{}".format(str(e)[:60])
+            run_check("新聞源④鉅亨網API", check_news_cnyes)
+
+            def check_news_yf():
+                try:
+                    import yfinance as yf
+                    items = yf.Ticker("2330.TW").news or []
+                    if not items:
+                        return False, "無新聞資料"
+                    ok_n = 0
+                    for it in items[:15]:
+                        c = it.get("content", {}) if isinstance(it.get("content"), dict) else {}
+                        if (it.get("title") or c.get("title") or "").strip():
+                            ok_n += 1
+                    if ok_n:
+                        return True, "取得 {} 則（新舊格式解析皆支援，英文為主備援）".format(ok_n)
+                    return False, "有 {} 筆原始資料但標題解析為空（格式再度變更？）".format(len(items))
+                except Exception as e:
+                    return False, "例外：{}".format(str(e)[:60])
+            run_check("新聞源⑤Yahoo Finance", check_news_yf)
+
         show_html(pd.DataFrame(checks))
 
         # 各項目失敗時的影響說明
@@ -3605,7 +3862,20 @@ with tab5:
 | 📊 批次回測 | ✅ 完全正常 | 同上 |
 """
 
+        NEWS_FALLBACK_DETAIL = """
+**風險偵測管道說明**：新聞5源為 fallback 鏈（工商時報→自由財經→東森財經→鉅亨網→Yahoo Finance），
+任一來源可用即能運作；全部失敗時掃描「風險偵測」欄顯示「—」並提示手動核實。
+MOPS 3層各自獨立（重訊/董監持股/大股東），失敗層顯示查詢失敗，絕不誤判為「無異常」。
+"""
         IMPACT_MAP = {
+            "MOPS重大訊息（t187ap04_L）":   ("warning", "重訊風險偵測該層失效", NEWS_FALLBACK_DETAIL),
+            "MOPS董監事持股（t187ap03_L）": ("warning", "董監事轉讓偵測失效", NEWS_FALLBACK_DETAIL),
+            "MOPS大股東持股（t187ap08_L）": ("warning", "大股東減持偵測失效", NEWS_FALLBACK_DETAIL),
+            "新聞源①工商時報":   ("warning", "自動fallback至下一新聞源", NEWS_FALLBACK_DETAIL),
+            "新聞源②自由財經":   ("warning", "自動fallback至下一新聞源", NEWS_FALLBACK_DETAIL),
+            "新聞源③東森財經":   ("warning", "自動fallback至下一新聞源", NEWS_FALLBACK_DETAIL),
+            "新聞源④鉅亨網API":  ("warning", "自動fallback至下一新聞源", NEWS_FALLBACK_DETAIL),
+            "新聞源⑤Yahoo Finance": ("warning", "新聞備援層失效", NEWS_FALLBACK_DETAIL),
             "證交所TWSE API":   ("warning", "股票清單使用內建靜態備援", TWSE_FALLBACK_DETAIL),
             "櫃買中心TPEX API": ("warning", "上櫃清單使用內建靜態備援", TWSE_FALLBACK_DETAIL),
             "Yahoo Finance API（2330）": ("error", "🚨 嚴重：所有頁籤股價資料失效", """
@@ -4576,6 +4846,10 @@ with tab6:
         except Exception as e:
             sp500 = None
         try:
+            dxy = get_dxy_data()
+        except Exception as e:
+            dxy = None
+        try:
             twii_heat = get_twii_heat()
         except Exception as e:
             twii_heat = None
@@ -4794,6 +5068,43 @@ with tab6:
             "・ > -10%：全球資金偏樂觀，風險胃納良好\n"
             "・ -10% ～ -20%：全球資金開始謹慎\n"
             "・ < -20%：全球資金明顯撤退，台股受外資賣壓"
+        )
+
+    # ── 美元指數 DXY（外資資金流向）──
+    st.markdown("---")
+    col_dxy1, col_dxy2 = st.columns([1, 2])
+    with col_dxy1:
+        if dxy:
+            st.metric("美元指數 DXY",
+                      "{:,.1f}".format(dxy["current"]),
+                      "{:+.1f}% 近20日".format(dxy["ret_20d"]) if dxy["ret_20d"] is not None else None,
+                      delta_color="inverse")
+            st.caption("距52週高點：{:+.1f}%　距52週低點：{:+.1f}%".format(
+                dxy["pct_from_high"], dxy["pct_from_low"]))
+            r20 = dxy["ret_20d"] if dxy["ret_20d"] is not None else 0
+            if r20 >= 4:
+                st.error("🔴 美元急升（20日+{:.1f}%）：外資撤出新興市場壓力大，觸發多為系統性賣壓".format(r20))
+            elif r20 >= 2:
+                st.warning("🟡 美元走升中（20日+{:.1f}%）：留意外資動向".format(r20))
+            else:
+                st.success("🟢 美元平穩：外資資金面無急迫撤出壓力")
+        else:
+            st.warning("DXY資料無法取得")
+    with col_dxy2:
+        st.markdown("**📖 DXY怎麼讀、為什麼重要**")
+        st.info(
+            "**為什麼看美元指數？**\n"
+            "台股外資持股比重高，是典型的「外資盤」。美元指數反映全球資金流向——"
+            "美元急升時，外資會系統性撤出包括台股在內的新興市場，"
+            "不管個別公司基本面多好都照賣。\n\n"
+            "**近20日漲幅的意義：**\n"
+            "・ <+2%：資金面平穩，個股觸發較可能是情緒性超跌，均值回歸有效\n"
+            "・ +2%～+4%：美元走升，外資賣壓漸增，進場需觀察外資是否連續賣超\n"
+            "・ >+4%：美元急升，歷史上此時的個股觸發多為系統性資金撤出的一環，"
+            "反彈需等美元動能緩和，勝率明顯下降\n\n"
+            "**與其他指標的搭配：**\n"
+            "美元急升＋VIX飆高＋台幣急貶同時出現＝標準的外資撤退組合，"
+            "此時即使個股信號為✅有效，也建議降低部位或等待"
         )
 
     # ── 台股市場熱度計 ──
@@ -5037,123 +5348,6 @@ with tab6:
 ⚠️ 注意：負債比 < 50% 會排除部分金融股，PB < 3 可能排除台積電等超級企業，這是刻意的選擇。
         """)
 
-    st.divider()
-
-    # ── 建立合格標的池 ──
-    st.markdown("### 🔍 建立合格標的池")
-
-    col_btn1, col_btn2, col_info = st.columns([1, 1, 3])
-    with col_btn1:
-        build_btn = st.button("🔄 建立/更新合格標的池", type="primary", key="build_pool")
-    with col_btn2:
-        quick_btn = st.button("⚡ 快速查詢（個股）", key="quick_check_btn")
-    with col_info:
-        st.caption("建立完整池子需要抓取約2000檔財務資料（約需3～5分鐘）。池子每季更新一次即可。")
-
-    # ── 快速查詢（不需要建立完整池子）──
-    if quick_btn:
-        st.markdown("#### 個股即時體質查詢")
-        q_col1, q_col2 = st.columns([1, 3])
-        with q_col1:
-            instant_code = st.text_input("輸入代碼", placeholder="例：2330", key="instant_query_code")
-            instant_go = st.button("查詢", key="instant_query_go")
-        with q_col2:
-            if instant_go and instant_code.strip():
-                code_q = instant_code.strip()
-                # 先查 pool
-                df_pool_check = st.session_state.get('df_pool', None)
-                found_in_pool = False
-                if df_pool_check is not None and not df_pool_check.empty:
-                    df_pool_check['代碼'] = df_pool_check['代碼'].astype(str).str.strip()
-                    row_df = df_pool_check[df_pool_check['代碼'] == code_q]
-                    if not row_df.empty:
-                        found_in_pool = True
-                        row = row_df.iloc[0]
-                        sc = "#0F6E56" if row.get('體質分數', 0) >= 13 else "#F86200" if row.get('體質分數', 0) >= 9 else "#A32D2D"
-                        st.markdown("""
-<div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:14px 18px">
-  <div style="font-size:13px;color:#888;margin-bottom:4px">{code} {name} ── 合格標的池記錄</div>
-  <div style="font-size:22px;font-weight:700;color:{c}">{grade} 　{sc}/15分</div>
-  <div style="font-size:13px;color:#414141;margin-top:6px">{reason}</div>
-</div>""".format(c=sc, code=code_q, name=row.get('名稱',''),
-                grade=row.get('等級',''), sc=int(row.get('體質分數',0)) if row.get('體質分數') else '—',
-                reason=row.get('降級原因','')), unsafe_allow_html=True)
-
-                if not found_in_pool:
-                    # 即時抓 yfinance
-                    with st.spinner("即時抓取 {} 財務資料...".format(code_q)):
-                        fin_q = get_fin_data_yfinance(code_q)
-                    import math
-                    def _vq(x):
-                        if x is None: return None
-                        try: return None if math.isnan(float(x)) else float(x)
-                        except: return None
-                    roe_q = _vq(fin_q.get('roe')); debt_q = _vq(fin_q.get('debt_ratio'))
-                    pb_q  = _vq(fin_q.get('pb'));  eps_q  = _vq(fin_q.get('trailing_eps'))
-                    eps_hist_q = fin_q.get('eps_history', {})
-                    valid_yr_q = sorted([y for y in eps_hist_q if eps_hist_q[y] is not None], reverse=True)
-                    q_result = calc_quality_score_v2(code_q, {'type':'個股'}, roe_q, debt_q,
-                                                     fin_q.get('bvps'), fin_q.get('price'), pb_q,
-                                                     eps_hist_q, valid_yr_q)
-                    if q_result:
-                        sc = "#0F6E56" if q_result['total'] >= 13 else "#F86200" if q_result['total'] >= 9 else "#A32D2D"
-                        st.markdown("""
-<div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:14px 18px">
-  <div style="font-size:13px;color:#888;margin-bottom:4px">{code} ── 即時計算（未建池）</div>
-  <div style="font-size:22px;font-weight:700;color:{c}">{grade}　{sc}/15分</div>
-  <div style="font-size:13px;color:#414141;margin-top:4px">A:{sa}/5　B:{sb}/5　C:{scc}/5</div>
-</div>""".format(c=sc, code=code_q, grade=q_result['grade'], sc=q_result['total'],
-                sa=q_result['score_a'], sb=q_result['score_b'], scc=q_result['score_c']),
-                unsafe_allow_html=True)
-                    else:
-                        st.warning("{} 財務資料不足，無法評分（ETF 或新掛牌股）".format(code_q))
-            elif instant_go:
-                st.warning("請輸入股票代碼")
-
-    if build_btn:
-        with st.spinner("步驟1/2：取得全市場股票清單..."):
-            all_stocks = get_all_tw_stocks()
-            individual_stocks = [s for s in all_stocks if s['type'] == '個股']
-            n_total = len(all_stocks)
-            n_indiv = len(individual_stocks)
-            n_etf_p = sum(1 for s in all_stocks if s['type'] == '被動ETF')
-            n_etf_a = sum(1 for s in all_stocks if s['type'] == '主動ETF')
-            n_other = n_total - n_indiv - n_etf_p - n_etf_a
-            st.info(
-                "取得 {} 筆股票（個股 {} 檔 ｜ 被動ETF {} 檔 ｜ 主動ETF/含字母 {} 檔 ｜ 特別股/其他 {} 檔）\n"
-                "→ 合格標的池評分對象：{} 檔個股（ETF 與特別股不做體質評分）".format(
-                    n_total, n_indiv, n_etf_p, n_etf_a, n_other, n_indiv)
-            )
-
-        est_min = round(len(individual_stocks) * 0.12 / 60, 1)
-        with st.spinner("步驟2/2：yfinance 抓取財務資料與評分（預計約{}分鐘）...".format(est_min)):
-            st.caption("✅ yfinance 不依賴 MOPS，境外IP可正常存取。資料：ROE、負債比、EPS歷史、每股淨值、現價")
-            df_pool = build_qualified_pool(all_stocks, fin_data=None)
-
-        if df_pool is not None and not df_pool.empty:
-            grade_a = df_pool[df_pool['_grade_short'] == 'A級']
-            grade_b = df_pool[df_pool['_grade_short'] == 'B級']
-            grade_c = df_pool[df_pool['_grade_short'] == 'C級']
-            excluded = df_pool[df_pool['_grade_short'] == '排除']
-            if '代碼' in df_pool.columns:
-                df_pool['代碼'] = df_pool['代碼'].astype(str).str.strip()
-            total_scored = df_pool[df_pool['體質分數'].notna()]
-            full_data = len(df_pool[df_pool['資料完整度'] == '100%']) if '資料完整度' in df_pool.columns else 0
-            partial_data = len(total_scored) - full_data
-            st.session_state['df_pool'] = df_pool
-            disk_ok = save_pool_to_disk(df_pool)
-            st.success(
-                "✅ 分級完成！資料來源：yfinance\n\n"
-                "🥇 A級：{}檔　🥈 B級：{}檔　🥉 C級：{}檔　❌ 排除：{}檔\n\n"
-                "📊 評分完整度：{}檔100%完整、{}檔部分資料\n\n"
-                "💾 {}".format(
-                    len(grade_a), len(grade_b), len(grade_c), len(excluded),
-                    full_data, partial_data,
-                    "已儲存本地快取（12小時有效，重新整理自動還原）" if disk_ok else "建立在記憶體"
-                )
-            )
-        else:
-            st.error("❌ 建立失敗，請確認 requirements.txt 含 yfinance>=0.2.36 並已重新部署")
 
     # 顯示合格標的池
     df_pool = st.session_state.get('df_pool', None)
@@ -5290,9 +5484,131 @@ with tab6:
     else:
         st.info(
             "📋 尚未建立合格標的池\n\n"
-            "請點上方「🔄 建立/更新合格標的池」按鈕，約需 3～5 分鐘。\n\n"
+            "請至【🛠️ 建池與個股快查】頁籤點「🔄 建立/更新合格標的池」按鈕，約需 3～5 分鐘。\n\n"
             "建立後頁面會自動顯示 A/B/C 級標的與 15 分制體質評分。"
         )
+
+
+with tab_build:
+    st.markdown(_tab_icon("icon-building", "建池與個股快查", "建立/更新合格標的池 · 個股即時體質查詢 · 進場前六條件確認"), unsafe_allow_html=True)
+    st.caption("池子建好後，請至【📋 合格標的池】頁籤查看完整 A/B/C 級清單與市場背景快照。")
+    st.divider()
+
+    # ── 建立合格標的池 ──
+    st.markdown("### 🔍 建立合格標的池")
+
+    col_btn1, col_btn2, col_info = st.columns([1, 1, 3])
+    with col_btn1:
+        build_btn = st.button("🔄 建立/更新合格標的池", type="primary", key="build_pool")
+    with col_btn2:
+        quick_btn = st.button("⚡ 快速查詢（個股）", key="quick_check_btn")
+    with col_info:
+        st.caption("建立完整池子需要抓取約2000檔財務資料（約需3～5分鐘）。池子每季更新一次即可。")
+
+    # ── 快速查詢（不需要建立完整池子）──
+    if quick_btn:
+        st.markdown("#### 個股即時體質查詢")
+        q_col1, q_col2 = st.columns([1, 3])
+        with q_col1:
+            instant_code = st.text_input("輸入代碼", placeholder="例：2330", key="instant_query_code")
+            instant_go = st.button("查詢", key="instant_query_go")
+        with q_col2:
+            if instant_go and instant_code.strip():
+                code_q = instant_code.strip()
+                # 先查 pool
+                df_pool_check = st.session_state.get('df_pool', None)
+                found_in_pool = False
+                if df_pool_check is not None and not df_pool_check.empty:
+                    df_pool_check['代碼'] = df_pool_check['代碼'].astype(str).str.strip()
+                    row_df = df_pool_check[df_pool_check['代碼'] == code_q]
+                    if not row_df.empty:
+                        found_in_pool = True
+                        row = row_df.iloc[0]
+                        sc = "#0F6E56" if row.get('體質分數', 0) >= 13 else "#F86200" if row.get('體質分數', 0) >= 9 else "#A32D2D"
+                        st.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:14px 18px">
+  <div style="font-size:13px;color:#888;margin-bottom:4px">{code} {name} ── 合格標的池記錄</div>
+  <div style="font-size:22px;font-weight:700;color:{c}">{grade} 　{sc}/15分</div>
+  <div style="font-size:13px;color:#414141;margin-top:6px">{reason}</div>
+</div>""".format(c=sc, code=code_q, name=row.get('名稱',''),
+                grade=row.get('等級',''), sc=int(row.get('體質分數',0)) if row.get('體質分數') else '—',
+                reason=row.get('降級原因','')), unsafe_allow_html=True)
+
+                if not found_in_pool:
+                    # 即時抓 yfinance
+                    with st.spinner("即時抓取 {} 財務資料...".format(code_q)):
+                        fin_q = get_fin_data_yfinance(code_q)
+                    import math
+                    def _vq(x):
+                        if x is None: return None
+                        try: return None if math.isnan(float(x)) else float(x)
+                        except: return None
+                    roe_q = _vq(fin_q.get('roe')); debt_q = _vq(fin_q.get('debt_ratio'))
+                    pb_q  = _vq(fin_q.get('pb'));  eps_q  = _vq(fin_q.get('trailing_eps'))
+                    eps_hist_q = fin_q.get('eps_history', {})
+                    valid_yr_q = sorted([y for y in eps_hist_q if eps_hist_q[y] is not None], reverse=True)
+                    q_result = calc_quality_score_v2(code_q, {'type':'個股'}, roe_q, debt_q,
+                                                     fin_q.get('bvps'), fin_q.get('price'), pb_q,
+                                                     eps_hist_q, valid_yr_q)
+                    if q_result:
+                        sc = "#0F6E56" if q_result['total'] >= 13 else "#F86200" if q_result['total'] >= 9 else "#A32D2D"
+                        st.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:14px 18px">
+  <div style="font-size:13px;color:#888;margin-bottom:4px">{code} ── 即時計算（未建池）</div>
+  <div style="font-size:22px;font-weight:700;color:{c}">{grade}　{sc}/15分</div>
+  <div style="font-size:13px;color:#414141;margin-top:4px">A:{sa}/5　B:{sb}/5　C:{scc}/5</div>
+</div>""".format(c=sc, code=code_q, grade=q_result['grade'], sc=q_result['total'],
+                sa=q_result['score_a'], sb=q_result['score_b'], scc=q_result['score_c']),
+                unsafe_allow_html=True)
+                    else:
+                        st.warning("{} 財務資料不足，無法評分（ETF 或新掛牌股）".format(code_q))
+            elif instant_go:
+                st.warning("請輸入股票代碼")
+
+    if build_btn:
+        with st.spinner("步驟1/2：取得全市場股票清單..."):
+            all_stocks = get_all_tw_stocks()
+            individual_stocks = [s for s in all_stocks if s['type'] == '個股']
+            n_total = len(all_stocks)
+            n_indiv = len(individual_stocks)
+            n_etf_p = sum(1 for s in all_stocks if s['type'] == '被動ETF')
+            n_etf_a = sum(1 for s in all_stocks if s['type'] == '主動ETF')
+            n_other = n_total - n_indiv - n_etf_p - n_etf_a
+            st.info(
+                "取得 {} 筆股票（個股 {} 檔 ｜ 被動ETF {} 檔 ｜ 主動ETF/含字母 {} 檔 ｜ 特別股/其他 {} 檔）\n"
+                "→ 合格標的池評分對象：{} 檔個股（ETF 與特別股不做體質評分）".format(
+                    n_total, n_indiv, n_etf_p, n_etf_a, n_other, n_indiv)
+            )
+
+        est_min = round(len(individual_stocks) * 0.12 / 60, 1)
+        with st.spinner("步驟2/2：yfinance 抓取財務資料與評分（預計約{}分鐘）...".format(est_min)):
+            st.caption("✅ yfinance 不依賴 MOPS，境外IP可正常存取。資料：ROE、負債比、EPS歷史、每股淨值、現價")
+            df_pool = build_qualified_pool(all_stocks, fin_data=None)
+
+        if df_pool is not None and not df_pool.empty:
+            grade_a = df_pool[df_pool['_grade_short'] == 'A級']
+            grade_b = df_pool[df_pool['_grade_short'] == 'B級']
+            grade_c = df_pool[df_pool['_grade_short'] == 'C級']
+            excluded = df_pool[df_pool['_grade_short'] == '排除']
+            if '代碼' in df_pool.columns:
+                df_pool['代碼'] = df_pool['代碼'].astype(str).str.strip()
+            total_scored = df_pool[df_pool['體質分數'].notna()]
+            full_data = len(df_pool[df_pool['資料完整度'] == '100%']) if '資料完整度' in df_pool.columns else 0
+            partial_data = len(total_scored) - full_data
+            st.session_state['df_pool'] = df_pool
+            disk_ok = save_pool_to_disk(df_pool)
+            st.success(
+                "✅ 分級完成！資料來源：yfinance\n\n"
+                "🥇 A級：{}檔　🥈 B級：{}檔　🥉 C級：{}檔　❌ 排除：{}檔\n\n"
+                "📊 評分完整度：{}檔100%完整、{}檔部分資料\n\n"
+                "💾 {}".format(
+                    len(grade_a), len(grade_b), len(grade_c), len(excluded),
+                    full_data, partial_data,
+                    "已儲存本地快取（12小時有效，重新整理自動還原）" if disk_ok else "建立在記憶體"
+                )
+            )
+        else:
+            st.error("❌ 建立失敗，請確認 requirements.txt 含 yfinance>=0.2.36 並已重新部署")
 
     st.divider()
 
@@ -5366,6 +5682,8 @@ with tab6:
                 st.warning("請先建立合格標的池，或此代碼不在個股範圍內")
 
 
+
+
 with tab1:
     st.caption("📄 PDF說明：請用下方「下載HTML報告」按鈕，下載後在瀏覽器直接開啟，再按 Ctrl+P 存成PDF（完整輸出，不受 iframe 限制）")
 
@@ -5401,11 +5719,12 @@ with tab1:
         for i, stock in enumerate(scan_list):
             code = stock["code"]
             status.text("掃描中：" + code + " " + stock["name"] + "（" + str(i + 1) + "/" + str(total) + "）")
-            prices = get_yahoo_history(code, days=60)
+            prices, volumes = get_yahoo_history_pv(code, days=110)
             ret = calc_rolling_return_latest(prices)
             if ret is not None and ret <= threshold1:
                 close = calc_latest_close(prices)
                 consec = calc_consecutive_trigger_days(prices, threshold1)
+                extras = calc_scan_extras(prices, volumes)
                 raw_results.append({
                     "產業群組": stock["group"],
                     "產業別": stock["industry"],
@@ -5414,6 +5733,9 @@ with tab1:
                     "最新收盤價": close,
                     "滾動10日報酬率": "{:.2f}%".format(ret),
                     "連續觸發天數": consec,
+                    "量能比": extras["vol_ratio"],
+                    "20日均量張": extras["avg_vol20"],
+                    "60日乖離": extras["bias60"],
                     "數值": ret
                 })
             progress.progress((i + 1) / total)
@@ -5454,6 +5776,32 @@ with tab1:
                     }
 
             has_pool = len(pool_score_dict) > 0
+
+            def _fmt_scan_vol(v):
+                """量能比格式化：🔥恐慌爆量（反彈率較高）/ 🧊量縮陰跌（接刀風險）"""
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    return "—"
+                if v >= 1.5: return "🔥{:.1f}x".format(v)
+                if v < 0.8:  return "🧊{:.1f}x".format(v)
+                return "{:.1f}x".format(v)
+
+            def _fmt_scan_liq(v):
+                try:
+                    v = int(v)
+                except (TypeError, ValueError):
+                    return "—"
+                if v < 500: return "⚠️{:,}張".format(v)
+                return "{:,}張".format(v)
+
+            def _fmt_scan_bias(v):
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    return "—"
+                if v <= -15: return "🎯{:.1f}%".format(v)
+                return "{:.1f}%".format(v)
 
             rows = []
             for r in results:
@@ -5555,6 +5903,9 @@ with tab1:
                     "收盤價": r.get("最新收盤價", ""),
                     "10日報酬": r.get("滾動10日報酬率", ""),
                     "連續天數": r.get("連續觸發天數", ""),
+                    "量能": _fmt_scan_vol(r.get("量能比")),
+                    "20日均量": _fmt_scan_liq(r.get("20日均量張")),
+                    "60日乖離": _fmt_scan_bias(r.get("60日乖離")),
 
                     "②體質合格": "✅" if c2_ok else ("—" if not has_pool else "❌"),
                     "③市場正常": "✅" if c3_ok else "❌",
@@ -5666,6 +6017,7 @@ with tab1:
                                              "_score_sort", "_pct_sort", "_inner_sort"],
                                     errors="ignore")
             st.caption("💡 想看「風險偵測」欄位的完整詳情（含新聞標題、重訊記錄）？前往【🛡️ 個股風險查詢】頁籤輸入代碼查看。")
+            st.caption("📊 新欄位判讀：**量能** 🔥≥1.5x恐慌爆量（賣壓宣洩，歷史反彈率較高）｜🧊<0.8x量縮陰跌（無承接，接刀風險）。**20日均量** ⚠️<500張流動性不足，訊號可能是噪音且難以成交。**60日乖離** 🎯≤-15%深度負乖離（均值回歸甜蜜區）。三項為輔助判讀，未納入信號分級——待追蹤日誌累積實績驗證後再決定是否升級為正式條件。")
 
             # ── 統計摘要 ──
             strong = (df_show["信號"] == "🔥 強烈").sum()
@@ -5720,6 +6072,30 @@ with tab1:
                 hide_index=True,
                 height=min(50 + len(_df_display) * 35, 600),
             )
+            # ── ➕ 加入追蹤日誌 ──
+            with st.expander("➕ 加入追蹤日誌（記錄進場，於【📒 追蹤日誌】管理出場與實績）"):
+                _j_opts = ["{} {}".format(r["代碼"], r["名稱"]) for _, r in df_show.iterrows()]
+                _j_sel = st.multiselect("選擇標的（建議只加入你真的進場的）", _j_opts, key="journal_sel")
+                if st.button("➕ 加入追蹤", key="journal_add") and _j_sel:
+                    _jdf = load_journal(); _added = 0
+                    for _s in _j_sel:
+                        _c = _s.split()[0]
+                        _row = df_show[df_show["代碼"].astype(str) == _c]
+                        if _row.empty:
+                            continue
+                        if not _jdf[(_jdf["代碼"].astype(str) == _c) & (_jdf["狀態"] == "持有中")].empty:
+                            continue
+                        _r0 = _row.iloc[0]
+                        _price = _r0.get("收盤價", _r0.get("最新收盤價", ""))
+                        _jdf = pd.concat([_jdf, pd.DataFrame([{
+                            "代碼": _c, "名稱": _r0.get("名稱", ""), "信號": str(_r0.get("信號", "")),
+                            "進場日": datetime.now().strftime("%Y-%m-%d"), "進場價": _price,
+                            "目標天數": 20, "目標報酬%": 10, "狀態": "持有中",
+                            "出場日": "", "出場價": "", "實際報酬%": ""}])], ignore_index=True)
+                        _added += 1
+                    save_journal(_jdf)
+                    st.success("已加入 {} 檔 → 至【📒 追蹤日誌】查看".format(_added))
+
             col_scan_dl1, col_scan_dl2 = st.columns(2)
             with col_scan_dl1:
                 st.download_button("📥 下載CSV", df_show.to_csv(index=False).encode("utf-8-sig"), "alert_scan.csv", "text/csv")
@@ -5774,11 +6150,169 @@ with tab1:
 # ==============================
 # TAB 2: 批次回測
 # ==============================
+with tab_journal:
+    st.markdown(_tab_icon("icon-trend", "追蹤日誌", "記錄信號進出場 · 驗證實際勝率 vs 回測"), unsafe_allow_html=True)
+    _jdf = load_journal()
+    if _jdf.empty:
+        st.info("尚無追蹤記錄。至【🔍 每日警示掃描】結果下方「➕ 加入追蹤日誌」開始。")
+    else:
+        _open = _jdf[_jdf["狀態"] == "持有中"].copy()
+        _closed = _jdf[_jdf["狀態"] == "已結案"].copy()
+        if not _open.empty:
+            st.markdown("#### 🟢 持有中（{} 檔）".format(len(_open)))
+            _rows = []
+            with st.spinner("更新最新股價..."):
+                for _, _r in _open.iterrows():
+                    _last = None
+                    try:
+                        _pr = get_yahoo_history(str(_r["代碼"]), days=15)
+                        if _pr:
+                            _last = _pr[sorted(_pr.keys())[-1]]
+                    except Exception:
+                        pass
+                    try:
+                        _entry = float(_r["進場價"])
+                    except Exception:
+                        _entry = None
+                    _pnl = round((_last - _entry) / _entry * 100, 2) if (_last and _entry) else None
+                    try:
+                        _dh = (datetime.now() - datetime.strptime(str(_r["進場日"]), "%Y-%m-%d")).days
+                    except Exception:
+                        _dh = None
+                    try:
+                        _td = int(float(_r.get("目標天數", 20) or 20)); _tr = float(_r.get("目標報酬%", 10) or 10)
+                    except Exception:
+                        _td, _tr = 20, 10.0
+                    if _pnl is not None and _pnl <= -15:
+                        _light = "🔴 警戒（≤-15%）"
+                    elif (_pnl is not None and _pnl >= _tr) or (_dh is not None and _dh >= _td):
+                        _light = "🟡 建議出場"
+                    else:
+                        _light = "🟢 持有中"
+                    _rows.append({"代碼": _r["代碼"], "名稱": _r["名稱"], "信號": _r["信號"],
+                                  "進場日": _r["進場日"], "進場價": _r["進場價"],
+                                  "最新價": _last if _last else "—",
+                                  "損益%": _pnl if _pnl is not None else "—",
+                                  "持有/建議天數": "{}/{}".format(_dh, _td) if _dh is not None else "—",
+                                  "狀態燈": _light})
+            st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+            st.caption("🟡 建議出場 = 達目標報酬或到期（預設20天/+10%，依個股回測可自行調整CSV）｜🔴 = 損益≤-15%，優先檢查【🛡️ 個股風險查詢】")
+            with st.expander("✅ 結案（記錄實際出場價）"):
+                _cs = st.selectbox("選擇標的", ["{} {}".format(_r["代碼"], _r["名稱"]) for _, _r in _open.iterrows()], key="j_close_sel")
+                _ep = st.number_input("出場價", min_value=0.0, step=0.05, key="j_close_p")
+                if st.button("確認結案", key="j_close_btn") and _ep > 0:
+                    _cc = _cs.split()[0]
+                    _idx = _jdf[(_jdf["代碼"].astype(str) == _cc) & (_jdf["狀態"] == "持有中")].index
+                    if len(_idx):
+                        _i = _idx[0]
+                        try:
+                            _ar = round((_ep - float(_jdf.loc[_i, "進場價"])) / float(_jdf.loc[_i, "進場價"]) * 100, 2)
+                        except Exception:
+                            _ar = ""
+                        _jdf.loc[_i, ["狀態", "出場日", "出場價", "實際報酬%"]] = [
+                            "已結案", datetime.now().strftime("%Y-%m-%d"), str(_ep), str(_ar)]
+                        save_journal(_jdf)
+                        st.success("已結案，實際報酬 {}%".format(_ar))
+                        st.rerun()
+        if not _closed.empty:
+            st.markdown("#### 📊 已結案實績（實際 vs 回測的驗證閉環）")
+            _rets = pd.to_numeric(_closed["實際報酬%"], errors="coerce").dropna()
+            if len(_rets):
+                _c1, _c2, _c3 = st.columns(3)
+                _c1.metric("實際勝率", "{:.0f}%".format((_rets > 0).mean() * 100))
+                _c2.metric("平均報酬", "{:.1f}%".format(_rets.mean()))
+                _c3.metric("結案筆數", len(_rets))
+                st.caption("對照【🏆 全市場勝率排行】的回測數字：實際若持續明顯低於回測（差>15個百分點），代表倖存者偏誤/T+1落差/市場結構改變，策略需重新檢視。此為量能/乖離等新指標是否升級為正式條件的裁判依據。")
+            st.dataframe(_closed, use_container_width=True, hide_index=True)
+    _jc1, _jc2 = st.columns(2)
+    with _jc1:
+        if not _jdf.empty:
+            st.download_button("📥 備份日誌CSV", _jdf.to_csv(index=False).encode("utf-8-sig"),
+                               "signal_journal.csv", "text/csv", key="j_dl")
+    with _jc2:
+        _up = st.file_uploader("📤 還原日誌CSV（雲端重啟後用備份還原）", type=["csv"], key="j_up")
+        if _up is not None:
+            try:
+                save_journal(pd.read_csv(_up, dtype={"代碼": str}))
+                st.success("已還原")
+                st.rerun()
+            except Exception as _e:
+                st.error("還原失敗：{}".format(str(_e)[:50]))
+    st.caption("⚠️ Streamlit Cloud 重啟會清除 /tmp 暫存，請定期「備份日誌CSV」。")
+
+
 with tab2:
     st.markdown(_tab_icon("icon-trend", "批次回測", "最長15年 · 多標的同時回測"), unsafe_allow_html=True)
     st.caption("📄 PDF說明：請用下方「下載HTML報告」按鈕，下載後在瀏覽器直接開啟，再按 Ctrl+P 存成PDF（完整輸出，不受 iframe 限制）")
 
     threshold2 = st.slider("觸發門檻（跌幅%）", min_value=-30, max_value=-3, value=-10, step=1, key="t2")
+
+    with st.expander("🧪 循環股評分驗證實驗（A/B對照：固定ROE>15% vs 產業相對評分）"):
+        st.caption("目的：用數據證明或否決「產業相對ROE評分」提案。裁定標準：B組樣本≥30且20日勝率高於A組5個百分點以上才改制度；否則永久維持現行固定門檻。需先建立合格標的池。")
+        _CYC_KW = ["鋼鐵", "航運", "塑膠", "塑化", "水泥", "玻璃", "造紙", "橡膠", "光電", "面板", "記憶體", "營建", "化學", "化工"]
+        if st.button("🧪 執行驗證（各組取12檔抓15年資料，約2-4分鐘）", key="cyc_ab"):
+            _dfp = st.session_state.get('df_pool')
+            if _dfp is None or _dfp.empty or '產業別' not in _dfp.columns or 'ROE%' not in _dfp.columns:
+                st.error("需先至【🛠️ 建池與個股快查】建立合格標的池（需含產業別/ROE%欄位）")
+            else:
+                _cyc = _dfp[_dfp['產業別'].astype(str).apply(lambda x: any(k in x for k in _CYC_KW))].copy()
+                _cyc['_roe'] = pd.to_numeric(_cyc['ROE%'], errors='coerce')
+                _cyc = _cyc.dropna(subset=['_roe'])
+                if len(_cyc) < 10:
+                    st.warning("池內循環產業僅 {} 檔，樣本不足無法驗證 → 維持現狀".format(len(_cyc)))
+                else:
+                    _ga = _cyc[_cyc['_roe'] > 15]
+                    _gb = _cyc.groupby('產業別', group_keys=False).apply(
+                        lambda g: g[g['_roe'] >= g['_roe'].median()])
+                    st.info("循環股 {} 檔｜A組(ROE>15%)：{} 檔｜B組(產業內ROE前50%)：{} 檔".format(
+                        len(_cyc), len(_ga), len(_gb)))
+                    _prog = st.progress(0)
+
+                    def _grp_stats(_codes, _label, _base):
+                        _st = {20: [], 40: [], 60: []}
+                        for _i, _c in enumerate(_codes):
+                            _prog.progress(min(0.99, _base + _i / (max(len(_codes), 1) * 2)),
+                                           text="{}：{}/{}".format(_label, _i + 1, len(_codes)))
+                            try:
+                                _pr = get_yahoo_history_15y(str(_c))
+                                if not _pr or len(_pr) < 300:
+                                    continue
+                                _ds = sorted(_pr.keys())
+                                _pv = [_pr[d] for d in _ds]
+                                for _j in range(10, len(_pv)):
+                                    if _pv[_j - 10] and (_pv[_j] - _pv[_j - 10]) / _pv[_j - 10] * 100 <= -10:
+                                        for _h in (20, 40, 60):
+                                            if _j + _h < len(_pv):
+                                                _st[_h].append((_pv[_j + _h] - _pv[_j]) / _pv[_j] * 100)
+                            except Exception:
+                                continue
+                        return _st
+
+                    _ca = list(_ga['代碼'].astype(str))[:12]
+                    _cb = list(_gb['代碼'].astype(str))[:12]
+                    _sa = _grp_stats(_ca, "A組", 0.0)
+                    _sb = _grp_stats(_cb, "B組", 0.5)
+                    _prog.empty()
+                    _rows = []
+                    for _h in (20, 40, 60):
+                        _a, _b = _sa[_h], _sb[_h]
+                        _rows.append({
+                            "持有天數": "{}日".format(_h),
+                            "A組勝率": "{:.0f}% (n={})".format(sum(1 for x in _a if x > 0) / len(_a) * 100, len(_a)) if _a else "n=0",
+                            "A組均報酬": "{:.1f}%".format(sum(_a) / len(_a)) if _a else "—",
+                            "B組勝率": "{:.0f}% (n={})".format(sum(1 for x in _b if x > 0) / len(_b) * 100, len(_b)) if _b else "n=0",
+                            "B組均報酬": "{:.1f}%".format(sum(_b) / len(_b)) if _b else "—"})
+                    st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+                    _na, _nb = len(_sa[20]), len(_sb[20])
+                    if _na >= 30 and _nb >= 30:
+                        _wa = sum(1 for x in _sa[20] if x > 0) / _na
+                        _wb = sum(1 for x in _sb[20] if x > 0) / _nb
+                        if _wb > _wa + 0.05:
+                            st.success("裁定：B組20日勝率 {:.0f}% 顯著優於 A組 {:.0f}% → 可考慮改用產業相對評分（通知我實作）".format(_wb * 100, _wa * 100))
+                        else:
+                            st.info("裁定：B組 {:.0f}% 未顯著優於 A組 {:.0f}%（需高5個百分點以上）→ 維持現行固定門檻，不改".format(_wb * 100, _wa * 100))
+                    else:
+                        st.warning("樣本不足（A={} B={}，需各≥30）→ 無法下結論，維持現狀".format(_na, _nb))
     st.markdown("**選擇回測範圍（可多選，不選預設跑全部ETF）**")
     selected2 = group_selector("tab2")
 
@@ -7073,26 +7607,24 @@ with tab4:
             rows.append(row)
 
         df_combined = pd.DataFrame(rows)
+        thr_cols = [str(thr) + "%" for thr in THRESHOLDS]
+
         # 排序：各標的在所有門檻裡的「最佳勝率」高→低
         # 避免單一門檻偏見（有些標的 -15% 勝率極高但 -10% 普通）
         def _best_wr(row):
-            best = 0
+            best = 0.0
             for col in thr_cols:
-                v = str(row.get(col, "0")).replace("%","").replace("⚠️","")
+                v = str(row.get(col, "0")).replace("%", "").replace("⚠️", "")
                 try:
                     best = max(best, float(v))
                 except Exception:
                     pass
             return best
-        thr_cols_for_sort = [str(thr) + "%" for thr in THRESHOLDS]
-        df_combined["_best_wr"] = df_combined.apply(
-            lambda r: _best_wr(r) if set(thr_cols_for_sort).issubset(df_combined.columns) else 0,
-            axis=1
-        )
-        df_combined = df_combined.sort_values("_best_wr", ascending=False).drop(
-            columns=["_best_wr"]).reset_index(drop=True)
 
-        thr_cols = [str(thr) + "%" for thr in THRESHOLDS]
+        if not df_combined.empty and set(thr_cols).issubset(df_combined.columns):
+            df_combined["_best_wr"] = df_combined.apply(_best_wr, axis=1)
+            df_combined = df_combined.sort_values("_best_wr", ascending=False).drop(
+                columns=["_best_wr"]).reset_index(drop=True)
 
         def style_winrate_cell(val):
             if str(val) in ["", "---"]:
