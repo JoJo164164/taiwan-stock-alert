@@ -3562,20 +3562,30 @@ with tab5:
     if st.button("▶️ 執行系統檢核", type="primary", key="check"):
         checks = []
 
+        # 分類邏輯修復（2026-07-09，fix/tab5-check-severity）：
+        # 這份清單必須與下方 IMPACT_MAP 裡標記 "error" 的項目逐字同步（目前3項）。
+        # 只有這3項失敗代表程式本身算錯，或唯一資料源（Yahoo Finance）掛掉、無備援可切換；
+        # 其餘項目（新聞源5源、MOPS三層、TWSE/TPEX）開發者已在下方 IMPACT_MAP 設計為
+        # "warning"（有fallback鏈或靜態清單備援），失敗時系統仍可正常運作，不該被判定為
+        # 「❌ 程式錯誤，不可信」。
+        # 舊版用 is_transient 關鍵字比對猜測是否為「偶發性」，猜錯了就跟 IMPACT_MAP
+        # 的原始設計脫節——例如 HTTP403/HTTP404/非JSON回應 都不含那些關鍵字，
+        # 導致本來設計成「可容忍」的降級被誤報成「程式錯誤」。
+        CRITICAL_CHECKS = {
+            "Yahoo Finance API（2330）",
+            "滾動10日報酬計算邏輯",
+            "觸發計算驗證（2330 @-7%）",
+        }
+
         def run_check(name, fn):
             try:
                 ok, detail = fn()
-                # 偵測「偶發性網路問題」→ 用警告而非錯誤
-                is_transient = any(kw in detail for kw in [
-                    "偶發性", "稍後再試", "Expecting value", "Connection", "Timeout",
-                    "JSONDecodeError", "ConnectionError", "ReadTimeout"
-                ])
                 if ok:
                     status = "✅ 正常"
-                elif is_transient:
-                    status = "⚠️ 暫時異常"   # 橘色警告，不算系統失敗
-                else:
+                elif name in CRITICAL_CHECKS:
                     status = "❌ 異常"
+                else:
+                    status = "⚠️ 暫時異常"   # 有fallback/備援可用，不算系統失敗
                 checks.append({"項目": name, "狀態": status, "說明": detail})
             except Exception as e:
                 checks.append({"項目": name, "狀態": "❌ 失敗", "說明": str(e)[:120]})
