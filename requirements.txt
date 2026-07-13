@@ -1,21 +1,29 @@
 # 台股滾動10日跌幅系統 v14
 # Streamlit Cloud 部署用 requirements.txt
-# 依據 app.py 實際 import 的第三方套件反推產生（含函數內延遲 import）
-# 全部使用 >= 開放版本（與原本能跑的策略一致，不激進釘死，降低相容性風險）
+#
+# ★ 關鍵修正（2026-07-13）★
+# 病因：原本 pandas>=2.0.0 開放上限，Streamlit Cloud 於 2026/7 自動抓到 pandas 3.0.3。
+#   pandas 3.0 有大量破壞性變更（移除/改動 2.x API），導致 8500 行的 app.py 一啟動
+#   即崩潰 → streamlit spawn error → 無限重啟 →「Oh no」。log 已證實裝的是 pandas==3.0.3。
+# 修法：把 pandas / numpy 釘在 2.x（避開 3.0），其餘維持 >= 不動。
+#   pandas 2.3.3 為 2.x 系列首個相容 Python 3.14 的版本（本環境為 Python 3.14.6）。
 
-# ── 核心框架（app 啟動即載入，缺一不可）──
+# ── 核心框架 ──
 streamlit>=1.32.0
-pandas>=2.0.0
+# ↓↓↓ 這兩行是這次修好問題的關鍵 ↓↓↓
+pandas>=2.3.3,<3.0
+numpy>=2.0,<3
+# ↑↑↑ 擋掉 pandas 3.0 破壞性升級 ↑↑↑
 plotly>=5.18.0
 
 # ── 資料抓取 ──
 yfinance>=0.2.38
 requests>=2.31.0
 
-# ── PDF 匯出模組（app.py 的 _pdf_* 函數使用，原本 requirements 漏列！）──
+# ── PDF 匯出模組（app.py 的 _pdf_* 函數使用；原始 requirements 曾漏列）──
 reportlab>=4.0.0
 
 # ── 每日市場簡報 Tab 專用 ──
 feedparser>=6.0.11          # RSS 新聞抓取
 deep_translator>=1.11.4     # 英文新聞自動翻譯中文（主力）
-googletrans>=4.0.0rc1       # 翻譯備援（app.py 內有 try/except 保護，缺此套件不會使 app 崩潰）
+googletrans==4.0.0rc1       # 翻譯備援（app.py 內有 try/except 保護，缺此套件不會使 app 崩潰）
