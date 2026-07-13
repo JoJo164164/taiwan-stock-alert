@@ -1,30 +1,13 @@
 # 台股滾動10日跌幅系統 v14
 # Streamlit Cloud 部署用 requirements.txt
-# ★★★ 版本全部釘死（==），確保每次部署環境完全可重現 ★★★
-# 教訓（2026-07-13）：原本用 >= 開放上限，導致 pip 每次部署可能自動抓最新版套件；
-#   urllib3 在 2025Q4~2026Q1 連續改版（2.5~2.6.x，含連線/TLS/解壓行為變動），
-#   疑似造成 TWSE/MOPS 等站的 WAF 把雲端請求當機器人擋下 → 「code沒改卻突然抓不到」。
-#   釘死版本後，環境不再隨部署漂移，可排除此變因。
-
 # ── 核心框架 ──
-streamlit==1.42.0
-pandas==2.2.3
-plotly==5.24.1
-
+streamlit>=1.32.0
+pandas>=2.0.0
+plotly>=5.18.0
 # ── 資料抓取 ──
-yfinance==0.2.51
-requests==2.32.3
-
-# ★ 關鍵：顯式釘住 requests 的底層依賴，避免被自動升級到會改變連線指紋的新版
-#   （requests 本身不會自動幫你釘 urllib3 上限，必須自己釘）
-urllib3==2.2.3
-certifi==2024.12.14
-charset-normalizer==3.4.0
-idna==3.10
-
+yfinance>=0.2.38
+requests>=2.31.0
 # ── 每日市場簡報 Tab 專用 ──
-feedparser==6.0.11          # Reuters RSS 新聞抓取
-deep_translator==1.11.4     # 英文新聞自動翻譯中文（主力）
-# googletrans 已移除：與 deep_translator 功能重複，且其 4.0.0rc1 為測試版、
-#   長期不穩定（常整包掛掉導致 app 起不來）。deep_translator 已是主力，足以覆蓋翻譯需求。
-#   若日後確實需要翻譯備援，建議改用穩定套件而非 googletrans rc 版。
+feedparser>=6.0.11          # Reuters RSS 新聞抓取
+deep_translator>=1.11.4     # 英文新聞自動翻譯中文（主力）
+googletrans==4.0.0rc1       # 翻譯備援（注意：只有 rc1 版本穩定
