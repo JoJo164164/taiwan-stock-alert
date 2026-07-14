@@ -2904,7 +2904,7 @@ def group_selector(key_prefix):
 tab0, tab5, tab6, tab_build, tab1, tab_journal, tab3, tab4, tab2, tab_mops, tab_brief = st.tabs([
     "📖 使用說明",
     "🔧 系統檢核",
-    "📋 合格標的池",
+    "🌐 六大市場短線指標",
     "🛠️ 建池與個股快查",
     "🔍 每日警示掃描",
     "📒 追蹤日誌",
@@ -4820,10 +4820,8 @@ def get_twii_heat():
 
 
 with tab6:
-    st.markdown(_tab_icon("icon-building", "合格標的池", "15分體質評分篩選 · 找出值得進場的好公司"), unsafe_allow_html=True)
-    st.caption("📄 PDF說明：請用下方「下載HTML報告」按鈕，下載後在瀏覽器直接開啟，再按 Ctrl+P 存成PDF（完整輸出，不受 iframe 限制）")
-
-    st.caption("體質評分系統：從ROE、EPS成長、負債比、估值三個維度為個股打分，找出「基本面紮實、值得在超跌時進場」的標的。合格標的池的用途是縮小候選範圍，觸發信號仍以每日警示掃描為準。")
+    st.markdown(_tab_icon("icon-building", "六大市場短線指標", "進場前先看大環境 · 判斷是情緒性超跌還是系統性風險"), unsafe_allow_html=True)
+    st.caption("六大市場短線指標：SOX費半、美債10年殖利率、VIX、台幣匯率、S&P500、美元指數，加上台股熱度計與綜合判斷。合格標的池的 A/B/C 清單已移至【🛠️ 建池與個股快查】頁籤。")
     st.divider()
 
     # 預設值，確保後面的程式不會因未定義而崩潰
@@ -5348,6 +5346,130 @@ with tab6:
     st.divider()
 
 
+    # 合格標的池的六條件說明與 A/B/C 清單已搬到【🛠️ 建池與個股快查】頁籤（與建池按鈕同頁）。
+
+
+with tab_build:
+    st.markdown(_tab_icon("icon-building", "建池與個股快查", "建立/更新合格標的池 · 個股即時體質查詢 · 進場前六條件確認"), unsafe_allow_html=True)
+    st.caption("建立/更新合格標的池，建好後 A/B/C 級完整清單、體質評分、下載都在本頁下方。大盤總經環境請看【🌐 六大市場短線指標】頁籤。")
+    st.divider()
+
+    # ── 建立合格標的池 ──
+    st.markdown("### 🔍 建立合格標的池")
+
+    col_btn1, col_btn2, col_info = st.columns([1, 1, 3])
+    with col_btn1:
+        build_btn = st.button("🔄 建立/更新合格標的池", type="primary", key="build_pool")
+    with col_btn2:
+        quick_btn = st.button("⚡ 快速查詢（個股）", key="quick_check_btn")
+    with col_info:
+        st.caption("建立完整池子需要抓取約2000檔財務資料（約需3～5分鐘）。池子每季更新一次即可。")
+
+    # ── 快速查詢（不需要建立完整池子）──
+    if quick_btn:
+        st.markdown("#### 個股即時體質查詢")
+        q_col1, q_col2 = st.columns([1, 3])
+        with q_col1:
+            instant_code = st.text_input("輸入代碼", placeholder="例：2330", key="instant_query_code")
+            instant_go = st.button("查詢", key="instant_query_go")
+        with q_col2:
+            if instant_go and instant_code.strip():
+                code_q = instant_code.strip()
+                # 先查 pool
+                df_pool_check = st.session_state.get('df_pool', None)
+                found_in_pool = False
+                if df_pool_check is not None and not df_pool_check.empty:
+                    df_pool_check['代碼'] = df_pool_check['代碼'].astype(str).str.strip()
+                    row_df = df_pool_check[df_pool_check['代碼'] == code_q]
+                    if not row_df.empty:
+                        found_in_pool = True
+                        row = row_df.iloc[0]
+                        sc = "#0F6E56" if row.get('體質分數', 0) >= 13 else "#F86200" if row.get('體質分數', 0) >= 9 else "#A32D2D"
+                        st.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:14px 18px">
+  <div style="font-size:13px;color:#888;margin-bottom:4px">{code} {name} ── 合格標的池記錄</div>
+  <div style="font-size:22px;font-weight:700;color:{c}">{grade} 　{sc}/15分</div>
+  <div style="font-size:13px;color:#414141;margin-top:6px">{reason}</div>
+</div>""".format(c=sc, code=code_q, name=row.get('名稱',''),
+                grade=row.get('等級',''), sc=int(row.get('體質分數',0)) if row.get('體質分數') else '—',
+                reason=row.get('降級原因','')), unsafe_allow_html=True)
+
+                if not found_in_pool:
+                    # 即時抓 yfinance
+                    with st.spinner("即時抓取 {} 財務資料...".format(code_q)):
+                        fin_q = get_fin_data_yfinance(code_q)
+                    import math
+                    def _vq(x):
+                        if x is None: return None
+                        try: return None if math.isnan(float(x)) else float(x)
+                        except: return None
+                    roe_q = _vq(fin_q.get('roe')); debt_q = _vq(fin_q.get('debt_ratio'))
+                    pb_q  = _vq(fin_q.get('pb'));  eps_q  = _vq(fin_q.get('trailing_eps'))
+                    eps_hist_q = fin_q.get('eps_history', {})
+                    valid_yr_q = sorted([y for y in eps_hist_q if eps_hist_q[y] is not None], reverse=True)
+                    q_result = calc_quality_score_v2(code_q, {'type':'個股'}, roe_q, debt_q,
+                                                     fin_q.get('bvps'), fin_q.get('price'), pb_q,
+                                                     eps_hist_q, valid_yr_q)
+                    if q_result:
+                        sc = "#0F6E56" if q_result['total'] >= 13 else "#F86200" if q_result['total'] >= 9 else "#A32D2D"
+                        st.markdown("""
+<div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:14px 18px">
+  <div style="font-size:13px;color:#888;margin-bottom:4px">{code} ── 即時計算（未建池）</div>
+  <div style="font-size:22px;font-weight:700;color:{c}">{grade}　{sc}/15分</div>
+  <div style="font-size:13px;color:#414141;margin-top:4px">A:{sa}/5　B:{sb}/5　C:{scc}/5</div>
+</div>""".format(c=sc, code=code_q, grade=q_result['grade'], sc=q_result['total'],
+                sa=q_result['score_a'], sb=q_result['score_b'], scc=q_result['score_c']),
+                unsafe_allow_html=True)
+                    else:
+                        st.warning("{} 財務資料不足，無法評分（ETF 或新掛牌股）".format(code_q))
+            elif instant_go:
+                st.warning("請輸入股票代碼")
+
+    if build_btn:
+        with st.spinner("步驟1/2：取得全市場股票清單..."):
+            all_stocks = get_all_tw_stocks()
+            individual_stocks = [s for s in all_stocks if s['type'] == '個股']
+            n_total = len(all_stocks)
+            n_indiv = len(individual_stocks)
+            n_etf_p = sum(1 for s in all_stocks if s['type'] == '被動ETF')
+            n_etf_a = sum(1 for s in all_stocks if s['type'] == '主動ETF')
+            n_other = n_total - n_indiv - n_etf_p - n_etf_a
+            st.info(
+                "取得 {} 筆股票（個股 {} 檔 ｜ 被動ETF {} 檔 ｜ 主動ETF/含字母 {} 檔 ｜ 特別股/其他 {} 檔）\n"
+                "→ 合格標的池評分對象：{} 檔個股（ETF 與特別股不做體質評分）".format(
+                    n_total, n_indiv, n_etf_p, n_etf_a, n_other, n_indiv)
+            )
+
+        est_min = round(len(individual_stocks) * 0.12 / 60, 1)
+        with st.spinner("步驟2/2：yfinance 抓取財務資料與評分（預計約{}分鐘）...".format(est_min)):
+            st.caption("✅ yfinance 不依賴 MOPS，境外IP可正常存取。資料：ROE、負債比、EPS歷史、每股淨值、現價")
+            df_pool = build_qualified_pool(all_stocks, fin_data=None)
+
+        if df_pool is not None and not df_pool.empty:
+            grade_a = df_pool[df_pool['_grade_short'] == 'A級']
+            grade_b = df_pool[df_pool['_grade_short'] == 'B級']
+            grade_c = df_pool[df_pool['_grade_short'] == 'C級']
+            excluded = df_pool[df_pool['_grade_short'] == '排除']
+            if '代碼' in df_pool.columns:
+                df_pool['代碼'] = df_pool['代碼'].astype(str).str.strip()
+            total_scored = df_pool[df_pool['體質分數'].notna()]
+            full_data = len(df_pool[df_pool['資料完整度'] == '100%']) if '資料完整度' in df_pool.columns else 0
+            partial_data = len(total_scored) - full_data
+            st.session_state['df_pool'] = df_pool
+            disk_ok = save_pool_to_disk(df_pool)
+            st.success(
+                "✅ 分級完成！資料來源：yfinance\n\n"
+                "🥇 A級：{}檔　🥈 B級：{}檔　🥉 C級：{}檔　❌ 排除：{}檔\n\n"
+                "📊 評分完整度：{}檔100%完整、{}檔部分資料\n\n"
+                "💾 {}".format(
+                    len(grade_a), len(grade_b), len(grade_c), len(excluded),
+                    full_data, partial_data,
+                    "已儲存本地快取（12小時有效，重新整理自動還原）" if disk_ok else "建立在記憶體"
+                )
+            )
+        else:
+            st.error("❌ 建立失敗，請確認 requirements.txt 含 yfinance>=0.2.36 並已重新部署")
+
     # ── 六個條件說明 ──
     with st.expander("📖 六個篩選條件說明（價值投資財務門檻，非 Coatue 條件）"):
         st.markdown("""
@@ -5363,9 +5485,22 @@ with tab6:
 ⚠️ 注意：負債比 < 50% 會排除部分金融股，PB < 3 可能排除台積電等超級企業，這是刻意的選擇。
         """)
 
-
-    # 顯示合格標的池
+    # ── 顯示合格標的池（A/B/C 清單）──
+    # Bug修復（refactor/tab6-reorg）：session_state 的 df_pool 在 Cloud 切tab/閒置後可能被清空，
+    # 若記憶體沒有就從磁碟快取還原，避免建好池切頁後清單消失、誤顯示「尚未建立」。
     df_pool = st.session_state.get('df_pool', None)
+    if df_pool is None or (hasattr(df_pool, 'empty') and df_pool.empty):
+        try:
+            _restored_pool, _restored_meta = load_pool_from_disk()
+            if _restored_pool is not None and not _restored_pool.empty:
+                df_pool = _restored_pool
+                st.session_state['df_pool'] = df_pool
+                st.session_state['pool_loaded_from_disk'] = True
+                if _restored_meta and _restored_meta.get('saved_at'):
+                    st.session_state['pool_saved_at'] = _restored_meta.get('saved_at')
+        except Exception:
+            df_pool = None
+
     if df_pool is not None and not df_pool.empty:
         display_cols = ['等級', '體質分數', '體質等級', '資料完整度', '代碼', '名稱', '產業別', '降級原因',
                         '股價', 'PB', 'ROE%', '負債比%', 'PB/ROE',
@@ -5495,135 +5630,12 @@ with tab6:
                 )
             except Exception:
                 pass
-
     else:
         st.info(
             "📋 尚未建立合格標的池\n\n"
-            "請至【🛠️ 建池與個股快查】頁籤點「🔄 建立/更新合格標的池」按鈕，約需 3～5 分鐘。\n\n"
-            "建立後頁面會自動顯示 A/B/C 級標的與 15 分制體質評分。"
+            "點上方「🔄 建立/更新合格標的池」按鈕，約需 3～5 分鐘。\n\n"
+            "建立後這裡會自動顯示 A/B/C 級標的與 15 分制體質評分。"
         )
-
-
-with tab_build:
-    st.markdown(_tab_icon("icon-building", "建池與個股快查", "建立/更新合格標的池 · 個股即時體質查詢 · 進場前六條件確認"), unsafe_allow_html=True)
-    st.caption("池子建好後，請至【📋 合格標的池】頁籤查看完整 A/B/C 級清單與市場背景快照。")
-    st.divider()
-
-    # ── 建立合格標的池 ──
-    st.markdown("### 🔍 建立合格標的池")
-
-    col_btn1, col_btn2, col_info = st.columns([1, 1, 3])
-    with col_btn1:
-        build_btn = st.button("🔄 建立/更新合格標的池", type="primary", key="build_pool")
-    with col_btn2:
-        quick_btn = st.button("⚡ 快速查詢（個股）", key="quick_check_btn")
-    with col_info:
-        st.caption("建立完整池子需要抓取約2000檔財務資料（約需3～5分鐘）。池子每季更新一次即可。")
-
-    # ── 快速查詢（不需要建立完整池子）──
-    if quick_btn:
-        st.markdown("#### 個股即時體質查詢")
-        q_col1, q_col2 = st.columns([1, 3])
-        with q_col1:
-            instant_code = st.text_input("輸入代碼", placeholder="例：2330", key="instant_query_code")
-            instant_go = st.button("查詢", key="instant_query_go")
-        with q_col2:
-            if instant_go and instant_code.strip():
-                code_q = instant_code.strip()
-                # 先查 pool
-                df_pool_check = st.session_state.get('df_pool', None)
-                found_in_pool = False
-                if df_pool_check is not None and not df_pool_check.empty:
-                    df_pool_check['代碼'] = df_pool_check['代碼'].astype(str).str.strip()
-                    row_df = df_pool_check[df_pool_check['代碼'] == code_q]
-                    if not row_df.empty:
-                        found_in_pool = True
-                        row = row_df.iloc[0]
-                        sc = "#0F6E56" if row.get('體質分數', 0) >= 13 else "#F86200" if row.get('體質分數', 0) >= 9 else "#A32D2D"
-                        st.markdown("""
-<div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:14px 18px">
-  <div style="font-size:13px;color:#888;margin-bottom:4px">{code} {name} ── 合格標的池記錄</div>
-  <div style="font-size:22px;font-weight:700;color:{c}">{grade} 　{sc}/15分</div>
-  <div style="font-size:13px;color:#414141;margin-top:6px">{reason}</div>
-</div>""".format(c=sc, code=code_q, name=row.get('名稱',''),
-                grade=row.get('等級',''), sc=int(row.get('體質分數',0)) if row.get('體質分數') else '—',
-                reason=row.get('降級原因','')), unsafe_allow_html=True)
-
-                if not found_in_pool:
-                    # 即時抓 yfinance
-                    with st.spinner("即時抓取 {} 財務資料...".format(code_q)):
-                        fin_q = get_fin_data_yfinance(code_q)
-                    import math
-                    def _vq(x):
-                        if x is None: return None
-                        try: return None if math.isnan(float(x)) else float(x)
-                        except: return None
-                    roe_q = _vq(fin_q.get('roe')); debt_q = _vq(fin_q.get('debt_ratio'))
-                    pb_q  = _vq(fin_q.get('pb'));  eps_q  = _vq(fin_q.get('trailing_eps'))
-                    eps_hist_q = fin_q.get('eps_history', {})
-                    valid_yr_q = sorted([y for y in eps_hist_q if eps_hist_q[y] is not None], reverse=True)
-                    q_result = calc_quality_score_v2(code_q, {'type':'個股'}, roe_q, debt_q,
-                                                     fin_q.get('bvps'), fin_q.get('price'), pb_q,
-                                                     eps_hist_q, valid_yr_q)
-                    if q_result:
-                        sc = "#0F6E56" if q_result['total'] >= 13 else "#F86200" if q_result['total'] >= 9 else "#A32D2D"
-                        st.markdown("""
-<div style="background:#f8f9fa;border-radius:8px;border:2px solid {c};padding:14px 18px">
-  <div style="font-size:13px;color:#888;margin-bottom:4px">{code} ── 即時計算（未建池）</div>
-  <div style="font-size:22px;font-weight:700;color:{c}">{grade}　{sc}/15分</div>
-  <div style="font-size:13px;color:#414141;margin-top:4px">A:{sa}/5　B:{sb}/5　C:{scc}/5</div>
-</div>""".format(c=sc, code=code_q, grade=q_result['grade'], sc=q_result['total'],
-                sa=q_result['score_a'], sb=q_result['score_b'], scc=q_result['score_c']),
-                unsafe_allow_html=True)
-                    else:
-                        st.warning("{} 財務資料不足，無法評分（ETF 或新掛牌股）".format(code_q))
-            elif instant_go:
-                st.warning("請輸入股票代碼")
-
-    if build_btn:
-        with st.spinner("步驟1/2：取得全市場股票清單..."):
-            all_stocks = get_all_tw_stocks()
-            individual_stocks = [s for s in all_stocks if s['type'] == '個股']
-            n_total = len(all_stocks)
-            n_indiv = len(individual_stocks)
-            n_etf_p = sum(1 for s in all_stocks if s['type'] == '被動ETF')
-            n_etf_a = sum(1 for s in all_stocks if s['type'] == '主動ETF')
-            n_other = n_total - n_indiv - n_etf_p - n_etf_a
-            st.info(
-                "取得 {} 筆股票（個股 {} 檔 ｜ 被動ETF {} 檔 ｜ 主動ETF/含字母 {} 檔 ｜ 特別股/其他 {} 檔）\n"
-                "→ 合格標的池評分對象：{} 檔個股（ETF 與特別股不做體質評分）".format(
-                    n_total, n_indiv, n_etf_p, n_etf_a, n_other, n_indiv)
-            )
-
-        est_min = round(len(individual_stocks) * 0.12 / 60, 1)
-        with st.spinner("步驟2/2：yfinance 抓取財務資料與評分（預計約{}分鐘）...".format(est_min)):
-            st.caption("✅ yfinance 不依賴 MOPS，境外IP可正常存取。資料：ROE、負債比、EPS歷史、每股淨值、現價")
-            df_pool = build_qualified_pool(all_stocks, fin_data=None)
-
-        if df_pool is not None and not df_pool.empty:
-            grade_a = df_pool[df_pool['_grade_short'] == 'A級']
-            grade_b = df_pool[df_pool['_grade_short'] == 'B級']
-            grade_c = df_pool[df_pool['_grade_short'] == 'C級']
-            excluded = df_pool[df_pool['_grade_short'] == '排除']
-            if '代碼' in df_pool.columns:
-                df_pool['代碼'] = df_pool['代碼'].astype(str).str.strip()
-            total_scored = df_pool[df_pool['體質分數'].notna()]
-            full_data = len(df_pool[df_pool['資料完整度'] == '100%']) if '資料完整度' in df_pool.columns else 0
-            partial_data = len(total_scored) - full_data
-            st.session_state['df_pool'] = df_pool
-            disk_ok = save_pool_to_disk(df_pool)
-            st.success(
-                "✅ 分級完成！資料來源：yfinance\n\n"
-                "🥇 A級：{}檔　🥈 B級：{}檔　🥉 C級：{}檔　❌ 排除：{}檔\n\n"
-                "📊 評分完整度：{}檔100%完整、{}檔部分資料\n\n"
-                "💾 {}".format(
-                    len(grade_a), len(grade_b), len(grade_c), len(excluded),
-                    full_data, partial_data,
-                    "已儲存本地快取（12小時有效，重新整理自動還原）" if disk_ok else "建立在記憶體"
-                )
-            )
-        else:
-            st.error("❌ 建立失敗，請確認 requirements.txt 含 yfinance>=0.2.36 並已重新部署")
 
     st.divider()
 
