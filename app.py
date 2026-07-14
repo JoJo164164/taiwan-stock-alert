@@ -82,13 +82,23 @@ HORIZONS = [5, 10, 20, 40, 60, 80, 100, 120, 240]
 import os as _os
 POOL_CACHE_PATH = "/tmp/tw_stock_pool_cache.parquet"
 JOURNAL_PATH = "/tmp/tw_signal_journal.csv"
-JOURNAL_COLS = ["代碼","名稱","信號","進場日","進場價","目標天數","目標報酬%","狀態","出場日","出場價","實際報酬%"]
+JOURNAL_COLS = ["代碼","名稱","信號","進場類型","進場日","進場價","目標天數","目標報酬%","狀態","出場日","出場價","實際報酬%","備註"]
 
 def load_journal():
     try:
         import pandas as _pd
         # dtype=str + keep_default_na=False：避免空欄變 float64 導致結案寫入字串時 dtype 衝突
-        return _pd.read_csv(JOURNAL_PATH, dtype=str, keep_default_na=False)
+        _df = _pd.read_csv(JOURNAL_PATH, dtype=str, keep_default_na=False)
+        # 向後相容：舊 CSV 沒有「進場類型」「備註」欄時自動補上（既有紀錄視為系統觸發）
+        if "進場類型" not in _df.columns:
+            _df["進場類型"] = "系統觸發"
+        if "備註" not in _df.columns:
+            _df["備註"] = ""
+        # 確保欄位齊全且順序一致
+        for _c in JOURNAL_COLS:
+            if _c not in _df.columns:
+                _df[_c] = ""
+        return _df[JOURNAL_COLS]
     except Exception:
         import pandas as _pd
         return _pd.DataFrame(columns=JOURNAL_COLS)
@@ -1032,7 +1042,6 @@ def _pick_best_timing_idx(df):
         if valid.empty:
             return None
         max_wr = valid["_wr"].max()
-        # 勝率與最高相近（差距≤5pp）的候選群 → 用報酬決勝；否則直接選勝率最高
         near = valid[max_wr - valid["_wr"] <= 5.0]
         if len(near) >= 2 and near["_avg"].notna().any():
             near = near.sort_values(["_avg", "_wr", "樣本數"], ascending=False)
@@ -1049,7 +1058,7 @@ def _render_timing_table_v14(df_consec, best_t, diff):
     drop_c = [c for c in ["累積報酬%"] if c in df_consec.columns]
     df_show = df_consec.drop(columns=drop_c) if drop_c else df_consec.copy()
 
-    # 計算最佳行 index（均衡版，與結論框共用同一判定函數確保一致）
+    # 計算最佳行 index（勝率優先版，與結論框共用同一判定函數確保一致）
     best_idx = _pick_best_timing_idx(df_show)
 
     rows_html = ""
@@ -1708,7 +1717,7 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
 
         if df_consec_60 is not None:
             valid_rows = df_consec_60[pd.to_numeric(
-                df_consec_60["樣本數"], errors='coerce').fillna(0) >= 5]
+                df_consec_60["樣本數"], errors='coerce').fillna(0) >= 10]
             if not valid_rows.empty:
                 best_idx_t = _pick_best_timing_idx(df_consec_60)
                 if best_idx_t is not None:
@@ -6140,12 +6149,58 @@ with tab1:
                         _price = _r0.get("收盤價", _r0.get("最新收盤價", ""))
                         _jdf = pd.concat([_jdf, pd.DataFrame([{
                             "代碼": _c, "名稱": _r0.get("名稱", ""), "信號": str(_r0.get("信號", "")),
-                            "進場日": datetime.now().strftime("%Y-%m-%d"), "進場價": _price,
-                            "目標天數": 20, "目標報酬%": 10, "狀態": "持有中",
-                            "出場日": "", "出場價": "", "實際報酬%": ""}])], ignore_index=True)
+                            "進場類型": "系統觸發",
+                            "進場日": datetime.now().strftime("%Y-%m-%d"), "進場價": str(_price),
+                            "目標天數": "20", "目標報酬%": "10", "狀態": "持有中",
+                            "出場日": "", "出場價": "", "實際報酬%": "", "備註": ""}])], ignore_index=True)
                         _added += 1
                     save_journal(_jdf)
-                    st.success("已加入 {} 檔 → 至【📒 追蹤日誌】查看".format(_added))
+                    st.success("已加入 {} 檔（系統觸發）→ 至【📒 追蹤日誌】查看".format(_added))
+
+            # ── ➕ 手動加入（自主判斷，非池子/非觸發個股）──
+            with st.expander("✍️ 手動加入追蹤（自主判斷進場，非系統觸發，分開統計）"):
+                st.caption("加入你自己決定進場、但系統沒觸發的個股。進場價＝按下按鈕當下抓 yfinance 最新收盤價；此類與『系統觸發』分開統計，不污染系統勝率驗證。")
+                _mc1, _mc2, _mc3 = st.columns([1, 1, 2])
+                with _mc1:
+                    _manual_code = st.text_input("股票代碼", placeholder="例：2317", key="journal_manual_code")
+                with _mc2:
+                    _manual_days = st.number_input("目標天數", min_value=1, max_value=240, value=20, key="journal_manual_days")
+                    _manual_tgt = st.number_input("目標報酬%", min_value=1, max_value=100, value=10, key="journal_manual_tgt")
+                with _mc3:
+                    _manual_note = st.text_input("備註（自由填，如：消息面/法人買超/Coatue錯殺）", key="journal_manual_note")
+                if st.button("✍️ 手動加入追蹤", key="journal_manual_add"):
+                    _mcode = _manual_code.strip()
+                    if not _mcode:
+                        st.warning("請輸入股票代碼")
+                    else:
+                        _jdf = load_journal()
+                        if not _jdf[(_jdf["代碼"].astype(str) == _mcode) & (_jdf["狀態"] == "持有中")].empty:
+                            st.warning("{} 已有持有中的追蹤紀錄，未重複加入".format(_mcode))
+                        else:
+                            with st.spinner("抓取 {} 最新收盤價...".format(_mcode)):
+                                try:
+                                    _mprices = get_yahoo_history(_mcode, days=10)
+                                    _mprice = calc_latest_close(_mprices) if _mprices else None
+                                except Exception:
+                                    _mprice = None
+                                # 抓名稱（若池子有就用池子的，否則留空）
+                                _mname = ""
+                                _dfp = st.session_state.get('df_pool', None)
+                                if _dfp is not None and not _dfp.empty:
+                                    _mrow = _dfp[_dfp["代碼"].astype(str) == _mcode]
+                                    if not _mrow.empty:
+                                        _mname = str(_mrow.iloc[0].get("名稱", ""))
+                            if _mprice is None:
+                                st.error("{} 抓不到收盤價（可能代碼錯誤或 yfinance 無資料），未加入".format(_mcode))
+                            else:
+                                _jdf = pd.concat([_jdf, pd.DataFrame([{
+                                    "代碼": _mcode, "名稱": _mname, "信號": "",
+                                    "進場類型": "自主判斷",
+                                    "進場日": datetime.now().strftime("%Y-%m-%d"), "進場價": str(round(float(_mprice), 2)),
+                                    "目標天數": str(int(_manual_days)), "目標報酬%": str(int(_manual_tgt)), "狀態": "持有中",
+                                    "出場日": "", "出場價": "", "實際報酬%": "", "備註": str(_manual_note)}])], ignore_index=True)
+                                save_journal(_jdf)
+                                st.success("已手動加入 {} @ {}（自主判斷）→ 至【📒 追蹤日誌】查看".format(_mcode, round(float(_mprice), 2)))
 
             col_scan_dl1, col_scan_dl2 = st.columns(2)
             with col_scan_dl1:
@@ -6240,12 +6295,13 @@ with tab_journal:
                         _light = "🟡 建議出場"
                     else:
                         _light = "🟢 持有中"
-                    _rows.append({"代碼": _r["代碼"], "名稱": _r["名稱"], "信號": _r["信號"],
+                    _rows.append({"代碼": _r["代碼"], "名稱": _r["名稱"],
+                                  "進場類型": _r.get("進場類型", ""), "信號": _r["信號"],
                                   "進場日": _r["進場日"], "進場價": _r["進場價"],
                                   "最新價": _last if _last else "—",
                                   "損益%": _pnl if _pnl is not None else "—",
                                   "持有/建議天數": "{}/{}".format(_dh, _td) if _dh is not None else "—",
-                                  "狀態燈": _light})
+                                  "狀態燈": _light, "備註": _r.get("備註", "")})
             st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
             st.caption("🟡 建議出場 = 達目標報酬或到期（預設20天/+10%，依個股回測可自行調整CSV）｜🔴 = 損益≤-15%，優先檢查【🛡️ 個股風險查詢】")
             with st.expander("✅ 結案（記錄實際出場價）"):
@@ -6267,13 +6323,32 @@ with tab_journal:
                         st.rerun()
         if not _closed.empty:
             st.markdown("#### 📊 已結案實績（實際 vs 回測的驗證閉環）")
-            _rets = pd.to_numeric(_closed["實際報酬%"], errors="coerce").dropna()
-            if len(_rets):
+
+            # ── 依進場類型分組：系統觸發（裁判機制主體）與自主判斷分開統計，避免污染 ──
+            _sys = _closed[_closed["進場類型"] == "系統觸發"] if "進場類型" in _closed.columns else _closed
+            _own = _closed[_closed["進場類型"] == "自主判斷"] if "進場類型" in _closed.columns else _closed.iloc[0:0]
+
+            _rets_sys = pd.to_numeric(_sys["實際報酬%"], errors="coerce").dropna()
+            _rets_own = pd.to_numeric(_own["實際報酬%"], errors="coerce").dropna()
+
+            st.markdown("**🎯 系統觸發（策略裁判主體）**")
+            if len(_rets_sys):
                 _c1, _c2, _c3 = st.columns(3)
-                _c1.metric("實際勝率", "{:.0f}%".format((_rets > 0).mean() * 100))
-                _c2.metric("平均報酬", "{:.1f}%".format(_rets.mean()))
-                _c3.metric("結案筆數", len(_rets))
-                st.caption("對照【🏆 全市場勝率排行】的回測數字：實際若持續明顯低於回測（差>15個百分點），代表倖存者偏誤/T+1落差/市場結構改變，策略需重新檢視。此為量能/乖離等新指標是否升級為正式條件的裁判依據。")
+                _c1.metric("實際勝率", "{:.0f}%".format((_rets_sys > 0).mean() * 100))
+                _c2.metric("平均報酬", "{:.1f}%".format(_rets_sys.mean()))
+                _c3.metric("結案筆數", len(_rets_sys))
+                st.caption("對照【🏆 全市場勝率排行】的回測數字：實際若持續明顯低於回測（差>15個百分點），代表倖存者偏誤/T+1落差/市場結構改變，策略需重新檢視。此為量能/乖離等新指標是否升級為正式條件的裁判依據。★ 只有此組計入策略勝率驗證。")
+            else:
+                st.caption("尚無系統觸發的已結案紀錄。")
+
+            if len(_rets_own):
+                st.markdown("**✍️ 自主判斷（僅供參考，不計入策略驗證）**")
+                _o1, _o2, _o3 = st.columns(3)
+                _o1.metric("實際勝率", "{:.0f}%".format((_rets_own > 0).mean() * 100))
+                _o2.metric("平均報酬", "{:.1f}%".format(_rets_own.mean()))
+                _o3.metric("結案筆數", len(_rets_own))
+                st.caption("這是你自主判斷（非系統觸發）進場的實績，與系統策略分開計算，不影響上方策略裁判。")
+
             st.dataframe(_closed, use_container_width=True, hide_index=True)
     _jc1, _jc2 = st.columns(2)
     with _jc1:
