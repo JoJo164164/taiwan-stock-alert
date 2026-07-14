@@ -1015,6 +1015,33 @@ def _render_conclusion_banner(level_now, best_thr, best_h):
 </div>""".format(bg=bg, bd=border, ic=icon, t=title, s=sub), unsafe_allow_html=True)
 
 
+def _pick_best_timing_idx(df):
+    """進場時機『★最佳』判定（勝率優先版，表格與結論框共用，確保一致）。
+    規則：
+    1. 只看樣本數≥10的合格行（統計可靠門檻；<10不夠格當最佳）。
+    2. 合格行中優先選勝率最高。
+    3. 勝率相近（差距≤5pp視為平手）時，改用平均報酬決勝（避免選到高勝率低報酬的雞肋行）。
+    4. 無任何行樣本≥10 → 回傳 None（顯示無明確最佳，不硬推）。"""
+    try:
+        valid = df[pd.to_numeric(df["樣本數"], errors='coerce').fillna(0) >= 10].copy()
+        if valid.empty:
+            return None
+        valid["_wr"] = pd.to_numeric(valid["勝率"].astype(str).str.replace("%", ""), errors='coerce')
+        valid["_avg"] = pd.to_numeric(valid["平均報酬%"].astype(str).str.replace("%", ""), errors='coerce')
+        valid = valid[valid["_wr"].notna()]
+        if valid.empty:
+            return None
+        max_wr = valid["_wr"].max()
+        # 勝率與最高相近（差距≤5pp）的候選群 → 用報酬決勝；否則直接選勝率最高
+        near = valid[max_wr - valid["_wr"] <= 5.0]
+        if len(near) >= 2 and near["_avg"].notna().any():
+            near = near.sort_values(["_avg", "_wr", "樣本數"], ascending=False)
+            return near.index[0]
+        return valid["_wr"].idxmax()
+    except Exception:
+        return None
+
+
 def _render_timing_table_v14(df_consec, best_t, diff):
     """進場時機表格——最佳行突出（v14重設計）"""
     if df_consec is None or df_consec.empty:
@@ -1022,15 +1049,8 @@ def _render_timing_table_v14(df_consec, best_t, diff):
     drop_c = [c for c in ["累積報酬%"] if c in df_consec.columns]
     df_show = df_consec.drop(columns=drop_c) if drop_c else df_consec.copy()
 
-    # 計算最佳行 index
-    best_idx = None
-    try:
-        valid = df_show[pd.to_numeric(df_show["樣本數"], errors='coerce').fillna(0) >= 5]
-        if not valid.empty:
-            best_idx = pd.to_numeric(
-                valid["平均報酬%"].str.replace("%", ""), errors='coerce').idxmax()
-    except Exception:
-        pass
+    # 計算最佳行 index（均衡版，與結論框共用同一判定函數確保一致）
+    best_idx = _pick_best_timing_idx(df_show)
 
     rows_html = ""
     for i, (idx, row) in enumerate(df_show.iterrows()):
@@ -1091,10 +1111,16 @@ def _render_timing_table_v14(df_consec, best_t, diff):
   <tbody>{rows}</tbody>
 </table>""".format(rows=rows_html)
     st.markdown(table_html, unsafe_allow_html=True)
-    st.caption("觀察基準：持有60天　｜　⚠ 樣本<5不具統計意義")
+    st.caption("觀察基準：持有60天　｜　★最佳：樣本≥10的行中勝率最高者（勝率相近時比報酬）　｜　⚠ 樣本<10不具統計意義")
 
     # 結論框
-    if diff is not None:
+    if best_t is None:
+        st.markdown("""
+<div style="background:#FFF7E6;border-left:3px solid #F86200;border-radius:0 6px 6px 0;
+     padding:10px 14px;font-size:13px;color:#8A4B00;margin-top:8px">
+⏱ <strong>進場時機結論：各時機樣本數均不足10，統計不可靠，暫無明確最佳進場時機，建議依整體策略判斷。</strong>
+</div>""", unsafe_allow_html=True)
+    elif diff is not None:
         if diff < 3.0:
             st.markdown("""
 <div style="background:#E6F1FB;border-left:3px solid #003781;border-radius:0 6px 6px 0;
@@ -1105,7 +1131,7 @@ def _render_timing_table_v14(df_consec, best_t, diff):
             st.markdown("""
 <div style="background:#E6F1FB;border-left:3px solid #003781;border-radius:0 6px 6px 0;
      padding:10px 14px;font-size:13px;color:#003781;margin-top:8px">
-⏱ <strong>進場時機結論：「{t}」平均報酬最高，比最差時機多 {d:.1f}%，值得等待。</strong>
+⏱ <strong>進場時機結論：綜合勝率與報酬，「{t}」為較佳進場時機（各時機報酬最大差距 {d:.1f}%），值得等待。</strong>
 </div>""".format(t=best_t, d=diff), unsafe_allow_html=True)
 
 
@@ -1684,14 +1710,12 @@ def render_analysis(code, df_win, df_avg, df_dd, df_yearly, threshold, prices_di
             valid_rows = df_consec_60[pd.to_numeric(
                 df_consec_60["樣本數"], errors='coerce').fillna(0) >= 5]
             if not valid_rows.empty:
-                best_row_t  = valid_rows.loc[
-                    pd.to_numeric(valid_rows["平均報酬%"].str.replace("%", ""), errors='coerce').idxmax()]
-                worst_row_t = valid_rows.loc[
-                    pd.to_numeric(valid_rows["平均報酬%"].str.replace("%", ""), errors='coerce').idxmin()]
-                best_t_timing = best_row_t["進場時機"]
+                best_idx_t = _pick_best_timing_idx(df_consec_60)
+                if best_idx_t is not None:
+                    best_t_timing = df_consec_60.loc[best_idx_t, "進場時機"]
                 try:
-                    diff_timing = (float(str(best_row_t["平均報酬%"]).replace("%", "")) -
-                                   float(str(worst_row_t["平均報酬%"]).replace("%", "")))
+                    _avgs = pd.to_numeric(valid_rows["平均報酬%"].str.replace("%", ""), errors='coerce')
+                    diff_timing = float(_avgs.max()) - float(_avgs.min())
                 except Exception:
                     diff_timing = 0
             _render_timing_table_v14(df_consec_60, best_t_timing, diff_timing)
