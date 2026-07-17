@@ -6132,7 +6132,58 @@ with tab1:
                 hide_index=True,
                 height=min(50 + len(_df_display) * 35, 600),
             )
-            # ── ➕ 加入追蹤日誌 ──
+
+            # ── 🎯 勝率快篩（免跳個股tab，直接查勾選標的在當前門檻下的達標天數）──
+            with st.expander("🎯 勝率快篩：查勾選標的在 {}% 觸發後，幾天勝率達 80%".format(threshold1), expanded=False):
+                st.caption("勾選你有興趣的標的（建議一次≤10檔，避免抓歷史資料過久），用當前掃描門檻 {}% 回測，找出各持有天數中最快達到勝率≥80% 的天數。回測邏輯與【🔬 個股回測】完全相同。".format(threshold1))
+                _qs_opts = ["{} {}".format(r["代碼"], r["名稱"]) for _, r in df_show.iterrows()]
+                _qs_sel = st.multiselect("選擇要快篩的標的", _qs_opts, key="winrate_quickscan_sel")
+                if st.button("🎯 查達標天數", key="winrate_quickscan_btn") and _qs_sel:
+                    _WIN_TARGET = 80.0
+                    _qs_rows = []
+                    _prog = st.progress(0.0)
+                    for _qi, _qs in enumerate(_qs_sel):
+                        _qcode = _qs.split()[0]
+                        _qname = " ".join(_qs.split()[1:]) if len(_qs.split()) > 1 else ""
+                        try:
+                            _qprices = get_yahoo_history_15y(_qcode)
+                        except Exception:
+                            _qprices = None
+                        if not _qprices:
+                            _qs_rows.append({"代碼": _qcode, "名稱": _qname, "觸發次數": "—",
+                                             "最快達標天數": "—", "該天數勝率": "抓不到資料"})
+                            _prog.progress((_qi + 1) / len(_qs_sel)); continue
+                        _qresult = run_full_backtest(_qprices, threshold1)
+                        if not _qresult or _qresult.get("total", 0) == 0:
+                            _qs_rows.append({"代碼": _qcode, "名稱": _qname, "觸發次數": "0",
+                                             "最快達標天數": "—", "該天數勝率": "無觸發樣本"})
+                            _prog.progress((_qi + 1) / len(_qs_sel)); continue
+                        # 逐持有天數算勝率（與tab3同一套：horizon_rets[h] 裡 ret>0 比例），找最快達80%
+                        _hit_h = None; _hit_wr = None; _best_h = None; _best_wr = -1
+                        for _h in HORIZONS:
+                            _rets = [x["ret"] for x in _qresult["horizon_rets"][_h]]
+                            if not _rets:
+                                continue
+                            _wr = sum(1 for r in _rets if r > 0) / len(_rets) * 100
+                            if _wr > _best_wr:
+                                _best_wr = _wr; _best_h = _h
+                            if _wr >= _WIN_TARGET and _hit_h is None:
+                                _hit_h = _h; _hit_wr = _wr
+                        if _hit_h is not None:
+                            _qs_rows.append({"代碼": _qcode, "名稱": _qname,
+                                             "觸發次數": _qresult["total"],
+                                             "最快達標天數": "{} 天 ✅".format(_hit_h),
+                                             "該天數勝率": "{:.0f}%".format(_hit_wr)})
+                        else:
+                            _qs_rows.append({"代碼": _qcode, "名稱": _qname,
+                                             "觸發次數": _qresult["total"],
+                                             "最快達標天數": "無天數達80% ❌",
+                                             "該天數勝率": "最高{}天{:.0f}%".format(_best_h, _best_wr) if _best_h else "—"})
+                        _prog.progress((_qi + 1) / len(_qs_sel))
+                    _prog.empty()
+                    if _qs_rows:
+                        st.dataframe(pd.DataFrame(_qs_rows), use_container_width=True, hide_index=True)
+                        st.caption("✅ = 該檔在 {}% 觸發後，最快 N 天勝率就達 80%（可考慮進場/加入追蹤）；❌ = 沒有任何持有天數達 80%（欄內顯示它最高的勝率天數供參考）。想看完整各年度明細請至【🔬 個股回測】。".format(threshold1))
             with st.expander("➕ 加入追蹤日誌（記錄進場，於【📒 追蹤日誌】管理出場與實績）"):
                 _j_opts = ["{} {}".format(r["代碼"], r["名稱"]) for _, r in df_show.iterrows()]
                 _j_sel = st.multiselect("選擇標的（建議只加入你真的進場的）", _j_opts, key="journal_sel")
