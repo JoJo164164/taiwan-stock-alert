@@ -4840,21 +4840,32 @@ def get_twd_data():
 def get_sp500_data():
     """抓S&P500"""
     try:
-        prices = get_yahoo_history_us("^GSPC", days=365)
-        if not prices or len(prices) < 30:
+        import math as _m
+        prices_raw = get_yahoo_history_us("^GSPC", days=365)
+        if not prices_raw:
+            return None
+        # 過濾 nan/None/非正值（yfinance 偶爾回 nan，會導致下游全部變 nan）
+        prices = {d: v for d, v in prices_raw.items()
+                  if v is not None and not (isinstance(v, float) and _m.isnan(v)) and v > 0}
+        if len(prices) < 30:
             return None
         dates = sorted(prices.keys())
         current = prices[dates[-1]]
         high_52w = max(prices.values())
+        if not high_52w or high_52w <= 0:
+            return None
         pct_from_high = (current - high_52w) / high_52w * 100
         ma20 = sum([prices[d] for d in dates[-20:]]) / 20
         ret_20d = (current - prices[dates[-21]]) / prices[dates[-21]] * 100 if len(dates) >= 21 else None
+        # 最後保險：任何關鍵值是 nan 就視為抓取失敗
+        if _m.isnan(current) or _m.isnan(pct_from_high):
+            return None
         return {
             "current": current,
             "high_52w": high_52w,
             "pct_from_high": round(pct_from_high, 1),
             "above_ma20": current > ma20,
-            "ret_20d": round(ret_20d, 1) if ret_20d else None,
+            "ret_20d": round(ret_20d, 1) if ret_20d is not None and not _m.isnan(ret_20d) else None,
             "date": dates[-1],
         }
     except:
@@ -5174,7 +5185,10 @@ with tab6:
     st.markdown("---")
     col_sp1, col_sp2 = st.columns([1, 2])
     with col_sp1:
-        if sp500:
+        import math as _m_sp
+        _sp_valid = sp500 and not (isinstance(sp500.get("current"), float) and _m_sp.isnan(sp500["current"])) \
+                    and not (isinstance(sp500.get("pct_from_high"), float) and _m_sp.isnan(sp500["pct_from_high"]))
+        if _sp_valid:
             st.metric("S&P500",
                      "{:,.0f}".format(sp500["current"]),
                      "{:.1f}% 距52週高點".format(sp500["pct_from_high"]))
