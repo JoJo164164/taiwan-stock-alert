@@ -78,11 +78,107 @@ GROUP_ICONS = {
 THRESHOLDS = [-5, -7, -10, -15, -20]
 HORIZONS = [5, 10, 20, 40, 60, 80, 100, 120, 240]
 
+# ══════════════════════════════════════════════════════════════════
+# 治理疑慮標的判定（feat/governance-risk-flag, 2026-07-14）
+# 目的：均值回歸策略靠「超跌反彈」，但若某標的的超跌是人為籌碼操作/暴漲暴跌慣性，
+#   反彈往往不來甚至續跌（接刀）。此模組標記這類「高治理疑慮」標的，觸發時警示、可選排除。
+# 雙軌：A=人為維護的集團關聯清單（來源見下方註解）；B=用歷史股價自動算的客觀行為特徵。
+# 註：清單為「市場公開新聞可查證之集團關聯」，非對個人之指控；用途為投資風險控管。
+# ══════════════════════════════════════════════════════════════════
+
+# ── 軌道A：集團關聯清單（代碼→集團標籤）──
+# 來源：自由財經/鏡週刊/工商時報/信傳媒/TechNews 等公開報導之集團持股與關聯（2018~2026）
+GOVERNANCE_WATCH_GROUPS = {
+    "泛國巨（陳泰銘）": {
+        "codes": ["2327", "6271", "5317", "8261", "6284"],  # 國巨/同欣電/凱美/富鼎/佳邦
+        "note": "泛國巨集團。2018年國巨1310→203元、大股東鉅額轉讓與解質爭議、2011下市案遭駁回；被動元件技術門檻低、波動劇烈，均值回歸策略易接刀。",
+    },
+    "泛威盛/宏達電（王雪紅）": {
+        "codes": ["2498", "2388", "6756", "6118", "3688"],  # 宏達電/威盛/威鋒/建達/華立捷
+        "note": "泛威盛/宏達電集團。威盛629→40、宏達電1300→30幾，兩度創股王後暴跌逾九成；概念股常隨題材暴起暴落。",
+    },
+}
+
+# 反查：代碼 → (集團名, note)
+def _governance_lookup(code):
+    c = str(code).strip().split(".")[0]
+    for gname, g in GOVERNANCE_WATCH_GROUPS.items():
+        if c in g["codes"]:
+            return gname, g["note"]
+    return None, None
+
+# ── 軌道B：用歷史股價算客觀行為特徵 ──
+# B1 極端暴漲暴跌：過去N年單月漲跌幅≥±MONTH_EXTREME_PCT 的次數
+# B2 深度崩跌史：歷史最高→之後最低的最大跌幅
+GOV_MONTH_EXTREME_PCT = 40.0   # 單月漲跌幅門檻
+GOV_MONTH_EXTREME_MIN_TIMES = 2  # 至少發生幾次才算「慣性」
+GOV_MAXDRAWDOWN_PCT = 70.0     # 歷史高點→後續低點崩跌≥70%
+
+def compute_governance_behavior(prices_dict):
+    """用日收盤價字典算 B1/B2 行為特徵。回傳 dict：
+    {extreme_moves, max_drawdown_pct, behavior_flag(bool), reason}。
+    資料不足時 behavior_flag=False。"""
+    try:
+        if not prices_dict or len(prices_dict) < 60:
+            return {"extreme_moves": 0, "max_drawdown_pct": 0.0, "behavior_flag": False, "reason": "資料不足"}
+        dates = sorted(prices_dict.keys())
+        # B1：以每約21交易日為一個月窗，算窗內漲跌幅
+        extreme = 0
+        step = 21
+        for i in range(0, len(dates) - step, step):
+            p0 = prices_dict[dates[i]]
+            p1 = prices_dict[dates[i + step]]
+            if p0 and p0 > 0:
+                chg = (p1 - p0) / p0 * 100
+                if abs(chg) >= GOV_MONTH_EXTREME_PCT:
+                    extreme += 1
+        # B2：歷史最高之後的最大跌幅（peak 之後才算，避免用未來資訊）
+        prices_seq = [prices_dict[d] for d in dates]
+        peak = prices_seq[0]; max_dd = 0.0
+        for p in prices_seq:
+            if p > peak:
+                peak = p
+            if peak > 0:
+                dd = (peak - p) / peak * 100
+                if dd > max_dd:
+                    max_dd = dd
+        b1 = extreme >= GOV_MONTH_EXTREME_MIN_TIMES
+        b2 = max_dd >= GOV_MAXDRAWDOWN_PCT
+        flag = b1 and b2  # 兩者都中才算行為特徵命中（暴漲暴跌慣性＋深度崩跌）
+        reason_parts = []
+        if b1:
+            reason_parts.append("單月±{:.0f}%以上發生{}次".format(GOV_MONTH_EXTREME_PCT, extreme))
+        if b2:
+            reason_parts.append("歷史高點崩跌{:.0f}%".format(max_dd))
+        return {"extreme_moves": extreme, "max_drawdown_pct": round(max_dd, 1),
+                "behavior_flag": flag, "reason": "、".join(reason_parts) if reason_parts else "無明顯異常"}
+    except Exception:
+        return {"extreme_moves": 0, "max_drawdown_pct": 0.0, "behavior_flag": False, "reason": "計算失敗"}
+
+def assess_governance_risk(code, prices_dict=None):
+    """綜合軌道A+B。回傳 dict：{flagged, group, list_note, behavior, level}。
+    level: '名單+行為' / '名單' / '行為' / None"""
+    gname, gnote = _governance_lookup(code)
+    behavior = compute_governance_behavior(prices_dict) if prices_dict else None
+    b_flag = bool(behavior and behavior.get("behavior_flag"))
+    a_flag = gname is not None
+    if a_flag and b_flag:
+        level = "名單+行為"
+    elif a_flag:
+        level = "名單"
+    elif b_flag:
+        level = "行為"
+    else:
+        level = None
+    return {"flagged": level is not None, "group": gname, "list_note": gnote,
+            "behavior": behavior, "level": level}
+
 # ── Pool 磁碟快取：定義在最頂部，確保任何地方都能呼叫 ──
 import os as _os
 POOL_CACHE_PATH = "/tmp/tw_stock_pool_cache.parquet"
 JOURNAL_PATH = "/tmp/tw_signal_journal.csv"
 JOURNAL_COLS = ["代碼","名稱","信號","進場類型","進場日","進場價","目標天數","目標報酬%","狀態","出場日","出場價","實際報酬%","備註"]
+
 
 def load_journal():
     try:
@@ -5953,6 +6049,10 @@ with tab1:
                 else:
                     signal = "🔶 觀察"
 
+                # 治理疑慮（軌道A名單，即時判定；軌道B行為特徵於勝率快篩/風險查詢時才算，避免掃描變慢）
+                _gov_g, _gov_note = _governance_lookup(code)
+                _gov_cell = "⚠️ {}".format(_gov_g) if _gov_g else ""
+
                 rows.append({
                     "信號": signal,
                     "體質分數": score_str,
@@ -5970,6 +6070,8 @@ with tab1:
                     "②體質合格": "✅" if c2_ok else ("—" if not has_pool else "❌"),
                     "③市場正常": "✅" if c3_ok else "❌",
                     "④深度超跌": "✅" if c4_ok else "❌",
+                    "治理疑慮": _gov_cell,
+                    "_gov_flag": bool(_gov_g),
                     "_signal_raw": signal,  # 內部用，篩選 MOPS 查詢範圍
                 })
 
@@ -6121,10 +6223,22 @@ with tab1:
 
             # ── 表格 ──
             st.markdown(show_html.__doc__ or "")
+
+            # 治理疑慮排除開關（軌道A名單命中者）
+            _n_gov = int(df_show["_gov_flag"].sum()) if "_gov_flag" in df_show.columns else 0
+            if _n_gov > 0:
+                _gov_exclude = st.toggle(
+                    "🚫 排除治理疑慮標的（本次觸發清單命中 {} 檔泛國巨/泛威盛集團相關）".format(_n_gov),
+                    value=False, key="scan_gov_exclude",
+                    help="這些集團歷史上暴漲暴跌、籌碼爭議多，均值回歸策略易接刀。預設僅標記（⚠️治理疑慮欄），開啟此開關則從清單移除。")
+                if _gov_exclude:
+                    df_show = df_show[~df_show["_gov_flag"]].copy()
+                    st.caption("已排除 {} 檔治理疑慮標的。".format(_n_gov))
+
             # 網頁版：用 st.dataframe（有原生點擊排序功能）
             # 先把下載用的欄位移除，只顯示有意義的欄
             _display_cols = [c for c in df_show.columns
-                             if c not in ["_rank","_score_sort","_pct_sort","_inner_sort","_signal_raw"]]
+                             if c not in ["_rank","_score_sort","_pct_sort","_inner_sort","_signal_raw","_gov_flag"]]
             _df_display = df_show[_display_cols].copy()
             st.dataframe(
                 _df_display,
@@ -6132,6 +6246,8 @@ with tab1:
                 hide_index=True,
                 height=min(50 + len(_df_display) * 35, 600),
             )
+            if _n_gov > 0:
+                st.caption("⚠️ 治理疑慮欄：標記屬泛國巨（陳泰銘）或泛威盛/宏達電（王雪紅）集團的個股。這類標的歷史暴漲暴跌、籌碼操作爭議多，即使觸發也建議避開或極謹慎。詳情可至【🛡️ 個股風險查詢】查看行為特徵佐證。")
 
             # ── 🎯 勝率快篩（免跳個股tab，直接查勾選標的在當前門檻下的達標天數）──
             with st.expander("🎯 勝率快篩：查勾選標的在 {}% 觸發後，幾天勝率達 80%".format(threshold1), expanded=False):
@@ -8439,8 +8555,37 @@ with tab_mops:
 
         st.markdown("---")
 
-        # ── 綜合判斷橫幅 ──
-        overall_danger = mops_detail["status"] == "danger" or news_detail["status"] == "danger"
+        # ── ⓿ 治理疑慮判定（軌道A名單 + 軌道B行為特徵）──
+        try:
+            _gov_prices = get_yahoo_history_15y(_code_q)
+        except Exception:
+            _gov_prices = None
+        _gov = assess_governance_risk(_code_q, _gov_prices)
+        if _gov["flagged"]:
+            _lv = _gov["level"]
+            _msg = "🚫 治理疑慮標的（{}）".format(_lv)
+            st.error(_msg)
+            if _gov["group"]:
+                st.markdown("**集團關聯**：{}".format(_gov["group"]))
+                st.caption(_gov["list_note"])
+            if _gov["behavior"] and _gov["behavior"].get("behavior_flag"):
+                _bh = _gov["behavior"]
+                st.markdown("**行為特徵佐證（用15年股價客觀計算）**：{}".format(_bh["reason"]))
+                _bc1, _bc2 = st.columns(2)
+                _bc1.metric("單月±40%以上次數", _bh["extreme_moves"])
+                _bc2.metric("歷史高點最大崩跌", "{:.0f}%".format(_bh["max_drawdown_pct"]))
+            elif _gov["behavior"]:
+                st.caption("行為特徵：{}（未達自動判定門檻，但已在關聯名單）".format(_gov["behavior"].get("reason","")))
+            st.warning("均值回歸策略對這類標的風險極高：其「超跌」可能是人為籌碼操作而非情緒性超跌，反彈往往不來甚至續跌。即使觸發也建議避開或極謹慎。")
+            st.markdown("---")
+        elif _gov_prices:
+            # 未命中名單，但仍顯示行為特徵供參考
+            _bh = _gov.get("behavior")
+            if _bh and _bh.get("behavior_flag"):
+                st.warning("⚠️ 此標的雖不在關聯名單，但行為特徵異常：{}。屬暴漲暴跌型，均值回歸策略慎用。".format(_bh["reason"]))
+                st.markdown("---")
+
+
         overall_warn   = mops_detail["status"] == "warning" or news_detail["status"] == "warning"
         both_failed    = mops_detail["status"] == "error" and news_detail["status"] == "error"
 
