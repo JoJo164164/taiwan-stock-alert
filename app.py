@@ -97,6 +97,10 @@ GOVERNANCE_WATCH_GROUPS = {
         "codes": ["2498", "2388", "6756", "6118", "3688"],  # 宏達電/威盛/威鋒/建達/華立捷
         "note": "泛威盛/宏達電集團。威盛629→40、宏達電1300→30幾，兩度創股王後暴跌逾九成；概念股常隨題材暴起暴落。",
     },
+    "力晶集團（黃崇仁）": {
+        "codes": ["6770", "6239"],  # 力積電/力成
+        "note": "力晶集團。力晶2012下櫃(27萬股東慘套)、力積電90→11.95元(跌86%)；被市場稱『史上最多家下市公司的老闆』(力晶/力捷/力廣皆下市)。下市前曾以0.3元低價公開收購。",
+    },
 }
 
 # 反查：代碼 → (集團名, note)
@@ -106,6 +110,32 @@ def _governance_lookup(code):
         if c in g["codes"]:
             return gname, g["note"]
     return None, None
+
+# ── 司法定讞名單（重大證券犯罪經法院判決/起訴，比新聞爭議更硬性）──
+# 來源：投保中心團體訴訟案、法院判決、ETtoday/MoneyDJ/遠見等公開報導。多數已下市，
+# 保留供辨識與歷史警惕；若代碼重新使用或關聯公司仍在，仍應警示。
+GOVERNANCE_FRAUD_CASES = {
+    "3662": "樂陞案。前董事長許金龍求刑30年，台股史上首樁假公開收購案，受害投資人約2萬名，不法所得逾40億。",
+    "2398": "博達案。財報不實、掏空，經典地雷股，投保中心團訴。",  # 博達(已下市,代碼供辨識)
+    "1602": "太電案。長期掏空、財報不實，投保中心團訴求償。",  # 太電
+}
+
+def _fraud_lookup(code):
+    c = str(code).strip().split(".")[0]
+    return GOVERNANCE_FRAUD_CASES.get(c)
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def cached_governance_behavior(code):
+    """帶快取的軌道B：抓15年股價算行為特徵，結果快取24小時（歷史股價一天內不變）。
+    供掃描清單使用——只對觸發清單的股票算，同一檔一天內只算一次，避免拖慢掃描。
+    回傳 dict：{behavior_flag, reason, max_drawdown_pct, extreme_moves}。"""
+    try:
+        prices = get_yahoo_history_15y(code)
+    except Exception:
+        prices = None
+    if not prices:
+        return {"behavior_flag": False, "reason": "資料不足", "max_drawdown_pct": 0.0, "extreme_moves": 0}
+    return compute_governance_behavior(prices)
 
 # ── 軌道B：用歷史股價算客觀行為特徵 ──
 # B1 極端暴漲暴跌：過去N年單月漲跌幅≥±MONTH_EXTREME_PCT 的次數
@@ -156,13 +186,16 @@ def compute_governance_behavior(prices_dict):
         return {"extreme_moves": 0, "max_drawdown_pct": 0.0, "behavior_flag": False, "reason": "計算失敗"}
 
 def assess_governance_risk(code, prices_dict=None):
-    """綜合軌道A+B。回傳 dict：{flagged, group, list_note, behavior, level}。
-    level: '名單+行為' / '名單' / '行為' / None"""
+    """綜合軌道A+B+司法定讞。回傳 dict：{flagged, group, list_note, behavior, level, fraud_note}。
+    level: '司法定讞' / '名單+行為' / '名單' / '行為' / None（司法定讞為最高警示）"""
     gname, gnote = _governance_lookup(code)
+    fraud_note = _fraud_lookup(code)
     behavior = compute_governance_behavior(prices_dict) if prices_dict else None
     b_flag = bool(behavior and behavior.get("behavior_flag"))
     a_flag = gname is not None
-    if a_flag and b_flag:
+    if fraud_note:
+        level = "司法定讞"
+    elif a_flag and b_flag:
         level = "名單+行為"
     elif a_flag:
         level = "名單"
@@ -171,7 +204,7 @@ def assess_governance_risk(code, prices_dict=None):
     else:
         level = None
     return {"flagged": level is not None, "group": gname, "list_note": gnote,
-            "behavior": behavior, "level": level}
+            "behavior": behavior, "level": level, "fraud_note": fraud_note}
 
 # ── Pool 磁碟快取：定義在最頂部，確保任何地方都能呼叫 ──
 import os as _os
@@ -6063,9 +6096,22 @@ with tab1:
                 else:
                     signal = "🔶 觀察"
 
-                # 治理疑慮（軌道A名單，即時判定；軌道B行為特徵於勝率快篩/風險查詢時才算，避免掃描變慢）
+                # 治理疑慮：軌道A名單(即時) + 軌道B行為特徵(快取,不重複抓) + 司法定讞
                 _gov_g, _gov_note = _governance_lookup(code)
-                _gov_cell = "⚠️ {}".format(_gov_g) if _gov_g else ""
+                _fraud = _fraud_lookup(code)
+                _gov_b = cached_governance_behavior(code)
+                _gov_b_flag = bool(_gov_b and _gov_b.get("behavior_flag"))
+                if _fraud:
+                    _gov_cell = "🚫 司法定讞"
+                elif _gov_g and _gov_b_flag:
+                    _gov_cell = "⚠️ {}+行為".format(_gov_g)
+                elif _gov_g:
+                    _gov_cell = "⚠️ {}".format(_gov_g)
+                elif _gov_b_flag:
+                    _gov_cell = "⚠️ 行為異常(暴漲暴跌)"
+                else:
+                    _gov_cell = ""
+                _gov_any = bool(_gov_g or _fraud or _gov_b_flag)
 
                 rows.append({
                     "信號": signal,
@@ -6085,7 +6131,7 @@ with tab1:
                     "③市場正常": "✅" if c3_ok else "❌",
                     "④深度超跌": "✅" if c4_ok else "❌",
                     "治理疑慮": _gov_cell,
-                    "_gov_flag": bool(_gov_g),
+                    "_gov_flag": _gov_any,
                     "_signal_raw": signal,  # 內部用，篩選 MOPS 查詢範圍
                 })
 
@@ -8577,21 +8623,27 @@ with tab_mops:
         _gov = assess_governance_risk(_code_q, _gov_prices)
         if _gov["flagged"]:
             _lv = _gov["level"]
-            _msg = "🚫 治理疑慮標的（{}）".format(_lv)
-            st.error(_msg)
-            if _gov["group"]:
-                st.markdown("**集團關聯**：{}".format(_gov["group"]))
-                st.caption(_gov["list_note"])
-            if _gov["behavior"] and _gov["behavior"].get("behavior_flag"):
-                _bh = _gov["behavior"]
-                st.markdown("**行為特徵佐證（用15年股價客觀計算）**：{}".format(_bh["reason"]))
-                _bc1, _bc2 = st.columns(2)
-                _bc1.metric("單月±40%以上次數", _bh["extreme_moves"])
-                _bc2.metric("歷史高點最大崩跌", "{:.0f}%".format(_bh["max_drawdown_pct"]))
-            elif _gov["behavior"]:
-                st.caption("行為特徵：{}（未達自動判定門檻，但已在關聯名單）".format(_gov["behavior"].get("reason","")))
-            st.warning("均值回歸策略對這類標的風險極高：其「超跌」可能是人為籌碼操作而非情緒性超跌，反彈往往不來甚至續跌。即使觸發也建議避開或極謹慎。")
-            st.markdown("---")
+            if _lv == "司法定讞":
+                st.error("🚫 司法定讞：重大證券犯罪案件")
+                st.markdown("**案件**：{}".format(_gov["fraud_note"]))
+                st.warning("此標的涉及經司法認定的重大證券犯罪，屬最高風險等級，任何策略均不建議參與。")
+                st.markdown("---")
+            else:
+                _msg = "🚫 治理疑慮標的（{}）".format(_lv)
+                st.error(_msg)
+                if _gov["group"]:
+                    st.markdown("**集團關聯**：{}".format(_gov["group"]))
+                    st.caption(_gov["list_note"])
+                if _gov["behavior"] and _gov["behavior"].get("behavior_flag"):
+                    _bh = _gov["behavior"]
+                    st.markdown("**行為特徵佐證（用15年股價客觀計算）**：{}".format(_bh["reason"]))
+                    _bc1, _bc2 = st.columns(2)
+                    _bc1.metric("單月±40%以上次數", _bh["extreme_moves"])
+                    _bc2.metric("歷史高點最大崩跌", "{:.0f}%".format(_bh["max_drawdown_pct"]))
+                elif _gov["behavior"]:
+                    st.caption("行為特徵：{}（未達自動判定門檻，但已在關聯名單）".format(_gov["behavior"].get("reason","")))
+                st.warning("均值回歸策略對這類標的風險極高：其「超跌」可能是人為籌碼操作而非情緒性超跌，反彈往往不來甚至續跌。即使觸發也建議避開或極謹慎。")
+                st.markdown("---")
         elif _gov_prices:
             # 未命中名單，但仍顯示行為特徵供參考
             _bh = _gov.get("behavior")
