@@ -6334,7 +6334,7 @@ with tab1:
                 _df_display,
                 use_container_width=True,
                 hide_index=True,
-                height=min(50 + len(_df_display) * 35, 600),
+                height=(len(_df_display) + 1) * 35 + 3,  # 完整容納所有列,不設上限,避免表格框內捲軸(改用整頁捲動)
                 column_config=_col_cfg,
             )
             if _n_gov > 0:
