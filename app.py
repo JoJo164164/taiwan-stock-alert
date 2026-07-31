@@ -4586,7 +4586,8 @@ def build_qualified_pool(all_stocks, fin_data=None):
                 '代碼': code, '名稱': stock.get('name', ''),
                 '產業別': stock.get('industry', stock.get('group', '')),
                 '降級原因': grade_reason,
-                '股價': price, 'PB': pb, 'ROE%': roe, '負債比%': debt,
+                '股價': round(float(price), 2) if price not in (None, "") and str(price).replace(".","",1).replace("-","",1).isdigit() else price,
+                'PB': pb, 'ROE%': roe, '負債比%': debt,
                 'PB/ROE': round(pb / roe, 3) if pb and roe and roe > 0 else None,
                 '①EPS近3年正': '✅' if c1 else '❌',
                 '②EPS成長':    '✅' if c2 else '❌',
@@ -5949,6 +5950,9 @@ with tab1:
         # ── 儲存到 session_state，切tab不消失 ──
         st.session_state['scan_results'] = raw_results
         st.session_state['scan_threshold'] = threshold1
+        # 掃描完成後主動 rerun：強制「掃描(存session)」與「顯示(讀session)」分成兩輪，
+        # 解決同一輪內掃完卻不 render、需按第二次才顯示的 Streamlit 時序問題。
+        st.rerun()
 
     # ── 從 session_state 讀取結果（不依賴button state）──
     results = st.session_state.get('scan_results', None)
@@ -6120,7 +6124,7 @@ with tab1:
                     "代碼": code,
                     "名稱": r.get("名稱", ""),
                     "產業別": industry,
-                    "收盤價": r.get("最新收盤價", ""),
+                    "收盤價": (float(r.get("最新收盤價")) if str(r.get("最新收盤價","")).replace(".","",1).replace("-","",1).isdigit() else None),
                     "10日報酬": r.get("滾動10日報酬率", ""),
                     "連續天數": r.get("連續觸發天數", ""),
                     "量能": _fmt_scan_vol(r.get("量能比")),
@@ -6198,8 +6202,8 @@ with tab1:
                             news_ok = news_detail["status"] != "error"
 
                             if not mops_ok and not news_ok:
-                                # 兩個都查不到：不顯示任何結論
-                                risk_lookup[code_c] = "—"
+                                # 兩個都查不到：明確標「未查得」(非安全,是查詢失敗)
+                                risk_lookup[code_c] = "⚪ 未查得"
                             elif mops_detail["status"] == "danger" or news_detail["status"] == "danger":
                                 # 任一層偵測到高風險
                                 kws = (mops_detail.get("danger_kw", [])[:1] +
@@ -6215,7 +6219,7 @@ with tab1:
                                     src_label, "、".join(kws) or "詳見查詢頁")
                             else:
                                 # 查到了，沒有風險
-                                risk_lookup[code_c] = "✅ 無異常"
+                                risk_lookup[code_c] = "✅"
 
                     # 說明哪些資料源有成功（只在底部 caption 說，不占表格欄位）
                     src_status = []
@@ -6225,9 +6229,9 @@ with tab1:
                     else: src_status.append("新聞❌（可能被網路封鎖）")
 
                     df_show["風險偵測"] = df_show["代碼"].map(
-                        lambda c: risk_lookup.get(c, "—")
+                        lambda c: risk_lookup.get(c, "⚪ 未查得")
                     )
-                    st.caption("風險偵測資料源：{}　｜　「—」= 查詢未成功，請至【🛡️ 個股風險查詢】頁籤手動查詢".format(
+                    st.caption("風險偵測資料源：{}　｜　✅=已查證無異常　｜　⚪ 未查得=資料源查詢失敗（MOPS官方源封鎖或新聞源全掛），非代表安全，請至【🛡️ 個股風險查詢】手動查".format(
                         "　".join(src_status)))
                 else:
                     df_show["風險偵測"] = "—"
@@ -6282,7 +6286,28 @@ with tab1:
                 st.caption("ℹ️ 標示「*」的體質分數為單檔即時計算；建立合格標的池後分數會被快取保存，重複掃描時不需重新呼叫 API（速度較快），但兩者使用的財務資料來源完全相同，準確度沒有差異。")
 
             # ── 表格 ──
-            st.markdown(show_html.__doc__ or "")
+
+            # 欄位說明（讓使用者看懂各欄含義）
+            with st.expander("📖 欄位說明與排序邏輯（點開看懂這張表）"):
+                st.markdown("""
+**各欄位含義：**
+
+| 欄位 | 意思 | 判讀 |
+|------|------|------|
+| **量能** | 今日成交量 ÷ 前20日均量 | 🔥≥1.5x 恐慌爆量（賣壓一次宣洩，反彈率通常較高）；🧊<0.8x 量縮陰跌（沒人接、接刀風險高） |
+| **60日乖離** | 股價偏離60日均線的幅度 | 🎯≤-15% 深度偏離均線（均值回歸空間大，越負理論反彈空間越大） |
+| **④深度超跌** | 跌幅是否比你設的門檻再深2%以上 | ✅=跌幅超過門檻-2%（例：門檻-10%，跌破-12%才算深度超跌，非只是剛好碰門檻） |
+| **風險偵測** | MOPS官方+新聞查詢結果 | ✅=查過確認無風險；🚨/⚠️=偵測到風險；**⚪未查得=資料源查詢失敗（非安全，請手動查）** |
+
+> ⚠️ **關於量能/乖離的可靠度**：判斷「方向」（爆量易反彈、乖離大空間大）有技術分析與均值回歸學理根據；
+> 但門檻數字（1.5x、-15%）是設計時的**經驗值，尚未經你的追蹤日誌回測驗證**。請當參考，不是鐵律。
+> 依憲法精神，這兩欄的預測力應由📒追蹤日誌「實際勝率vs回測」驗證，達標才升級為正式篩選條件。
+
+**清單排序邏輯（你自訂排序外的預設順序）：**
+1. 先按信號強度：🔥強烈 → ✅有效 → 🔶觀察 → 🌫弱
+2. 強烈/有效/觀察組內：**體質分數高→低**（主鍵），同分時跌幅深→淺
+3. 弱組：跌幅深→淺（弱組是風險警示，最危險的放最上面）
+                """)
 
             # 治理疑慮排除開關（軌道A名單命中者）
             _n_gov = int(df_show["_gov_flag"].sum()) if "_gov_flag" in df_show.columns else 0
@@ -6300,11 +6325,17 @@ with tab1:
             _display_cols = [c for c in df_show.columns
                              if c not in ["_rank","_score_sort","_pct_sort","_inner_sort","_signal_raw","_gov_flag"]]
             _df_display = df_show[_display_cols].copy()
+            _col_cfg = {}
+            if "收盤價" in _df_display.columns:
+                _col_cfg["收盤價"] = st.column_config.NumberColumn("收盤價", format="%.2f")
+            if "連續天數" in _df_display.columns:
+                _col_cfg["連續天數"] = st.column_config.NumberColumn("連續天數")
             st.dataframe(
                 _df_display,
                 use_container_width=True,
                 hide_index=True,
                 height=min(50 + len(_df_display) * 35, 600),
+                column_config=_col_cfg,
             )
             if _n_gov > 0:
                 st.caption("⚠️ 治理疑慮欄：標記屬泛國巨（陳泰銘）或泛威盛/宏達電（王雪紅）集團的個股。這類標的歷史暴漲暴跌、籌碼操作爭議多，即使觸發也建議避開或極謹慎。詳情可至【🛡️ 個股風險查詢】查看行為特徵佐證。")
