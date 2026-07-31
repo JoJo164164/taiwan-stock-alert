@@ -511,10 +511,12 @@ def get_yahoo_history_us(code, days=365):
         if df is None or df.empty:
             return {}
         prices = {}
+        import math as _m
         for idx, row in df.iterrows():
             date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, 'strftime') else str(idx)[:10]
             close = row.get('Close')
-            if close is not None:
+            # 過濾 None 與 nan（yfinance 偶爾回 nan，會導致下游 SOX/VIX/S&P500 等顯示 nan+假警示）
+            if close is not None and not (isinstance(close, float) and _m.isnan(close)) and float(close) > 0:
                 prices[date_str] = round(float(close), 2)
         return prices
     except Exception:
@@ -4342,24 +4344,6 @@ def get_all_financial_data_yfinance(codes, progress_callback=None):
 def get_mops_financial(year_roc, season, typek='sii'):
     """【已棄用：境外IP被封鎖，改用 get_fin_data_yfinance】"""
     return None
-
-
-def parse_financial_df(df):
-    """【已棄用：配合 get_mops_financial 使用，現改用 yfinance】"""
-    return None
-
-
-@st.cache_data(ttl=43200)
-def get_all_financial_data():
-    """【已棄用：改用 get_all_financial_data_yfinance】"""
-    return None
-
-
-def get_book_value_per_share(codes):
-    """【已棄用：bvps 現由 yfinance 提供】"""
-    return {}
-
-
 
 
 def parse_financial_df(df):
