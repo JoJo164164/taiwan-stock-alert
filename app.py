@@ -665,6 +665,29 @@ def wave_threshold_quality(segs, min_days=5, max_days=250):
     return round(score, 1), "樣本{}波，天數變異係數{:.2f}（越小越穩定）".format(len(days), cv)
 
 
+def wave_cumulative_peak_prob(seg_days, checkpoints):
+    """累積見高點機率：持有到第d天，有多少%波段在第d天(含)前已見高點=days<=d比例。"""
+    if not seg_days:
+        return []
+    n = len(seg_days)
+    return [{"day": cp, "prob": round(sum(1 for d in seg_days if d <= cp) / n * 100)}
+            for cp in checkpoints]
+
+
+def wave_make_checkpoints(seg_days, n_points=6):
+    """依該層天數範圍產生均勻checkpoint天數。"""
+    if not seg_days:
+        return []
+    lo, hi = min(seg_days), max(seg_days)
+    if lo == hi:
+        return [hi]
+    step = max(1, (hi - lo) // (n_points - 1))
+    pts = list(range(lo, hi + 1, step))
+    if pts[-1] != hi:
+        pts.append(hi)
+    return pts
+
+
 def wave_prob_distribution(values):
     """回傳分布百分位（機率語言用）：p25/p50/p75/min/max/n。"""
     if not values:
@@ -7991,9 +8014,25 @@ with tab3:
                         _mc1.metric("中位持續天數", "{} 天".format(_dd["p50"]))
                         _mc2.metric("中位漲幅", "{:.1f}%".format(_gg["p50"]))
                         _mc3.metric("波段數", len(_lsegs))
-                        st.markdown(
-                            "**機率解讀（出場依據）**：進場後有 **50% 機率在 {} 天內**見高點、**75% 機率在 {} 天內**見高點；"
-                            "持續天數範圍 {}~{} 天。".format(_dd["p50"], _dd["p75"], _dd["min"], _dd["max"]))
+
+                        # ── 完整累積見高點機率曲線（出場依據）──
+                        _cps = wave_make_checkpoints(_days)
+                        _curve = wave_cumulative_peak_prob(_days, _cps)
+                        st.markdown("**📉 累積見高點機率（持有到第 N 天，多少 % 波段已見高點 → 你的出場依據）**")
+                        _curve_df = pd.DataFrame([{
+                            "持有天數": "第 {} 天".format(pt["day"]),
+                            "_day": pt["day"],
+                            "累積見高點機率": pt["prob"],
+                        } for pt in _curve])
+                        try:
+                            _chart_df = _curve_df.set_index("持有天數")[["累積見高點機率"]]
+                            st.bar_chart(_chart_df, height=200)
+                        except Exception:
+                            pass
+                        # 文字版（明確數字）
+                        _prob_txt = "　".join(["第{}天→{}%".format(pt["day"], pt["prob"]) for pt in _curve])
+                        st.caption("📊 " + _prob_txt)
+
                         st.caption(
                             "漲幅：25%的波段≤{:.0f}% ／ 中位{:.0f}% ／ 75%≤{:.0f}%　｜　"
                             "⚡ 極端值：最長波 {} 天漲 {:.0f}%（{}年）；最大漲幅波 漲 {:.0f}%（{} 天，{}年）".format(
