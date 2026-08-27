@@ -607,6 +607,91 @@ def calc_consecutive_trigger_days(prices_dict, threshold):
     return consec
 
 
+def zigzag_up_segments(prices_dict, pct_threshold):
+    """ZigZag 上漲波段偵測：漲跌超過 pct_threshold% 才算轉折，過濾雜訊。
+    回傳上漲波段(低點→高點)列表：[{start,end,days,pct_gain,year}]。"""
+    if not prices_dict or len(prices_dict) < 20:
+        return []
+    dates = sorted(prices_dict.keys())
+    prices = [prices_dict[d] for d in dates]
+    n = len(prices)
+    pivots = []
+    ext_i, ext_p = 0, prices[0]
+    trend = 0
+    for i in range(1, n):
+        p = prices[i]
+        if p <= 0:
+            continue
+        if trend == 0:
+            up = (p - ext_p) / ext_p * 100 if ext_p > 0 else 0
+            if up >= pct_threshold:
+                pivots.append((ext_i, ext_p, 'L')); trend = 1; ext_i, ext_p = i, p
+            elif up <= -pct_threshold:
+                pivots.append((ext_i, ext_p, 'H')); trend = -1; ext_i, ext_p = i, p
+        elif trend == 1:
+            if p > ext_p:
+                ext_i, ext_p = i, p
+            elif ext_p > 0 and (ext_p - p) / ext_p * 100 >= pct_threshold:
+                pivots.append((ext_i, ext_p, 'H')); trend = -1; ext_i, ext_p = i, p
+        else:
+            if p < ext_p:
+                ext_i, ext_p = i, p
+            elif ext_p > 0 and (p - ext_p) / ext_p * 100 >= pct_threshold:
+                pivots.append((ext_i, ext_p, 'L')); trend = 1; ext_i, ext_p = i, p
+    pivots.append((ext_i, ext_p, 'H' if trend == 1 else 'L'))
+    up = []
+    for k in range(len(pivots) - 1):
+        i0, p0, t0 = pivots[k]
+        i1, p1, t1 = pivots[k + 1]
+        if t0 == 'L' and t1 == 'H' and p1 > p0:
+            up.append({"start": dates[i0], "end": dates[i1], "days": i1 - i0,
+                       "pct_gain": round((p1 - p0) / p0 * 100, 1), "year": dates[i0][:4]})
+    return up
+
+
+def wave_threshold_quality(segs, min_days=5, max_days=250):
+    """門檻品質分數（兩者平衡：樣本數50% + 天數穩定性50%）。回傳(score, detail)。"""
+    import statistics as _st
+    if len(segs) < 3:
+        return 0.0, "樣本太少(<3波)"
+    days = [s["days"] for s in segs if min_days <= s["days"] <= max_days]
+    if len(days) < 3:
+        return 0.0, "有效波段太少"
+    mean_d = _st.mean(days)
+    cv = (_st.pstdev(days) / mean_d) if mean_d > 0 else 99
+    sample_score = min(len(days) / 10, 1.0)
+    stability_score = max(0, 1 - cv / 1.5)
+    score = (sample_score * 0.5 + stability_score * 0.5) * 100
+    return round(score, 1), "樣本{}波，天數變異係數{:.2f}（越小越穩定）".format(len(days), cv)
+
+
+def wave_prob_distribution(values):
+    """回傳分布百分位（機率語言用）：p25/p50/p75/min/max/n。"""
+    if not values:
+        return {}
+    s = sorted(values)
+    def _pct(p):
+        return s[min(int(len(s) * p), len(s) - 1)]
+    return {"p25": _pct(0.25), "p50": _pct(0.50), "p75": _pct(0.75),
+            "min": s[0], "max": s[-1], "n": len(s)}
+
+
+def wave_classify_by_days(segs):
+    """按持有天數四層歸類：短<20 / 中20-60 / 中長60-120 / 長>120。"""
+    layers = {"短線 (<20天)": [], "中線 (20-60天)": [], "中長線 (60-120天)": [], "長線 (>120天)": []}
+    for s in segs:
+        d = s["days"]
+        if d < 20:
+            layers["短線 (<20天)"].append(s)
+        elif d <= 60:
+            layers["中線 (20-60天)"].append(s)
+        elif d <= 120:
+            layers["中長線 (60-120天)"].append(s)
+        else:
+            layers["長線 (>120天)"].append(s)
+    return layers
+
+
 def calc_all_rolling_returns(prices_dict):
     if len(prices_dict) < 11:
         return []
@@ -7842,9 +7927,91 @@ with tab3:
 
         render_analysis(single_code, df_win, df_avg, df_dd, df_yearly, thr_val, prices_dict=prices)
 
-        # 報告末尾列印按鈕
+        # ══════════════════════════════════════
+        # 📈 波段分析（輔助出場：這檔通常漲多久、幾天該走）
+        # ══════════════════════════════════════
+        st.divider()
+        st.markdown("## 📈 波段分析（輔助出場評估）")
+        st.caption("分析這檔股票歷史上「一波漲勢通常持續多久、漲多少、幾天內見高點的機率」，輔助你判斷進場後該抱多久。轉折門檻=漲跌超過多少%才算一個波段（過濾雜訊）。")
 
-        # 報告末尾再放一個列印按鈕（讀完不用滾回頂部）
+        if prices and len(prices) >= 60:
+            # ── A. 自動掃描最佳門檻 ──
+            with st.spinner("掃描最適合這檔的轉折門檻..."):
+                _scan = []
+                for _thr in range(8, 31, 2):
+                    _segs = zigzag_up_segments(prices, _thr)
+                    _score, _detail = wave_threshold_quality(_segs)
+                    _scan.append({"門檻": "{}%".format(_thr), "_thr": _thr, "品質分數": _score,
+                                  "波段數": len(_segs), "說明": _detail})
+                _scan.sort(key=lambda x: -x["品質分數"])
+
+            st.markdown("### 🎯 A. 自動推薦：最適合這檔的轉折門檻")
+            st.caption("系統對 8%~30% 各門檻評分（樣本數50% + 天數穩定性50%），分數越高代表切出的波段越有參考價值。")
+            _best_thr = _scan[0]["_thr"] if _scan and _scan[0]["品質分數"] > 0 else 15
+            _top3 = _scan[:3]
+            _cols_best = st.columns(3)
+            for _bi, _b in enumerate(_top3):
+                _medal = ["🥇", "🥈", "🥉"][_bi]
+                _cols_best[_bi].markdown(
+                    "**{} {}**\n\n品質分 {}\n\n{}波".format(_medal, _b["門檻"], _b["品質分數"], _b["波段數"]))
+            st.info("💡 推薦門檻 **{}%**：{}".format(_best_thr, _scan[0]["說明"]))
+            with st.expander("看所有門檻的評分明細"):
+                st.dataframe(pd.DataFrame([{k: v for k, v in s.items() if not k.startswith("_")} for s in _scan]),
+                             use_container_width=True, hide_index=True)
+
+            # ── C. 可調門檻滑桿 ──
+            st.markdown("### 🎚️ B. 選擇轉折門檻（可調，預設用推薦值）")
+            _wave_thr = st.slider("轉折門檻 %（漲跌超過此值才算一個波段）",
+                                  min_value=8, max_value=30, value=int(_best_thr), step=2, key="wave_thr")
+            _segs = zigzag_up_segments(prices, _wave_thr)
+
+            if not _segs:
+                st.warning("此門檻下未偵測到有效上漲波段，試試調低門檻。")
+            else:
+                st.caption("門檻 {}% 共偵測到 {} 個上漲波段。".format(_wave_thr, len(_segs)))
+
+                # ── 按持有天數四層歸類 + 機率 ──
+                st.markdown("### 📊 C. 波段統計（按持有天數分四層 + 機率分布）")
+                _layers = wave_classify_by_days(_segs)
+                for _lname, _lsegs in _layers.items():
+                    if not _lsegs:
+                        st.markdown("**{}**　—　此門檻下無此類波段".format(_lname))
+                        continue
+                    _days = [s["days"] for s in _lsegs]
+                    _gains = [s["pct_gain"] for s in _lsegs]
+                    _dd = wave_prob_distribution(_days)
+                    _gg = wave_prob_distribution(_gains)
+                    _longest = max(_lsegs, key=lambda s: s["days"])
+                    _biggest = max(_lsegs, key=lambda s: s["pct_gain"])
+                    _reliable = "" if len(_lsegs) >= 5 else "　⚠️ 樣本少(<5)，參考性較低"
+
+                    with st.container():
+                        st.markdown("#### {}　（{} 波{}）".format(_lname, len(_lsegs), _reliable))
+                        _mc1, _mc2, _mc3 = st.columns(3)
+                        _mc1.metric("中位持續天數", "{} 天".format(_dd["p50"]))
+                        _mc2.metric("中位漲幅", "{:.1f}%".format(_gg["p50"]))
+                        _mc3.metric("波段數", len(_lsegs))
+                        st.markdown(
+                            "**機率解讀（出場依據）**：進場後有 **50% 機率在 {} 天內**見高點、**75% 機率在 {} 天內**見高點；"
+                            "持續天數範圍 {}~{} 天。".format(_dd["p50"], _dd["p75"], _dd["min"], _dd["max"]))
+                        st.caption(
+                            "漲幅：25%的波段≤{:.0f}% ／ 中位{:.0f}% ／ 75%≤{:.0f}%　｜　"
+                            "⚡ 極端值：最長波 {} 天漲 {:.0f}%（{}年）；最大漲幅波 漲 {:.0f}%（{} 天，{}年）".format(
+                                _gg["p25"], _gg["p50"], _gg["p75"],
+                                _longest["days"], _longest["pct_gain"], _longest["year"],
+                                _biggest["pct_gain"], _biggest["days"], _biggest["year"]))
+                        st.divider()
+
+                # 全部波段明細
+                with st.expander("📋 看所有波段明細（門檻 {}%）".format(_wave_thr)):
+                    _seg_df = pd.DataFrame([{
+                        "起始": s["start"], "結束": s["end"], "持續天數": s["days"],
+                        "漲幅%": s["pct_gain"], "年份": s["year"]
+                    } for s in sorted(_segs, key=lambda x: -x["days"])])
+                    st.dataframe(_seg_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("需要至少 60 天股價資料才能做波段分析。")
+
 
 # ==============================
 # TAB 4: 全市場勝率排行
