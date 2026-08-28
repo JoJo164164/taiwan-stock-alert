@@ -4999,6 +4999,61 @@ def get_sp500_data():
 
 
 @st.cache_data(ttl=3600)
+def get_market_valuation():
+    """抓大盤本益比/殖利率/股價淨值比（TWSE MI_INDEX），配合已知歷史區間判斷過熱。
+    台股大盤PE長期區間約13~23倍（來源:MacroMicro/MoneyDJ）。
+    回傳 dict 或 None。"""
+    try:
+        import requests as _rq
+        res = _rq.get("https://openapi.twse.com.tw/v1/exchangeReport/MI_INDEX",
+                      timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        if res.status_code != 200:
+            return None
+        data = res.json()
+        # MI_INDEX 回傳含大盤各類統計，找「發行量加權股價指數」相關的本益比列
+        # 欄位結構會變，穩健作法：找含「本益比」「殖利率」「股價淨值比」的列
+        pe = pb = yield_rate = None
+        date_str = ""
+        for row in (data if isinstance(data, list) else []):
+            _vals = " ".join(str(v) for v in row.values())
+            # 找大盤/加權/整體那一列
+            if any(k in _vals for k in ["加權", "大盤", "發行量加權", "整體", "合計"]):
+                for k, v in row.items():
+                    if "本益比" in k or "PE" in k.upper():
+                        try: pe = float(str(v).replace(",", ""))
+                        except: pass
+                    if "殖利率" in k:
+                        try: yield_rate = float(str(v).replace(",", "").replace("%", ""))
+                        except: pass
+                    if "淨值比" in k or "PB" in k.upper():
+                        try: pb = float(str(v).replace(",", ""))
+                        except: pass
+                    if "日期" in k or "Date" in k:
+                        date_str = str(v)
+                if pe:
+                    break
+        if pe is None:
+            return None
+        # 已知歷史區間判斷（13~23倍）
+        PE_LOW, PE_HIGH = 13.0, 23.0
+        if pe >= PE_HIGH:
+            level, color, label = "偏熱", "🔴", "接近或超過歷史高檔（≥23倍），估值偏貴，慎追高"
+        elif pe >= (PE_LOW + PE_HIGH) / 2:  # 18
+            level, color, label = "偏高", "🟠", "高於長期中位，估值不便宜"
+        elif pe >= PE_LOW:
+            level, color, label = "正常", "🟢", "落在長期合理區間（13~23倍）"
+        else:
+            level, color, label = "偏冷", "🔵", "低於歷史低檔（<13倍），估值便宜，長線佈局機會"
+        # 相對區間位置(粗略百分位,非真實歷史百分位)
+        pct_in_range = max(0, min(100, (pe - PE_LOW) / (PE_HIGH - PE_LOW) * 100))
+        return {"pe": round(pe, 2), "pb": round(pb, 2) if pb else None,
+                "yield_rate": round(yield_rate, 2) if yield_rate else None,
+                "date": date_str, "level": level, "color": color, "label": label,
+                "pe_low": PE_LOW, "pe_high": PE_HIGH, "pct_in_range": round(pct_in_range)}
+    except Exception:
+        return None
+
+
 def get_twii_heat():
     """台股加權指數市場熱度（vs 240日均線偏離度，分10級）"""
     try:
@@ -5390,6 +5445,47 @@ with tab6:
         )
 
     # ── 台股市場熱度計 ──
+    st.markdown("---")
+    st.markdown("### 📊 大盤本益比過熱評估")
+    st.caption("用大盤整體本益比(PE)對照長期歷史區間(13~23倍)，判斷現在台股估值偏貴還是便宜。單看指數點位不夠，要看『貴不貴』。")
+
+    _mval = get_market_valuation()
+    if _mval:
+        _vc1, _vc2 = st.columns([1, 2])
+        with _vc1:
+            st.metric("大盤本益比 (PE)", "{:.1f} 倍".format(_mval["pe"]))
+            st.markdown("**{} 估值{}**".format(_mval["color"], _mval["level"]))
+            if _mval.get("pb"):
+                st.caption("股價淨值比 PB：{:.2f} 倍".format(_mval["pb"]))
+            if _mval.get("yield_rate"):
+                st.caption("殖利率：{:.2f}%".format(_mval["yield_rate"]))
+        with _vc2:
+            st.markdown("**判讀**：{}".format(_mval["label"]))
+            # 區間位置條
+            _pct = _mval["pct_in_range"]
+            st.markdown("""
+<div style="background:#f0f2f6;border-radius:8px;padding:12px 16px;margin-top:8px">
+  <div style="font-size:13px;color:#666;margin-bottom:6px">目前 PE {pe} 倍 在長期區間 {lo}~{hi} 倍的位置：約 {pct}%</div>
+  <div style="background:linear-gradient(90deg,#4C9AFF 0%,#36B37E 40%,#FF8B00 70%,#FF5630 100%);
+       height:10px;border-radius:5px;position:relative">
+    <div style="position:absolute;left:{pct}%;top:-4px;width:3px;height:18px;background:#172B4D;border-radius:2px"></div>
+  </div>
+  <div style="display:flex;justify-content:space-between;font-size:11px;color:#888;margin-top:4px">
+    <span>13倍(便宜)</span><span>18倍(中位)</span><span>23倍(貴)</span>
+  </div>
+</div>""".format(pe=_mval["pe"], lo=int(_mval["pe_low"]), hi=int(_mval["pe_high"]), pct=_pct),
+                unsafe_allow_html=True)
+        with st.expander("📖 大盤PE怎麼用、資料說明"):
+            st.markdown("""
+- **大盤本益比**：整體上市股票的市值總額 ÷ 純益總額，衡量台股「整體貴不貴」。
+- **長期區間 13~23 倍**（來源：MacroMicro／MoneyDJ 長期統計）：<13倍偏冷（便宜）、13~18正常、18~23偏高、≥23偏熱（貴）。
+- **搭配熱度計看**：PE(估值面) + 熱度計(technical乖離面) 兩個都偏熱 → 系統性風險高，個股觸發也要謹慎。
+- **限制**：目前是「當日PE vs 已知歷史區間」。更精準的「歷史百分位」(現在PE贏過去幾%的時間)需載入TWSE月報歷史序列，為下一版規劃。
+- 資料來源：TWSE OpenAPI MI_INDEX（大盤即時本益比/殖利率/股價淨值比）。
+            """)
+    else:
+        st.info("暫時無法取得大盤本益比資料（TWSE MI_INDEX 連線失敗或格式異動）。可稍後重試，或至 TWSE 官網查詢。")
+
     st.markdown("---")
     st.markdown("### 🌡️ 台股市場熱度計（10級）")
     st.caption("台灣加權指數相對240日均線的偏離幅度，衡量市場過熱或過冷程度")
